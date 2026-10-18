@@ -50,7 +50,10 @@ enum DevHarness {
 
     private static func waitForEngine(_ model: AppModel) async {
         for _ in 0..<600 {
-            if model.isEngineRunning && !model.models.isEmpty { return }
+            if model.isEngineRunning && !model.models.isEmpty {
+                try? await _Concurrency.Task.sleep(for: .seconds(1))  // let onboarding logic run
+                return
+            }
             try? await _Concurrency.Task.sleep(for: .milliseconds(200))
         }
         log("engine did not become ready")
@@ -92,6 +95,25 @@ enum DevHarness {
                 try? await _Concurrency.Task.sleep(for: .milliseconds(300))
             }
             log("engine running: \(model.isEngineRunning)")
+        }
+        if let id = step["download"] as? String, let m = model.models.first(where: { $0.id == id }) {
+            log("onboarding visible before download: \(model.showOnboarding)")
+            model.download(m)  // same action as the onboarding Download button
+        }
+        if let id = step["waitDownloaded"] as? String {
+            let deadline = Date().addingTimeInterval(step["timeout"] as? Double ?? 3600)
+            var lastLog = Date.distantPast
+            while Date() < deadline {
+                await model.refreshModels()
+                guard let m = model.models.first(where: { $0.id == id }) else { break }
+                if m.downloaded { log("downloaded \(id)"); break }
+                if m.download.status == "error" { log("download error: \(m.download.error ?? "?")"); break }
+                if Date().timeIntervalSince(lastLog) > 30 {
+                    log(String(format: "download %@ %.1f%% (%.2f GB)", id, m.download.progress * 100, Double(m.download.done_bytes) / 1e9))
+                    lastLog = Date()
+                }
+                try? await _Concurrency.Task.sleep(for: .seconds(2))
+            }
         }
         if step["quit"] != nil { NSApp.terminate(nil) }
     }
@@ -146,6 +168,7 @@ enum DevHarness {
             let v = t.current
             return "\(t.kind.rawValue) #\(t.number) route=\(t.route) status=\(v?.status.rawValue ?? "-") result=\(v?.resultId ?? "-") loads=\(v?.loads ?? []) strategy=\(v?.strategy ?? "-") err=\(v?.errorMessage ?? "-") text=\(t.text.prefix(60))"
         }
-        try? lines.joined(separator: "\n").write(to: out.appendingPathComponent("state.txt"), atomically: true, encoding: .utf8)
+        let header = "onboarding=\(model.showOnboarding) engine=\(model.engineStatusText) models=\(model.models.map { "\($0.id):\($0.downloaded)" })"
+        try? ([header] + lines).joined(separator: "\n").write(to: out.appendingPathComponent("state.txt"), atomically: true, encoding: .utf8)
     }
 }

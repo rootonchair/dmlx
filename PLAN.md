@@ -37,11 +37,11 @@ Video, brush masks/inpainting (stretch only), upscaling, LoRA, mlx-gen / mlx-vid
 ### Beta exit checklist
 
 - [x] No-hang test passes on the 24 GB dev Mac **and** under 16 GB emulation for every default model/task. (`docs/benchmarks/b1.md`)
-- [ ] At least one run on a real 16 GB Mac (borrowed machine or tester) passes the no-hang test. **← needs you**
+- [~] 16 GB-equivalent run passes (ballast leaving 5.3 GB free, 16 GB tier: 4/4 cases, sequential, peak ≤ 5.7 GB). A run on **real** 16 GB hardware is still outstanding. **← needs a 16 GB Mac**
 - [x] Warm follow-up edit performs zero component loads (verified in response metadata, app harness, integration test).
 - [x] 10-turn edit session completes without engine restart on 16 GB emulation (10/10 jobs, 0 restarts).
 - [x] Engine killed mid-job → app recovers, shows the failure in the turn, next request works.
-- [~] Fresh-machine install: bundled app runs with no uv/terminal tools (verified); download path verified via the engine API on a tiny repo. Full onboarding download on a clean Mac not yet run. **← needs a clean Mac/user account**
+- [x] Fresh-machine install: bundled app on an empty account (fresh HOME, empty HF cache, minimal PATH) → onboarding opens by itself → Download → 4.6 GB with progress → first image.
 - [x] Unit + integration tests green (20 + 3, plus 9 app tests); fixed-seed images are pixel-identical.
 - [x] README, CONTRIBUTING, known issues, model license table, release notes.
 
