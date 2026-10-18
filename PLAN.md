@@ -3,6 +3,18 @@
 Owner of all implementation: Claude. Owner of decisions, approvals, and hardware access: Vincent.
 Companion docs: `dmlx-spec.md` (what and why), prototype: https://claude.ai/artifact/An8GqnnPUboCtw1JUASYEM
 
+## Status (2026-10-19)
+
+| Milestone | Status | Notes |
+|---|---|---|
+| B0 Foundations | ✅ | git repo, Apache-2.0, uv engine, SwiftPM app (no XcodeGen/GRDB needed: system SQLite), CI workflow |
+| B1 Measure | ✅ | `docs/benchmarks/b1.md`. Klein 4B chosen as single default; tiled decode < 32 GB; short command buffers rejected |
+| B2 Engine v0 | ✅ | per-component load/free, eager/phase_free/sequential, admission, swap-in + pressure guard, embed cache, SSE, OpenAI-compatible API |
+| B3 App v0 | ✅ | chat thread, versions, actions, routing, onboarding/downloads, settings, SQLite history, scripted harness |
+| B4 Hardening | ✅ (scope cut) | crash recovery, 10-turn session, determinism + warm-edit integration tests. **Qwen-Image-Edit moved post-beta** (32 GB+ only; cannot be validated on the 24 GB dev Mac). Brush masks remain a stretch goal. |
+| UI visual review | ⏳ | The Mac was locked during the whole session, so no window could be rendered or captured; behaviour was verified through the app harness's state dumps. Needs a human look. |
+| B5 Release | ✅ build / ⏳ publish | `tools/bundle_app.sh --zip` → 151 MB zip, 454 MB app. Waiting on: real 16 GB run, GitHub repo + release (needs your go-ahead) |
+
 ## 1. Beta definition
 
 A Mac app a technical user can download from GitHub, open, and use to **create and iteratively edit images in a chat**, running fully locally, that **never hangs a 16 GB Mac**.
@@ -11,7 +23,7 @@ A Mac app a technical user can download from GitHub, open, and use to **create a
 
 | Area | Beta includes |
 |---|---|
-| Models | Z-Image Turbo (generate), FLUX.2 Klein 4B (generate + edit + up to 3 references). Qwen-Image-Edit q4 offered only on ≥32 GB. |
+| Models | FLUX.2 Klein 4B (default for generate + edit + up to 3 references), Z-Image Turbo (optional generate). Qwen-Image-Edit moved post-beta. |
 | Chat UI | Thread, composer, inline results, version strip, actions (Edit, Variations, Use as reference, Save), rule-based routing with live route preview, sessions sidebar, empty state, starter prompts. |
 | Engine | Warm components across turns, admission control, memory-pressure guard, eager / phase-free / sequential strategies, prompt-embedding cache (RAM), step previews over SSE, result store with ids, cancel. |
 | Onboarding | Detect RAM tier → recommend models → download with progress/resume → first image. |
@@ -24,14 +36,14 @@ Video, brush masks/inpainting (stretch only), upscaling, LoRA, mlx-gen / mlx-vid
 
 ### Beta exit checklist
 
-- [ ] No-hang test passes on the 24 GB dev Mac **and** under 16 GB emulation for every default model/task.
-- [ ] At least one run on a real 16 GB Mac (borrowed machine or tester) passes the no-hang test.
-- [ ] Warm follow-up edit performs zero component loads (verified in response metadata).
-- [ ] 10-turn edit session completes without engine restart on 16 GB emulation.
-- [ ] Engine killed mid-job → app recovers, shows the failure in the turn, next request works.
-- [ ] Fresh-machine install: download → onboarding → first image, with no terminal use.
-- [ ] Unit + integration tests green; golden-image tests deterministic for fixed seeds.
-- [ ] README, CONTRIBUTING, known issues, model license table.
+- [x] No-hang test passes on the 24 GB dev Mac **and** under 16 GB emulation for every default model/task. (`docs/benchmarks/b1.md`)
+- [ ] At least one run on a real 16 GB Mac (borrowed machine or tester) passes the no-hang test. **← needs you**
+- [x] Warm follow-up edit performs zero component loads (verified in response metadata, app harness, integration test).
+- [x] 10-turn edit session completes without engine restart on 16 GB emulation (10/10 jobs, 0 restarts).
+- [x] Engine killed mid-job → app recovers, shows the failure in the turn, next request works.
+- [~] Fresh-machine install: bundled app runs with no uv/terminal tools (verified); download path verified via the engine API on a tiny repo. Full onboarding download on a clean Mac not yet run. **← needs a clean Mac/user account**
+- [x] Unit + integration tests green (20 + 3, plus 9 app tests); fixed-seed images are pixel-identical.
+- [x] README, CONTRIBUTING, known issues, model license table, release notes.
 
 ## 2. Architecture and repo layout
 

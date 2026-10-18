@@ -74,7 +74,11 @@ final class AppModel {
         engine.onStateChange = { [weak self] state in
             guard let self else { return }
             self.engineState = state
-            if case .running = state { self.onEngineReady() }
+            switch state {
+            case .running: self.onEngineReady()
+            case .starting, .failed: self.failActiveJobs()
+            case .stopped: break
+            }
         }
         engine.start()
         if let first = sessions.first {
@@ -97,6 +101,20 @@ final class AppModel {
                 try? await _Concurrency.Task.sleep(for: .seconds(2))
             }
         }
+    }
+
+    /// Jobs in flight die with the engine; close their streams so the UI shows Retry.
+    private func failActiveJobs() {
+        for (_, task) in streams { task.cancel() }
+        for t in turns.indices {
+            for v in turns[t].versions.indices where turns[t].versions[v].isActive {
+                turns[t].versions[v].status = .error
+                turns[t].versions[v].errorCode = "engine_stopped"
+                turns[t].versions[v].errorMessage = "The engine stopped unexpectedly and was restarted. Retry to run it again."
+            }
+            persist(t)
+        }
+        streams = [:]
     }
 
     func refreshModels(openOnboarding: Bool = false) async {
@@ -337,6 +355,14 @@ final class AppModel {
                     $0.status = .error
                     $0.errorCode = err?.code
                     $0.errorMessage = error.localizedDescription
+                }
+            }
+            // The stream can end without a terminal event (engine crashed or restarted).
+            self?.update(turnId, versionId) {
+                if $0.isActive {
+                    $0.status = .error
+                    $0.errorCode = "engine_stopped"
+                    $0.errorMessage = "The engine stopped unexpectedly and was restarted. Retry to run it again."
                 }
             }
             self?.streams[versionId] = nil

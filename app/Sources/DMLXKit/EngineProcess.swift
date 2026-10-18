@@ -93,7 +93,13 @@ public final class EngineProcess {
         let pipe = Pipe()
         proc.standardOutput = pipe
         proc.standardError = pipe
-        FileManager.default.createFile(atPath: logURL.path, contents: nil)
+        // Append across restarts so the log from before a crash survives; cap its size.
+        if let size = (try? FileManager.default.attributesOfItem(atPath: logURL.path))?[.size] as? Int, size > 20_000_000 {
+            try? FileManager.default.removeItem(at: logURL)
+        }
+        if !FileManager.default.fileExists(atPath: logURL.path) {
+            FileManager.default.createFile(atPath: logURL.path, contents: nil)
+        }
         let logHandle = try? FileHandle(forWritingTo: logURL)
         logHandle?.seekToEndOfFile()
         pipe.fileHandleForReading.readabilityHandler = { [weak self] handle in

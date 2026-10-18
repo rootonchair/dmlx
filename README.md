@@ -2,7 +2,7 @@
 
 Create and edit images by chatting, fully on your Mac. dMLX is a native macOS app plus a local engine built on [MLX](https://github.com/ml-explore/mlx) and [mflux](https://github.com/filipstrand/mflux). Its main promise: **it never makes your Mac hang**, even on a 16 GB machine.
 
-> Status: **v0.1 beta**. Images only (generate + edit). Video is planned, not included.
+> Status: **v0.1 beta**. Images only (generate + edit). Video is planned, not included. See [known issues](docs/KNOWN_ISSUES.md).
 
 ## What it does
 

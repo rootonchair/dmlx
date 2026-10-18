@@ -31,9 +31,23 @@ fi
 echo "==> Bundling Python $PY_VERSION"
 uv python install "$PY_VERSION" >/dev/null
 PY_SRC="$(uv python find "$PY_VERSION" --managed-python)"
-PY_HOME="$(cd "$(dirname "$PY_SRC")/.." && pwd)"
-cp -R "$PY_HOME" "$APP/Contents/Resources/engine/python"
+# uv's versioned folders are symlinks; resolve to the real install and copy its *contents*.
+PY_HOME="$(cd -P "$(dirname "$PY_SRC")/.." && pwd -P)"
+mkdir -p "$APP/Contents/Resources/engine/python"
+cp -R "$PY_HOME/." "$APP/Contents/Resources/engine/python/"
 PY="$APP/Contents/Resources/engine/python/bin/python3"
+# Safety: everything below modifies the bundled copy only. Refuse if it is not a real directory
+# inside dist/ (a symlink here would point back at the user's own Python).
+BUNDLED_PY_HOME="$(cd -P "$APP/Contents/Resources/engine/python" && pwd -P)"
+case "$BUNDLED_PY_HOME" in
+  "$DIST"/*) ;;
+  *) echo "refusing: bundled Python resolves outside dist/ ($BUNDLED_PY_HOME)" >&2; exit 1 ;;
+esac
+PY_REAL="$(cd -P "$(dirname "$PY")" && pwd -P)/$(basename "$(readlink "$PY" || basename "$PY")")"
+case "$PY_REAL" in
+  "$BUNDLED_PY_HOME"/*) ;;
+  *) echo "refusing: bundled interpreter resolves outside the bundle ($PY_REAL)" >&2; exit 1 ;;
+esac
 # Drop pieces a GUI-launched interpreter never needs.
 rm -rf "$APP/Contents/Resources/engine/python/lib/python$PY_VERSION/test" \
        "$APP/Contents/Resources/engine/python/lib/python$PY_VERSION/idlelib" \

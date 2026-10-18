@@ -77,6 +77,22 @@ enum DevHarness {
         }
         if let name = step["snapshot"] as? String { snapshot(name: name, out: out, all: step["allWindows"] != nil) }
         if step["dumpState"] != nil { dump(model, out: out) }
+        if step["killEngine"] != nil {
+            let kill = Process()
+            kill.executableURL = URL(fileURLWithPath: "/usr/bin/pkill")
+            kill.arguments = ["-9", "-f", "dmlx(\\.cli)? serve"]
+            try? kill.run()
+            kill.waitUntilExit()
+            log("killed engine (exit \(kill.terminationStatus))")
+        }
+        if let timeout = step["waitEngine"] as? Double {
+            let deadline = Date().addingTimeInterval(timeout)
+            try? await _Concurrency.Task.sleep(for: .seconds(1.5))
+            while Date() < deadline && !model.isEngineRunning {
+                try? await _Concurrency.Task.sleep(for: .milliseconds(300))
+            }
+            log("engine running: \(model.isEngineRunning)")
+        }
         if step["quit"] != nil { NSApp.terminate(nil) }
     }
 
