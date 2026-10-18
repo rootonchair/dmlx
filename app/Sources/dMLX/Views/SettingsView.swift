@@ -17,8 +17,17 @@ struct ModelsSettings: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
+        @Bindable var model = model
         ScrollView {
             VStack(spacing: 10) {
+                let generators = model.models.filter { $0.downloaded && $0.supports(.t2i) }
+                if generators.count > 1 {
+                    Picker("Model for new images", selection: $model.preferredGenerateModel) {
+                        ForEach(generators) { m in Text(m.name).tag(m.id) }
+                    }
+                    .help("Edits always use a model that can edit. Using one model for both keeps follow-ups fastest.")
+                    .padding(.bottom, 6)
+                }
                 ForEach(model.models) { m in
                     ModelRow(model: m)
                 }

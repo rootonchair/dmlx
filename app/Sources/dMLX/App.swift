@@ -1,17 +1,18 @@
 import AppKit
 import SwiftUI
 
+@MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    var model: AppModel?
+    let model = AppModel()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        // Launched from `swift run` there is no bundle; make sure we still get a Dock icon and focus.
         NSApp.setActivationPolicy(.regular)
         NSApp.activate()
+        DevHarness.startIfRequested(model)
     }
 
     func applicationWillTerminate(_ notification: Notification) {
-        MainActor.assumeIsolated { model?.shutdown() }
+        model.shutdown()
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
@@ -20,14 +21,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 @main
 struct DMLXApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
-    @State private var model = AppModel()
+    private var model: AppModel { delegate.model }
 
     var body: some Scene {
-        WindowGroup("dMLX") {
+        Window("dMLX", id: "main") {
             RootView()
                 .environment(model)
                 .frame(minWidth: 820, minHeight: 600)
-                .onAppear { delegate.model = model }
                 .tint(Theme.accent)
         }
         .windowToolbarStyle(.unified(showsTitle: false))

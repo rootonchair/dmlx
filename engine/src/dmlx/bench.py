@@ -80,7 +80,7 @@ def run_bench(args) -> None:
                 passed = (
                     job.status == "done"
                     and report.get("max_pressure") != "critical"
-                    and report.get("swap_delta_gb", 0) < 1.5
+                    and report.get("max_swapin_mb_s", 0) <= 64
                     and (not responsiveness or (gpu_p99 <= GPU_P99_LIMIT_MS and timer_p99 <= TIMER_P99_LIMIT_MS))
                 )
                 row = {
@@ -114,7 +114,7 @@ def _summary(row: dict) -> dict:
         "model": row["model"], "task": row["task"], "run": row["run"], "status": row["status"],
         "strategy": r.get("strategy"), "loads": r.get("loads"), "wall_s": row["wall_s"],
         "timings": r.get("timings"), "peak_mlx_gb": r.get("peak_mlx_gb"),
-        "pressure": r.get("max_pressure"), "swap_delta_gb": r.get("swap_delta_gb"),
+        "pressure": r.get("max_pressure"), "swap_delta_gb": r.get("swap_delta_gb"), "swapin_mb_s": r.get("max_swapin_mb_s"),
         "gpu_p99_ms": row["responsiveness"].get("gpu_ms", {}).get("p99"),
         "timer_p99_ms": row["responsiveness"].get("timer_late_ms", {}).get("p99"),
         "pass": row["no_hang_pass"], "error": (row["error"] or {}).get("message"),

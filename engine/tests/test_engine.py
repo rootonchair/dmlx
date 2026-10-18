@@ -210,3 +210,16 @@ def test_tiled_decode_only_when_tight(make_engine, client_for):
     tight = client_for(make_engine(headroom_gb=4.0))
     body = _gen(tight, size="2048x2048").json()["dmlx"]  # full decode would need ~3.4 GB * margin
     assert body["strategy"] == "sequential" and body["tiled_decode"] is True
+
+
+def test_swapin_thrash_aborts_and_degrades(make_engine):
+    engine = make_engine()
+    engine.memory.monitor.swapin_rate = lambda window=3.0: 500 * 1024**2  # 500 MB/s read back from swap
+    job = engine.submit(task="t2i", prompt="boat", model="fake-a", size="512x512")
+    job.finished.wait(5)
+    assert job.status == "error" and job.error["code"] == "memory_pressure"
+    assert engine.memory.resident_models() == set()  # everything freed after the abort
+    engine.memory.monitor.swapin_rate = lambda window=3.0: 0.0
+    job2 = engine.submit(task="t2i", prompt="boat", model="fake-a", size="512x512")
+    job2.finished.wait(5)
+    assert job2.status == "done" and job2.report["strategy"] == "sequential"  # degraded mode afterwards

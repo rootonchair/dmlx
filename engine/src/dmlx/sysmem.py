@@ -8,6 +8,7 @@ from __future__ import annotations
 import ctypes
 import ctypes.util
 import os
+import time
 from dataclasses import dataclass
 
 _libc = ctypes.CDLL(ctypes.util.find_library("c"), use_errno=True)
@@ -88,6 +89,9 @@ class MemorySnapshot:
     compressed: int
     swap_used: int
     pressure: int  # PRESSURE_*
+    swapins: int = 0  # cumulative bytes read back from swap (thrash signal)
+    swapouts: int = 0
+    taken: float = 0.0
 
     @property
     def pressure_name(self) -> str:
@@ -142,7 +146,9 @@ def snapshot() -> MemorySnapshot:
     vm = _vm_stats()
     real_total = _sysctl_int("hw.memsize")
     total = total_memory()
-    available = (vm.free_count + vm.inactive_count + vm.purgeable_count + vm.speculative_count) * ps
+    # Reclaimable without swapping anyone: free pages plus file cache (external pages can be dropped).
+    # Other apps' inactive anonymous memory is NOT counted: taking it forces compression or swap.
+    available = (vm.free_count + vm.speculative_count + vm.purgeable_count + min(vm.inactive_count, vm.external_page_count)) * ps
     if os.environ.get("DMLX_EMULATE_STRICT") == "1":
         # Strict emulation: the memory we pretend not to have is unavailable.
         available = max(0, available - (real_total - total))
@@ -153,6 +159,9 @@ def snapshot() -> MemorySnapshot:
         compressed=vm.compressor_page_count * ps,
         swap_used=swap_used(),
         pressure=pressure_level(),
+        swapins=vm.swapins * ps,
+        swapouts=vm.swapouts * ps,
+        taken=time.monotonic(),
     )
 
 

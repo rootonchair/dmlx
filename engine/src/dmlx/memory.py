@@ -26,7 +26,9 @@ STRATEGIES = ("eager", "phase_free", "sequential")
 # Headroom must exceed a strategy's peak need by this factor before we pick it (spec §8 regimes):
 # keeping more resident is only worth it when there is clearly room for it.
 MARGIN = {"eager": 1.25, "phase_free": 1.5, "sequential": 1.0}
-SWAP_GROWTH_CAP = int(1.5 * GB)  # abort a job that pushes this much new data to swap
+SWAP_GROWTH_CAP = int(4 * GB)  # backstop: abort a job that pushes this much new data to swap
+SWAPIN_RATE_CAP = 64 * 1024**2  # bytes/s read back from swap, sustained over SWAPIN_WINDOW -> thrashing
+SWAPIN_WINDOW = 3.0
 CACHE_LIMIT = 512 * 1024**2
 
 
@@ -76,6 +78,7 @@ class PressureMonitor:
         self._lock = threading.Lock()
         self._last = sysmem.snapshot()
         self._window_max_pressure = self._last.pressure
+        self._history: list[sysmem.MemorySnapshot] = [self._last]
         self._stop = threading.Event()
         self._thread = threading.Thread(target=self._run, name="dmlx-pressure", daemon=True)
         self._thread.start()
@@ -89,10 +92,26 @@ class PressureMonitor:
             with self._lock:
                 self._last = snap
                 self._window_max_pressure = max(self._window_max_pressure, snap.pressure)
+                self._history.append(snap)
+                cutoff = snap.taken - 10.0
+                while self._history and self._history[0].taken < cutoff:
+                    self._history.pop(0)
 
     def last(self) -> sysmem.MemorySnapshot:
         with self._lock:
             return self._last
+
+    def swapin_rate(self, window: float = SWAPIN_WINDOW) -> float:
+        """Average bytes/s read back from swap over the last `window` seconds."""
+        with self._lock:
+            if len(self._history) < 2:
+                return 0.0
+            newest = self._history[-1]
+            oldest = next((h for h in self._history if h.taken >= newest.taken - window), self._history[0])
+            span = newest.taken - oldest.taken
+            if span < window * 0.8:
+                return 0.0
+            return (newest.swapins - oldest.swapins) / span
 
     def start_window(self) -> None:
         with self._lock:
@@ -278,6 +297,7 @@ class JobGuard:
         self.max_pressure = self.baseline_pressure
         self.size: tuple[int, int] | None = None
         self.tiled_decode = False
+        self.max_swapin_rate = 0.0
         manager.monitor.start_window()
 
     def _ensure(self, name: str) -> None:
@@ -346,6 +366,13 @@ class JobGuard:
         if snap.pressure >= sysmem.PRESSURE_CRITICAL:
             self.m.degrade()
             raise JobAborted("memory_pressure", "Stopped to keep your Mac responsive: memory pressure became critical.")
+        rate = self.m.monitor.swapin_rate()
+        self.max_swapin_rate = max(self.max_swapin_rate, rate)
+        if rate > SWAPIN_RATE_CAP:
+            self.m.degrade()
+            raise JobAborted(
+                "memory_pressure", "Stopped to keep your Mac responsive: apps were being read back from swap."
+            )
         if snap.swap_used - self.swap_start > SWAP_GROWTH_CAP:
             self.m.degrade()
             raise JobAborted(
@@ -365,4 +392,5 @@ class JobGuard:
             "peak_mlx_gb": round(mx.get_peak_memory() / GB, 2),
             "max_pressure": sysmem.PRESSURE_NAMES.get(self.max_pressure, str(self.max_pressure)),
             "swap_delta_gb": round((snap.swap_used - self.swap_start) / GB, 2),
+            "max_swapin_mb_s": round(self.max_swapin_rate / 1024**2, 1),
         }

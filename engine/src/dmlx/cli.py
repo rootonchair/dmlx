@@ -30,8 +30,9 @@ def _watch_parent(parent_pid: int) -> None:
 def _serve(args) -> None:
     if args.parent_pid:
         _watch_parent(args.parent_pid)
-    if args.responsive:
-        # Keep Metal command buffers short so WindowServer is not starved while we compute.
+    if args.short_buffers:
+        # Shorter Metal command buffers. Measured: no responsiveness gain on M5 and ~4x more working
+        # memory (docs/benchmarks/b1.md), so this is opt-in for experiments only.
         os.environ.setdefault("MLX_MAX_OPS_PER_BUFFER", "32")
         os.environ.setdefault("MLX_MAX_MB_PER_BUFFER", "256")
     import uvicorn
@@ -91,7 +92,7 @@ def main(argv: list[str] | None = None) -> None:
     serve.add_argument("--port-file", default=None)
     serve.add_argument("--token", default=None)
     serve.add_argument("--log-level", default="info")
-    serve.add_argument("--responsive", action=argparse.BooleanOptionalAction, default=True)
+    serve.add_argument("--short-buffers", action="store_true", help="experimental; uses much more memory")
     serve.add_argument("--parent-pid", type=int, default=None, help="exit when this process is gone")
     serve.set_defaults(func=_serve)
 
