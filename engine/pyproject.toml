@@ -1,0 +1,39 @@
+[project]
+name = "dmlx"
+version = "0.1.0b1"
+description = "Local image generation server for Apple Silicon (MLX)"
+readme = "README.md"
+authors = [
+    { name = "Pham Hong Vinh", email = "phamvinh257@gmail.com" }
+]
+requires-python = ">=3.12"
+license = "Apache-2.0"
+dependencies = [
+    "fastapi>=0.146.0",
+    "huggingface-hub>=1.33.0",
+    "mflux==0.23.0",
+    "pillow>=13.0.0",
+    "python-multipart>=0.0.32",
+    "pyyaml>=6.0.3",
+    "sse-starlette>=3.5.0",
+    "uvicorn[standard]>=0.54.0",
+]
+
+[project.scripts]
+dmlx = "dmlx.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.11.1,<0.12.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "httpx>=0.28.1",
+    "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["integration: needs real models and a GPU"]
+addopts = "-m 'not integration'"

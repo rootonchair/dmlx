@@ -1,0 +1,15 @@
+id: z-image-turbo
+name: Z-Image Turbo
+adapter: mflux.z_image
+repo: mflux-community/z-image-turbo-mflux-q4
+quantization: 4
+license: apache-2.0
+tasks: [t2i]
+max_references: 0
+min_ram_gb: 16
+components:
+  text_encoder: { phase: encode, share_key: qwen3-4b-q4 }
+  transformer:  { phase: denoise }
+  vae:          { phase: decode, keep: true }
+defaults: { steps: 9, guidance: 0.0, width: 1024, height: 1024 }
+activation_gb_per_mp: 1.4

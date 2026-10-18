@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+*.egg-info/
+dist/
+
+# Swift / Xcode
+.build/
+app/.build/
+*.xcodeproj/xcuserdata/
+DerivedData/
+build/
+
+# Local data, never committed
+*.safetensors
+results/
+*.nsys-rep
+.DS_Store
+docs/benchmarks/raw/
