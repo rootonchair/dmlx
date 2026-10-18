@@ -182,14 +182,14 @@ class MemoryManager:
     def _missing(self, spec: ModelSpec, names: list[str]) -> int:
         return sum(spec.components[n].size for n in names if (spec.id, n) not in self._resident)
 
-    def _needs(self, spec: ModelSpec, activation: int) -> dict[str, int]:
+    def _needs(self, spec: ModelSpec, activation: int, skip: tuple[str, ...] = ()) -> dict[str, int]:
         """Extra memory each strategy needs at its peak, beyond what is already resident.
 
         eager:      everything missing loads and stays.
         phase_free: encoder and transformer are never resident together (encoder freed first).
         sequential: like phase_free, but resident big components are freed first, so they count as returned.
         """
-        comps = spec.components
+        comps = {n: c for n, c in spec.components.items() if n not in skip}
         small_missing = self._missing(spec, [n for n, c in comps.items() if c.keep])
         big = [n for n in ("text_encoder", "transformer") if n in comps]
         eager = self._missing(spec, list(comps)) + activation
@@ -198,9 +198,12 @@ class MemoryManager:
         sequential = max(max((comps[n].size for n in big), default=0) - resident_big, 0) + small_missing + activation
         return {"eager": eager, "phase_free": phase_free, "sequential": sequential}
 
-    def plan(self, spec: ModelSpec, activation: int, strategy: str = "auto", force: bool = False) -> Plan:
+    def plan(
+        self, spec: ModelSpec, activation: int, strategy: str = "auto", force: bool = False, skip: tuple[str, ...] = ()
+    ) -> Plan:
+        """`skip`: components this job will not need (e.g. the encoder when the prompt embedding is cached)."""
         with self._lock:
-            needs = self._needs(spec, activation)
+            needs = self._needs(spec, activation, skip)
             order = list(STRATEGIES)
             if time.monotonic() < self.degraded_until:
                 order = ["sequential"]
@@ -273,6 +276,8 @@ class JobGuard:
         self.swap_start = manager.monitor.last().swap_used
         self.baseline_pressure = manager.monitor.last().pressure
         self.max_pressure = self.baseline_pressure
+        self.size: tuple[int, int] | None = None
+        self.tiled_decode = False
         manager.monitor.start_window()
 
     def _ensure(self, name: str) -> None:
@@ -307,7 +312,19 @@ class JobGuard:
             self._ensure("transformer")
         elif phase == "decode":
             self._ensure("vae")
+            self._choose_decode()
             self.emit("decoding", {})
+
+    def _choose_decode(self) -> None:
+        """Decode untiled (exact) when there is clearly room; otherwise tile it, which needs ~4x less memory."""
+        adapter = self.m._adapters[self.spec.id]
+        if not hasattr(adapter, "set_tiled_decode") or self.size is None:
+            return
+        full = self.spec.decode_bytes(*self.size, tiled=False)
+        # Below 32 GB the exact decode's spike is never worth the risk; above, only with clear room.
+        tiled = self.plan.forced or self.m.total < 32 * GB or full * 1.5 > self.m.headroom()
+        adapter.set_tiled_decode(tiled)
+        self.tiled_decode = tiled
 
     def after_phase(self, phase: str) -> None:
         started = self._phase_started.pop(phase, None)
@@ -343,6 +360,7 @@ class JobGuard:
         return {
             **self.plan.as_dict(),
             "loads": self.loads,
+            "tiled_decode": self.tiled_decode,
             "timings": {k: round(v, 3) for k, v in self.timings.items()},
             "peak_mlx_gb": round(mx.get_peak_memory() / GB, 2),
             "max_pressure": sysmem.PRESSURE_NAMES.get(self.max_pressure, str(self.max_pressure)),

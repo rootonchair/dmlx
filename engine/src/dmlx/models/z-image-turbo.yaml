@@ -12,4 +12,7 @@ components:
   transformer:  { phase: denoise }
   vae:          { phase: decode, keep: true }
 defaults: { steps: 9, guidance: 0.0, width: 1024, height: 1024 }
-activation_gb_per_mp: 1.4
+# Measured on M5 at 1024x1024 (docs/benchmarks/b1.md).
+activation_gb_per_mp: 1.0
+decode_gb_per_mp: 6.7
+decode_tiled_gb_per_mp: 2.0

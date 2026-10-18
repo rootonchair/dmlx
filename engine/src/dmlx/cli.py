@@ -9,7 +9,27 @@ import os
 import sys
 
 
+def _watch_parent(parent_pid: int) -> None:
+    """Exit when the app that launched us goes away, so no orphan keeps holding GPU memory."""
+    import threading
+    import time
+
+    def loop():
+        while True:
+            time.sleep(1.0)
+            try:
+                os.kill(parent_pid, 0)
+            except ProcessLookupError:
+                os._exit(0)
+            except PermissionError:
+                pass
+
+    threading.Thread(target=loop, name="dmlx-parent-watch", daemon=True).start()
+
+
 def _serve(args) -> None:
+    if args.parent_pid:
+        _watch_parent(args.parent_pid)
     if args.responsive:
         # Keep Metal command buffers short so WindowServer is not starved while we compute.
         os.environ.setdefault("MLX_MAX_OPS_PER_BUFFER", "32")
@@ -72,6 +92,7 @@ def main(argv: list[str] | None = None) -> None:
     serve.add_argument("--token", default=None)
     serve.add_argument("--log-level", default="info")
     serve.add_argument("--responsive", action=argparse.BooleanOptionalAction, default=True)
+    serve.add_argument("--parent-pid", type=int, default=None, help="exit when this process is gone")
     serve.set_defaults(func=_serve)
 
     pull = sub.add_parser("pull", help="Download a model")

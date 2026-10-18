@@ -36,6 +36,12 @@ class FakeAdapter:
     def free_component(self, name: str) -> None:
         self.loaded.discard(name)
 
+    def has_embedding(self, prompt: str) -> bool:
+        return prompt in self._cache
+
+    def set_tiled_decode(self, tiled: bool) -> None:
+        self.tiled = tiled
+
     def embed_cache_stats(self) -> dict:
         return {"entries": len(self._cache), "hits": self.hits, "misses": self.misses}
 

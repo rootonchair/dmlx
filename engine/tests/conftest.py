@@ -14,7 +14,7 @@ def fake_spec(model_id: str, tasks=("t2i", "edit"), te=2.0, tr=2.0, vae=0.2, ref
     spec = ModelSpec(
         id=model_id, name=model_id.title(), adapter="fake", repo=f"fake/{model_id}", license="apache-2.0",
         tasks=list(tasks), components=comps, defaults={"steps": 4, "width": 512, "height": 512},
-        max_references=refs, min_ram_gb=8, activation_gb_per_mp=0.4,
+        max_references=refs, min_ram_gb=8, activation_gb_per_mp=0.4, decode_gb_per_mp=0.8, decode_tiled_gb_per_mp=0.4,
     )
     return spec
 

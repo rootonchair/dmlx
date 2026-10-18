@@ -1,0 +1,261 @@
+import DMLXKit
+import SwiftUI
+
+struct TurnView: View {
+    let turn: Turn
+
+    var body: some View {
+        switch turn.kind {
+        case .user: UserBubble(turn: turn)
+        case .notice: NoticeRow(text: turn.text)
+        case .image: ImageTurnView(turn: turn)
+        }
+    }
+}
+
+struct UserBubble: View {
+    @Environment(AppModel.self) private var model
+    let turn: Turn
+
+    var body: some View {
+        HStack {
+            Spacer(minLength: 80)
+            VStack(alignment: .trailing, spacing: 8) {
+                if !turn.attachments.isEmpty {
+                    HStack(spacing: 6) {
+                        ForEach(turn.attachments, id: \.self) { id in
+                            Thumbnail(resultId: id, size: 56)
+                        }
+                    }
+                }
+                Text(turn.text)
+                    .textSelection(.enabled)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 9)
+                    .background(.quaternary, in: RoundedRectangle(cornerRadius: 16))
+            }
+        }
+    }
+}
+
+struct NoticeRow: View {
+    let text: String
+
+    var body: some View {
+        Label(text, systemImage: "info.circle")
+            .font(.callout)
+            .foregroundStyle(.secondary)
+            .padding(10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 10))
+    }
+}
+
+struct Thumbnail: View {
+    @Environment(AppModel.self) private var model
+    let resultId: String
+    var size: CGFloat
+
+    var body: some View {
+        Group {
+            if let image = model.images.image(resultId) {
+                Image(nsImage: image).resizable().scaledToFill()
+            } else {
+                Rectangle().fill(.quaternary)
+            }
+        }
+        .frame(width: size, height: size)
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+        .accessibilityLabel("Attached image")
+    }
+}
+
+struct ImageTurnView: View {
+    @Environment(AppModel.self) private var model
+    let turn: Turn
+
+    var version: ImageVersion? { turn.current }
+    var isTarget: Bool { model.targetTurnId == turn.id }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 10) {
+                Text("Image \(turn.number)").font(.callout.weight(.semibold))
+                Text(turn.route).font(.callout).foregroundStyle(.secondary)
+            }
+            ResultImage(turn: turn)
+                .overlay(
+                    RoundedRectangle(cornerRadius: Theme.corner)
+                        .strokeBorder(isTarget ? Theme.accent : Color.secondary.opacity(0.2), lineWidth: isTarget ? 2 : 1))
+
+            if let v = version, v.status == .error || v.status == .cancelled {
+                ErrorBox(turn: turn, version: v)
+            }
+
+            HStack(spacing: 6) {
+                if turn.versions.count > 1 {
+                    HStack(spacing: 4) {
+                        ForEach(Array(turn.versions.enumerated()), id: \.element.id) { i, _ in
+                            Button("v\(i + 1)") { model.pickVersion(turn.id, i) }
+                                .buttonStyle(VersionButtonStyle(selected: i == turn.activeVersion))
+                                .accessibilityAddTraits(i == turn.activeVersion ? .isSelected : [])
+                        }
+                    }
+                    .padding(.trailing, 6)
+                }
+                if version?.isActive == true {
+                    Button("Cancel") { model.cancel(turn.id) }
+                } else {
+                    Button("Edit") { model.edit(turn.id) }
+                        .help("Make the next message change this image")
+                    Button("Variations") { model.variation(turn.id) }
+                        .help("Same prompt, new seed")
+                    Button("Use as reference") { model.useAsReference(turn.id) }
+                    Button {
+                        model.save(turn.id)
+                    } label: {
+                        Image(systemName: "square.and.arrow.down")
+                    }
+                    .help("Save to Pictures/dMLX")
+                    .accessibilityLabel("Save to Pictures")
+                }
+            }
+            .buttonStyle(.bordered)
+            .disabled(version == nil)
+
+            if let v = version {
+                Text(metaLine(v)).font(.caption).foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    func metaLine(_ v: ImageVersion) -> String {
+        var parts = [model.modelName(v.model)]
+        if v.task == .edit { parts.append("edit") }
+        parts.append(v.size.replacingOccurrences(of: "x", with: "×"))
+        if let seed = v.seed { parts.append("seed \(seed)") }
+        if v.status == .done {
+            if let s = v.seconds { parts.append(String(format: "%.1f s", s)) }
+            parts.append(v.loads.isEmpty ? "model was already warm" : "loaded \(v.loads.map { AppModel.componentName($0) }.joined(separator: ", "))")
+            if let strategy = v.strategy, strategy != "eager" { parts.append(strategy == "sequential" ? "low-memory mode" : "memory-saving mode") }
+        }
+        return parts.joined(separator: " · ")
+    }
+}
+
+struct VersionButtonStyle: ButtonStyle {
+    var selected: Bool
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.callout.weight(selected ? .semibold : .regular))
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .background(
+                RoundedRectangle(cornerRadius: 7)
+                    .fill(selected ? Theme.accent : Color.clear))
+            .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(selected ? Color.clear : Color.secondary.opacity(0.35)))
+            .foregroundStyle(selected ? Color.black.opacity(0.85) : Color.primary)
+            .opacity(configuration.isPressed ? 0.7 : 1)
+    }
+}
+
+struct ResultImage: View {
+    @Environment(AppModel.self) private var model
+    let turn: Turn
+
+    var body: some View {
+        let v = turn.current
+        ZStack(alignment: .bottomLeading) {
+            if let rid = v?.resultId, v?.status == .done || v?.isActive == false, let image = model.images.image(rid) {
+                Image(nsImage: image)
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .onDrag { NSItemProvider(contentsOf: ImageCache.fileURL(rid)) ?? NSItemProvider() }
+                    .accessibilityLabel(Text(v?.prompt ?? "Generated image"))
+            } else {
+                placeholder(v)
+            }
+            if let v, v.isActive {
+                ProgressPill(version: v)
+                    .padding(12)
+            }
+        }
+        .frame(maxWidth: 520, alignment: .leading)
+        .clipShape(RoundedRectangle(cornerRadius: Theme.corner))
+    }
+
+    @ViewBuilder
+    func placeholder(_ v: ImageVersion?) -> some View {
+        let aspect = aspectRatio(v?.size)
+        ZStack {
+            // While editing, show the source image blurred as a stand-in preview.
+            if let src = v?.sourceIds.first, let image = model.images.image(src) {
+                Image(nsImage: image).resizable().aspectRatio(contentMode: .fill).blur(radius: 18).opacity(0.6)
+            } else {
+                Rectangle().fill(.quaternary.opacity(0.6))
+            }
+            if v?.isActive == true {
+                ProgressView().controlSize(.large)
+            } else {
+                Image(systemName: "photo").font(.largeTitle).foregroundStyle(.tertiary)
+            }
+        }
+        .aspectRatio(aspect, contentMode: .fit)
+        .frame(maxWidth: 520)
+        .clipped()
+    }
+
+    func aspectRatio(_ size: String?) -> CGFloat {
+        guard let size, size != "auto" else { return 1 }
+        let parts = size.split(separator: "x").compactMap { Double($0) }
+        guard parts.count == 2, parts[1] > 0 else { return 1 }
+        return parts[0] / parts[1]
+    }
+}
+
+struct ProgressPill: View {
+    let version: ImageVersion
+
+    var body: some View {
+        HStack(spacing: 8) {
+            if version.totalSteps > 0 && version.step > 0 {
+                ProgressView(value: Double(version.step), total: Double(max(version.totalSteps, 1)))
+                    .frame(width: 80)
+            }
+            Text(version.phase)
+                .font(.caption)
+                .monospacedDigit()
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(.regularMaterial, in: Capsule())
+        .accessibilityElement(children: .combine)
+    }
+}
+
+struct ErrorBox: View {
+    @Environment(AppModel.self) private var model
+    let turn: Turn
+    let version: ImageVersion
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label(version.errorMessage ?? "Something went wrong.", systemImage: version.status == .cancelled ? "stop.circle" : "exclamationmark.triangle")
+                .font(.callout)
+                .fixedSize(horizontal: false, vertical: true)
+            HStack {
+                Button("Retry") { model.retry(turn.id, force: false) }
+                if version.errorCode == "insufficient_memory" {
+                    Button("Try anyway") { model.retry(turn.id, force: true) }
+                        .help("Runs in low-memory mode and stops automatically if your Mac gets slow")
+                }
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+        }
+        .padding(10)
+        .frame(maxWidth: 520, alignment: .leading)
+        .background(Color.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
+    }
+}

@@ -12,5 +12,7 @@ components:
   transformer:  { phase: denoise }
   vae:          { phase: decode, keep: true }
 defaults: { steps: 4, guidance: 1.0, width: 1024, height: 1024 }
-# Activation memory at 1024x1024 measured in B1; scales with pixel count.
-activation_gb_per_mp: 1.2
+# Working memory measured on M5 at 1024x1024 (docs/benchmarks/b1.md); scales with pixel count.
+activation_gb_per_mp: 1.4
+decode_gb_per_mp: 8.6
+decode_tiled_gb_per_mp: 2.4

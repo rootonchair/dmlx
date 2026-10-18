@@ -27,9 +27,17 @@ def local_path(spec: ModelSpec) -> Path | None:
         path = Path(snapshot_download(spec.repo, local_files_only=True))
     except (LocalEntryNotFoundError, FileNotFoundError, OSError):
         return None
+    import json
+
     for name in spec.components:
-        if not any((path / name).glob("*.safetensors")):
+        comp = path / name
+        if not any(comp.glob("*.safetensors")):
             return None
+        index = comp / "model.safetensors.index.json"
+        if index.exists():
+            shards = set(json.loads(index.read_text()).get("weight_map", {}).values())
+            if any(not (comp / shard).exists() for shard in shards):
+                return None
     return path
 
 
@@ -112,7 +120,15 @@ class Downloader:
         """Track the .incomplete blob huggingface_hub writes, for byte-level progress."""
         from huggingface_hub.constants import HF_HUB_CACHE
 
-        repo_dir = Path(HF_HUB_CACHE) / f"models--{spec.repo.replace('/', '--')}" / "blobs"
+        # Older hub versions keep blobs per repo; newer ones share a cache-wide blobs folder.
+        dirs = [Path(HF_HUB_CACHE) / f"models--{spec.repo.replace('/', '--')}" / "blobs", Path(HF_HUB_CACHE) / "blobs"]
         while not done_event.wait(0.5):
-            partial = max((p.stat().st_size for p in repo_dir.glob("*.incomplete")), default=0) if repo_dir.exists() else 0
+            partial = 0
+            for d in dirs:
+                if d.exists():
+                    for p in d.rglob("*.incomplete"):
+                        try:
+                            partial = max(partial, p.stat().st_size)
+                        except FileNotFoundError:
+                            pass
             state.done = completed + min(partial, size)

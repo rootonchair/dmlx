@@ -300,11 +300,13 @@ class Engine:
         started = time.monotonic()
         try:
             adapter = self.adapter(spec)
+            cached = job.n == 1 and getattr(adapter, "has_embedding", lambda _p: False)(job.request.prompt)
             plan = self.memory.plan(
                 spec,
                 spec.activation_bytes(job.request.width, job.request.height, len(job.request.image_paths)),
                 strategy=job.strategy,
                 force=job.force,
+                skip=("text_encoder",) if cached else (),
             )
         except InsufficientMemory as exc:
             job.status = "error"
@@ -322,6 +324,7 @@ class Engine:
 
         mx.reset_peak_memory()
         guard = JobGuard(self.memory, spec, plan, job.cancel_event, job.emit)
+        guard.size = (job.request.width, job.request.height)
         job.emit("plan", plan.as_dict())
         try:
             guard.start()

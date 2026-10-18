@@ -33,16 +33,24 @@ class ModelSpec:
     quantization: int | None = None
     max_references: int = 0
     min_ram_gb: int = 16
-    activation_gb_per_mp: float = 1.5
+    activation_gb_per_mp: float = 1.5  # denoise working memory per megapixel
+    decode_gb_per_mp: float = 9.0  # untiled VAE decode spike per megapixel
+    decode_tiled_gb_per_mp: float = 2.5  # tiled VAE decode spike per megapixel
     local_path: Path | None = field(default=None, repr=False)
 
     def supports(self, task: str) -> bool:
         return task in self.tasks
 
     def activation_bytes(self, width: int, height: int, references: int = 0) -> int:
+        """Peak working memory of the cheapest safe path: denoise, or a tiled decode, whichever is larger."""
         megapixels = (width * height) / 1_000_000
-        # Reference images add their tokens to the sequence; roughly one more image each.
-        return int(self.activation_gb_per_mp * megapixels * (1 + 0.6 * references) * GB)
+        # Reference images add their tokens to the sequence; attention cost grows faster than linearly.
+        denoise = self.activation_gb_per_mp * megapixels * (1 + 1.5 * references)
+        return int(max(denoise, self.decode_tiled_gb_per_mp * megapixels) * GB)
+
+    def decode_bytes(self, width: int, height: int, tiled: bool) -> int:
+        per_mp = self.decode_tiled_gb_per_mp if tiled else self.decode_gb_per_mp
+        return int(per_mp * (width * height) / 1_000_000 * GB)
 
     @property
     def size(self) -> int:
@@ -80,6 +88,8 @@ def _parse(data: dict) -> ModelSpec:
         max_references=int(data.get("max_references", 0)),
         min_ram_gb=int(data.get("min_ram_gb", 16)),
         activation_gb_per_mp=float(data.get("activation_gb_per_mp", 1.5)),
+        decode_gb_per_mp=float(data.get("decode_gb_per_mp", 9.0)),
+        decode_tiled_gb_per_mp=float(data.get("decode_tiled_gb_per_mp", 2.5)),
     )
 
 
@@ -111,7 +121,8 @@ class Registry:
         return list(self._specs.values())
 
     def default_for(self, task: str, total_ram_gb: float) -> ModelSpec | None:
-        preference = {"t2i": ["z-image-turbo", "flux2-klein-4b"], "edit": ["flux2-klein-4b"]}
+        # One model for both tasks by default: alternating generate/edit turns never swap models.
+        preference = {"t2i": ["flux2-klein-4b", "z-image-turbo"], "edit": ["flux2-klein-4b"]}
         for model_id in preference.get(task, []):
             spec = self._specs.get(model_id)
             if spec and spec.supports(task) and spec.min_ram_gb <= total_ram_gb + 0.5:

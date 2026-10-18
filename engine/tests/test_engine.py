@@ -180,7 +180,7 @@ def test_builtin_registry_parses():
     assert reg.get("flux2-klein-4b").supports("edit")
     assert reg.get("z-image-turbo").license == "apache-2.0"
     assert reg.default_for("edit", 16).id == "flux2-klein-4b"
-    assert reg.default_for("t2i", 16).id == "z-image-turbo"
+    assert reg.default_for("t2i", 16).id == "flux2-klein-4b"
 
 
 def test_sysmem_snapshot():
@@ -190,3 +190,23 @@ def test_sysmem_snapshot():
     assert snap.total > 4 * GB and snap.available >= 0
     assert snap.pressure in (1, 2, 4)
     json.dumps(snap.as_dict())
+
+
+def test_cached_prompt_skips_encoder_in_planning(make_engine, client_for):
+    engine = make_engine(headroom_gb=2.5)  # only sequential fits when the encoder must load
+    client = client_for(engine)
+    first = _gen(client, prompt="same prompt").json()["dmlx"]
+    assert first["strategy"] == "sequential" and "text_encoder" in first["loads"]
+    second = _gen(client, prompt="same prompt").json()["dmlx"]
+    assert "text_encoder" not in second["loads"]
+    assert second["embed_cache"]["hits"] >= 1
+
+
+def test_tiled_decode_only_when_tight(make_engine, client_for):
+    roomy_engine = make_engine(headroom_gb=64)
+    roomy_engine.memory.total = 64 * GB
+    roomy = client_for(roomy_engine)
+    assert _gen(roomy).json()["dmlx"]["tiled_decode"] is False
+    tight = client_for(make_engine(headroom_gb=4.0))
+    body = _gen(tight, size="2048x2048").json()["dmlx"]  # full decode would need ~3.4 GB * margin
+    assert body["strategy"] == "sequential" and body["tiled_decode"] is True

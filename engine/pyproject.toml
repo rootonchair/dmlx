@@ -6,13 +6,13 @@ readme = "README.md"
 authors = [
     { name = "Pham Hong Vinh", email = "phamvinh257@gmail.com" }
 ]
-requires-python = ">=3.12"
+requires-python = ">=3.13"
 license = "Apache-2.0"
 dependencies = [
     "fastapi>=0.146.0",
     "huggingface-hub>=1.33.0",
     "mflux==0.23.0",
-    "pillow>=13.0.0",
+    "pillow>=12.3,<13",
     "python-multipart>=0.0.32",
     "pyyaml>=6.0.3",
     "sse-starlette>=3.5.0",
@@ -37,3 +37,6 @@ dev = [
 testpaths = ["tests"]
 markers = ["integration: needs real models and a GPU"]
 addopts = "-m 'not integration'"
+
+[tool.uv]
+python-preference = "only-managed"
