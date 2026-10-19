@@ -4,6 +4,7 @@ Strategies (chosen per job from available memory, see spec §8):
   eager       all components resident; kept warm across requests
   phase_free  text encoder freed after encoding; transformer + VAE kept warm
   sequential  one big component resident at a time: encoder -> free -> transformer -> free -> VAE
+  streamed    like sequential, but big components stream their blocks from disk one at a time
 """
 
 from __future__ import annotations
@@ -22,10 +23,10 @@ from dmlx.registry import GB, ModelSpec
 
 log = logging.getLogger("dmlx.memory")
 
-STRATEGIES = ("eager", "phase_free", "sequential")
+STRATEGIES = ("eager", "phase_free", "sequential", "streamed")
 # Headroom must exceed a strategy's peak need by this factor before we pick it (spec §8 regimes):
 # keeping more resident is only worth it when there is clearly room for it.
-MARGIN = {"eager": 1.25, "phase_free": 1.5, "sequential": 1.0}
+MARGIN = {"eager": 1.25, "phase_free": 1.5, "sequential": 1.0, "streamed": 1.0}
 SWAP_GROWTH_CAP = int(4 * GB)  # backstop: abort a job that pushes this much new data to swap
 SWAPIN_RATE_CAP = 64 * 1024**2  # bytes/s read back from swap, sustained over SWAPIN_WINDOW -> thrashing
 SWAPIN_WINDOW = 3.0
@@ -207,6 +208,7 @@ class MemoryManager:
         eager:      everything missing loads and stays.
         phase_free: encoder and transformer are never resident together (encoder freed first).
         sequential: like phase_free, but resident big components are freed first, so they count as returned.
+        streamed:   like sequential, but big components keep only their non-block weights and one block resident.
         """
         comps = {n: c for n, c in spec.components.items() if n not in skip}
         small_missing = self._missing(spec, [n for n, c in comps.items() if c.keep])
@@ -215,7 +217,11 @@ class MemoryManager:
         phase_free = max((self._missing(spec, [n]) for n in big), default=0) + small_missing + activation
         resident_big = sum(comps[n].size for n in big if (spec.id, n) in self._resident)
         sequential = max(max((comps[n].size for n in big), default=0) - resident_big, 0) + small_missing + activation
-        return {"eager": eager, "phase_free": phase_free, "sequential": sequential}
+        needs = {"eager": eager, "phase_free": phase_free, "sequential": sequential}
+        if any(comps[n].stream_size for n in big):
+            peak = max(comps[n].stream_size or comps[n].size for n in big)
+            needs["streamed"] = max(peak - resident_big, 0) + small_missing + activation
+        return needs
 
     def plan(
         self, spec: ModelSpec, activation: int, strategy: str = "auto", force: bool = False, skip: tuple[str, ...] = ()
@@ -223,9 +229,9 @@ class MemoryManager:
         """`skip`: components this job will not need (e.g. the encoder when the prompt embedding is cached)."""
         with self._lock:
             needs = self._needs(spec, activation, skip)
-            order = list(STRATEGIES)
+            order = [s for s in STRATEGIES if s in needs]
             if time.monotonic() < self.degraded_until:
-                order = ["sequential"]
+                order = [s for s in ("sequential", "streamed") if s in needs]
             if strategy != "auto":
                 order = [strategy]
             evicted: list[str] = []
@@ -296,7 +302,7 @@ class JobGuard:
         self.baseline_pressure = manager.monitor.last().pressure
         self.max_pressure = self.baseline_pressure
         self.size: tuple[int, int] | None = None
-        self.tiled_decode = False
+        self.decode_mode = "full"
         self.max_swapin_rate = 0.0
         manager.monitor.start_window()
 
@@ -313,6 +319,9 @@ class JobGuard:
             self.m.ensure(self.spec.id, name)
 
     def start(self) -> None:
+        adapter = self.m._adapters[self.spec.id]
+        if hasattr(adapter, "stream_mode"):
+            adapter.stream_mode = self.plan.strategy == "streamed"
         for name, comp in self.spec.components.items():
             if comp.keep:
                 self._ensure(name)
@@ -324,7 +333,7 @@ class JobGuard:
         self.check()
         self._phase_started[phase] = time.monotonic()
         if phase == "encode":
-            if self.plan.strategy == "sequential":
+            if self.plan.strategy in ("sequential", "streamed"):
                 self.m.free(self.spec.id, "transformer")
             self._ensure("text_encoder")
             self.emit("encoding", {})
@@ -336,23 +345,23 @@ class JobGuard:
             self.emit("decoding", {})
 
     def _choose_decode(self) -> None:
-        """Decode untiled (exact) when there is clearly room; otherwise tile it, which needs ~4x less memory."""
+        """Decode in one piece when there is clearly room; otherwise banded (exact) or tiled, both far smaller."""
         adapter = self.m._adapters[self.spec.id]
-        if not hasattr(adapter, "set_tiled_decode") or self.size is None:
+        if not hasattr(adapter, "set_decode_mode") or self.size is None:
             return
-        full = self.spec.decode_bytes(*self.size, tiled=False)
-        # Below 32 GB the exact decode's spike is never worth the risk; above, only with clear room.
-        tiled = self.plan.forced or self.m.total < 32 * GB or full * 1.5 > self.m.headroom()
-        adapter.set_tiled_decode(tiled)
-        self.tiled_decode = tiled
+        full = self.spec.decode_bytes(*self.size, "full")
+        # Below 32 GB the one-piece decode's spike is never worth the risk; above, only with clear room.
+        roomy = not self.plan.forced and self.m.total >= 32 * GB and full * 1.5 <= self.m.headroom()
+        self.decode_mode = "full" if roomy else self.spec.low_memory_decode
+        adapter.set_decode_mode(self.decode_mode)
 
     def after_phase(self, phase: str) -> None:
         started = self._phase_started.pop(phase, None)
         if started is not None:
             self.timings[phase] = self.timings.get(phase, 0.0) + time.monotonic() - started
-        if phase == "encode" and self.plan.strategy in ("phase_free", "sequential"):
+        if phase == "encode" and self.plan.strategy in ("phase_free", "sequential", "streamed"):
             self.m.free(self.spec.id, "text_encoder")
-        elif phase == "denoise" and self.plan.strategy == "sequential":
+        elif phase == "denoise" and self.plan.strategy in ("sequential", "streamed"):
             self.m.free(self.spec.id, "transformer")
 
     def on_step(self, step: int, total: int) -> None:
@@ -387,7 +396,7 @@ class JobGuard:
         return {
             **self.plan.as_dict(),
             "loads": self.loads,
-            "tiled_decode": self.tiled_decode,
+            "decode_mode": self.decode_mode,
             "timings": {k: round(v, 3) for k, v in self.timings.items()},
             "peak_mlx_gb": round(mx.get_peak_memory() / GB, 2),
             "max_pressure": sysmem.PRESSURE_NAMES.get(self.max_pressure, str(self.max_pressure)),

@@ -8,11 +8,13 @@ tasks: [t2i, edit]
 max_references: 3
 min_ram_gb: 16
 components:
-  text_encoder: { phase: encode, share_key: qwen3-4b-q4 }
-  transformer:  { phase: denoise }
+  text_encoder: { phase: encode, share_key: qwen3-4b-q4, stream: [layers] }
+  transformer:  { phase: denoise, stream: [transformer_blocks, single_transformer_blocks] }
   vae:          { phase: decode, keep: true }
 defaults: { steps: 4, guidance: 1.0, width: 1024, height: 1024 }
 # Working memory measured on M5 at 1024x1024 (docs/benchmarks/b1.md); scales with pixel count.
 activation_gb_per_mp: 1.4
 decode_gb_per_mp: 8.6
 decode_tiled_gb_per_mp: 2.4
+# Banded exact decode (dmlx/adapters/banded_vae.py): 0.37 GB at 512x512, 1.11 GB at 1024x1024.
+decode_banded_gb_per_mp: 1.2

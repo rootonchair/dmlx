@@ -7,8 +7,10 @@ loader, so the memory manager can run phases sequentially when memory is tight.
 
 from __future__ import annotations
 
+import functools
 import gc
 import hashlib
+import os
 import threading
 from collections import OrderedDict
 from pathlib import Path
@@ -92,12 +94,41 @@ class _LoopHooks:
         pass
 
 
+_FIXES_INSTALLED = False
+
+
+def _install_mflux_fixes() -> None:
+    """mflux's tiled VAE encode assembles tiles in float32 numpy and returns float32 latents.
+
+    For an edit that promotes the whole transformer to float32 (about 2x slower and more
+    memory). The untiled encode returns the model precision, so cast the tiled result to it.
+    """
+    global _FIXES_INSTALLED
+    if _FIXES_INSTALLED:
+        return
+    from mflux.models.common.config.model_config import ModelConfig
+    from mflux.models.common.vae.vae_util import VAEUtil
+
+    original = VAEUtil.encode
+
+    def encode(*args, **kwargs):
+        latents = original(*args, **kwargs)
+        return latents.astype(ModelConfig.precision) if latents.dtype == mx.float32 else latents
+
+    VAEUtil.encode = staticmethod(encode)
+    _FIXES_INSTALLED = True
+
+
 class _MfluxAdapterBase:
     """Shared lifecycle; subclasses provide the pipeline class, weight definition, constructors."""
 
     weight_definition = None
+    supports_banded_decode = False
+    # Per component, stack name -> first layer whose output the pipeline never reads.
+    stream_skip_from: dict[str, dict[str, int]] = {}
 
     def __init__(self, spec: ModelSpec, path: Path):
+        _install_mflux_fixes()
         self.spec = spec
         self.path = Path(path)
         self._lock = threading.RLock()
@@ -109,13 +140,23 @@ class _MfluxAdapterBase:
             pipe.callbacks.register(self._loop_hooks)
         self._components = {c.name: c for c in self.weight_definition.get_components()}
         self._quant_bits = None
+        self.stream_mode = False  # set per job by the memory guard
+        self.stream_lists = {n: c.stream for n, c in spec.components.items() if c.stream}
+        self._streamed: dict[str, bool] = {}
 
     # -- lifecycle -------------------------------------------------------------------
     def component_names(self) -> list[str]:
         return list(self.spec.components)
 
+    def supports_streaming(self, name: str) -> bool:
+        return name in self.stream_lists
+
+    def _wants_stream(self, name: str) -> bool:
+        return self.stream_mode and self.supports_streaming(name)
+
     def is_loaded(self, name: str) -> bool:
-        return getattr(self.pipe, name, None) is not None
+        """Loaded in the form the current job wants (streamed or whole)."""
+        return getattr(self.pipe, name, None) is not None and self._streamed.get(name, False) == self._wants_stream(name)
 
     def load_component(self, name: str) -> int:
         from mflux.models.common.weights.loading.weight_applier import WeightApplier
@@ -124,6 +165,9 @@ class _MfluxAdapterBase:
         with self._lock:
             if self.is_loaded(name):
                 return _module_bytes(getattr(self.pipe, name))
+            self.free_component(name)  # loaded in the other form
+            if self._wants_stream(name):
+                return self._load_streamed(name)
             component = self._components[name]
             weights = WeightLoader.load_single_local(component=component, root_path=self.path)
             module = self._construct(name)
@@ -140,8 +184,25 @@ class _MfluxAdapterBase:
                     pipe.bits = bits
             if bits is not None:
                 self._quant_bits = bits
+            self._streamed[name] = False
             gc.collect()
             return _module_bytes(module)
+
+    def _load_streamed(self, name: str) -> int:
+        from dmlx.adapters.streaming import make_streamed
+
+        module = self._construct(name)
+        component = self._components[name]
+        nbytes = make_streamed(
+            module, self.path / component.hf_subdir, self.stream_lists[name], self.stream_skip_from.get(name)
+        )
+        if name == "transformer":
+            self._after_transformer_load(module)
+        for pipe in self.pipes.values():
+            setattr(pipe, name, module)
+        self._streamed[name] = True
+        gc.collect()
+        return nbytes
 
     def free_component(self, name: str) -> None:
         with self._lock:
@@ -149,6 +210,7 @@ class _MfluxAdapterBase:
                 return
             for pipe in self.pipes.values():
                 setattr(pipe, name, None)
+            self._streamed.pop(name, None)
             gc.collect()
             mx.clear_cache()
 
@@ -158,23 +220,40 @@ class _MfluxAdapterBase:
     def has_embedding(self, prompt: str) -> bool:
         return self.embeds.has_prompt(prompt)
 
-    def set_tiled_decode(self, tiled: bool) -> None:
+    def set_decode_mode(self, mode: str) -> None:
+        """full: one piece. tiled: mflux tiles. banded: exact low-memory decode (FLUX.2 VAE only)."""
         from mflux.models.common.vae.tiling_config import TilingConfig
 
-        config = TilingConfig() if tiled else None
+        if mode == "banded" and not self.supports_banded_decode:
+            mode = "tiled"
+        # The same config also tiles the VAE encode of edit sources; keep that whenever memory is tight.
+        config = {"full": None, "tiled": TilingConfig(), "banded": TilingConfig(vae_decode_tiles_per_dim=None)}[mode]
         for pipe in self.pipes.values():
             pipe.tiling_config = config
+        vae = self.pipe.vae
+        if vae is not None:
+            if mode == "banded":
+                from dmlx.adapters.banded_vae import decode
+
+                object.__setattr__(vae, "decode", functools.partial(decode, vae))
+            else:
+                vae.__dict__.pop("decode", None)
 
     # -- generation ------------------------------------------------------------------
     def generate(self, req: GenRequest, hooks: PhaseHooks) -> Image.Image:
         with self._lock:
             self._loop_hooks.hooks = hooks
             self._current_hooks = hooks
+            if self.stream_mode:
+                # A compiled forward pass cannot load weights part-way through.
+                mx.disable_compile()
             try:
                 image = self._run(req)
             except KeyboardInterrupt as exc:  # mflux converts this; keep ours intact
                 raise JobAborted("cancelled", "Generation cancelled") from exc
             finally:
+                if self.stream_mode and not os.environ.get("MLX_DISABLE_COMPILE"):
+                    mx.enable_compile()
                 self._loop_hooks.hooks = None
                 self._current_hooks = None
             hooks.after_phase("decode")
@@ -244,6 +323,10 @@ def _empty_pipeline(adapter, base_cls, init_config, model_config, encode_method:
 
 
 class Flux2KleinAdapter(_MfluxAdapterBase):
+    supports_banded_decode = True
+    # Prompt embeddings stack hidden states 9, 18, 27 (the output of layers 8, 17, 26).
+    stream_skip_from = {"text_encoder": {"layers": 27}}
+
     def __init__(self, spec: ModelSpec, path: Path):
         from mflux.models.flux2.weights.flux2_weight_definition import Flux2KleinWeightDefinition
 

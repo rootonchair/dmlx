@@ -9,8 +9,9 @@ First public beta: chat to create and edit images, fully on your Mac.
 - **Versions.** Variations stack as v1, v2, v3 on the same turn; edit any version; use any result
   as a reference for the next edit.
 - **Never hangs your Mac.** Memory is checked before every job; model parts load one at a time when
-  memory is tight; the decoder is tiled on Macs under 32 GB; jobs stop automatically if macOS
-  memory pressure turns critical or apps start being read back from swap.
+  memory is tight, and when it is very tight the model streams from disk block by block (a new
+  1024×1024 image in about 1.5 GB). Below 32 GB the decoder runs in exact low-memory bands; jobs
+  stop automatically if macOS memory pressure turns critical or apps start being read back from swap.
 - **Warm follow-ups.** Models stay loaded between turns and prompt embeddings are cached; a
   follow-up edit does zero model loads.
 - **Recovers by itself.** If the engine crashes it restarts; the interrupted turn offers Retry.
@@ -31,5 +32,5 @@ Unzip, move to Applications, then right-click → Open the first time (beta buil
 
 ## Known issues
 
-See `docs/KNOWN_ISSUES.md`. Most important: edits are ~4× slower than new images, and the 16 GB
-target still needs validation on a real 16 GB Mac — reports welcome.
+See `docs/KNOWN_ISSUES.md`. Most important: the 16 GB target still needs validation on a real
+16 GB Mac — reports welcome.

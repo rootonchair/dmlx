@@ -18,6 +18,8 @@ class ComponentSpec:
     share_key: str | None = None
     keep: bool = False  # small components that are never freed between phases
     size: int = 0  # bytes on disk; filled in once the model is downloaded
+    stream: list[str] = field(default_factory=list)  # block stacks that can be streamed from disk
+    stream_size: int = 0  # weights resident while streaming (non-block part + largest block)
 
 
 @dataclass
@@ -36,20 +38,31 @@ class ModelSpec:
     activation_gb_per_mp: float = 1.5  # denoise working memory per megapixel
     decode_gb_per_mp: float = 9.0  # untiled VAE decode spike per megapixel
     decode_tiled_gb_per_mp: float = 2.5  # tiled VAE decode spike per megapixel
+    decode_banded_gb_per_mp: float | None = None  # banded (exact, low-memory) decode, where the VAE supports it
     local_path: Path | None = field(default=None, repr=False)
 
     def supports(self, task: str) -> bool:
         return task in self.tasks
 
-    def activation_bytes(self, width: int, height: int, references: int = 0) -> int:
-        """Peak working memory of the cheapest safe path: denoise, or a tiled decode, whichever is larger."""
-        megapixels = (width * height) / 1_000_000
-        # Reference images add their tokens to the sequence; attention cost grows faster than linearly.
-        denoise = self.activation_gb_per_mp * megapixels * (1 + 1.5 * references)
-        return int(max(denoise, self.decode_tiled_gb_per_mp * megapixels) * GB)
+    @property
+    def low_memory_decode(self) -> str:
+        """Decode mode used whenever the full decode does not clearly fit."""
+        return "banded" if self.decode_banded_gb_per_mp else "tiled"
 
-    def decode_bytes(self, width: int, height: int, tiled: bool) -> int:
-        per_mp = self.decode_tiled_gb_per_mp if tiled else self.decode_gb_per_mp
+    def activation_bytes(self, width: int, height: int, references: int = 0) -> int:
+        """Peak working memory of the cheapest safe path: denoise, or a low-memory decode, whichever is larger."""
+        megapixels = (width * height) / 1_000_000
+        # Reference images add their tokens to the sequence. Measured with one reference at 1024x1024
+        # (bf16 throughout): 1.45x the working memory of a plain generation; 0.75 per image keeps margin.
+        denoise = self.activation_gb_per_mp * megapixels * (1 + 0.75 * references)
+        return int(max(denoise, self.decode_bytes(width, height, self.low_memory_decode) / GB) * GB)
+
+    def decode_bytes(self, width: int, height: int, mode: str) -> int:
+        per_mp = {
+            "full": self.decode_gb_per_mp,
+            "tiled": self.decode_tiled_gb_per_mp,
+            "banded": self.decode_banded_gb_per_mp or self.decode_tiled_gb_per_mp,
+        }[mode]
         return int(per_mp * (width * height) / 1_000_000 * GB)
 
     @property
@@ -72,7 +85,13 @@ class ModelSpec:
 
 def _parse(data: dict) -> ModelSpec:
     comps = {
-        name: ComponentSpec(name=name, phase=c["phase"], share_key=c.get("share_key"), keep=bool(c.get("keep", False)))
+        name: ComponentSpec(
+            name=name,
+            phase=c["phase"],
+            share_key=c.get("share_key"),
+            keep=bool(c.get("keep", False)),
+            stream=list(c.get("stream", [])),
+        )
         for name, c in data["components"].items()
     }
     return ModelSpec(
@@ -90,6 +109,7 @@ def _parse(data: dict) -> ModelSpec:
         activation_gb_per_mp=float(data.get("activation_gb_per_mp", 1.5)),
         decode_gb_per_mp=float(data.get("decode_gb_per_mp", 9.0)),
         decode_tiled_gb_per_mp=float(data.get("decode_tiled_gb_per_mp", 2.5)),
+        decode_banded_gb_per_mp=float(data["decode_banded_gb_per_mp"]) if "decode_banded_gb_per_mp" in data else None,
     )
 
 

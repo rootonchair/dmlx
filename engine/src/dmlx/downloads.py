@@ -45,6 +45,10 @@ def fill_component_sizes(spec: ModelSpec, path: Path) -> None:
     for name, comp in spec.components.items():
         on_disk = sum(f.stat().st_size for f in (path / name).glob("*.safetensors"))
         comp.size = max(comp.size, on_disk)
+        if comp.stream and on_disk:
+            from dmlx.adapters.streaming import stream_peak_bytes
+
+            comp.stream_size = stream_peak_bytes(path / name, comp.stream)
     spec.local_path = path
 
 

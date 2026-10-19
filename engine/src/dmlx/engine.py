@@ -158,6 +158,8 @@ class Engine:
         adapter = self.adapter(spec)
         self.memory.pin(spec.id, pin)
         plan = self.memory.plan(spec, spec.activation_bytes(1024, 1024), strategy="auto")
+        if hasattr(adapter, "stream_mode"):
+            adapter.stream_mode = plan.strategy == "streamed"
         names = list(spec.components) if plan.strategy == "eager" else [n for n, c in spec.components.items() if c.keep or n == "transformer"]
         for name in names:
             self.memory.ensure(spec.id, name)
@@ -227,7 +229,7 @@ class Engine:
         )
         if not 1 <= req.steps <= 100:
             raise RequestError("invalid_steps", "steps must be between 1 and 100.")
-        if strategy not in ("auto", "eager", "phase_free", "sequential"):
+        if strategy not in ("auto", "eager", "phase_free", "sequential", "streamed"):
             raise RequestError("invalid_strategy", f"Unknown strategy {strategy}")
         job = Job(id=f"job_{secrets.token_hex(6)}", model_id=spec.id, task=task, request=req,
                   n=max(1, min(int(n), 4)), strategy=strategy, force=force)

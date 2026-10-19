@@ -433,6 +433,16 @@ final class AppModel {
         }
     }
 
+    /// Shown in a result's details when the engine had to save memory; nothing for the normal mode.
+    static func strategyLabel(_ strategy: String?) -> String? {
+        switch strategy {
+        case "phase_free": return "memory-saving mode"
+        case "sequential": return "low-memory mode"
+        case "streamed": return "lowest-memory mode"
+        default: return nil
+        }
+    }
+
     private func find(_ turnId: String, _ versionId: String) -> ImageVersion? {
         turns.first(where: { $0.id == turnId })?.versions.first(where: { $0.id == versionId })
     }

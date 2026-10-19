@@ -202,14 +202,18 @@ def test_cached_prompt_skips_encoder_in_planning(make_engine, client_for):
     assert second["embed_cache"]["hits"] >= 1
 
 
-def test_tiled_decode_only_when_tight(make_engine, client_for):
+def test_low_memory_decode_only_when_tight(make_engine, client_for):
     roomy_engine = make_engine(headroom_gb=64)
     roomy_engine.memory.total = 64 * GB
     roomy = client_for(roomy_engine)
-    assert _gen(roomy).json()["dmlx"]["tiled_decode"] is False
+    assert _gen(roomy).json()["dmlx"]["decode_mode"] == "full"
     tight = client_for(make_engine(headroom_gb=4.0))
     body = _gen(tight, size="2048x2048").json()["dmlx"]  # full decode would need ~3.4 GB * margin
-    assert body["strategy"] == "sequential" and body["tiled_decode"] is True
+    assert body["strategy"] == "sequential" and body["decode_mode"] == "tiled"
+    banded_spec = fake_spec("fake-a")
+    banded_spec.decode_banded_gb_per_mp = 0.2
+    body = _gen(client_for(make_engine(specs=[banded_spec], headroom_gb=4.0)), size="2048x2048").json()["dmlx"]
+    assert body["decode_mode"] == "banded"
 
 
 def test_swapin_thrash_aborts_and_degrades(make_engine):
@@ -223,3 +227,36 @@ def test_swapin_thrash_aborts_and_degrades(make_engine):
     job2 = engine.submit(task="t2i", prompt="boat", model="fake-a", size="512x512")
     job2.finished.wait(5)
     assert job2.status == "done" and job2.report["strategy"] == "sequential"  # degraded mode afterwards
+
+
+def test_streamed_strategy_when_only_block_streaming_fits(make_engine):
+    spec = fake_spec("fake-a")
+    for name in ("text_encoder", "transformer"):
+        spec.components[name].stream = ["blocks"]
+        spec.components[name].stream_size = int(0.3 * GB)
+    engine = make_engine(specs=[spec], headroom_gb=1.0)  # sequential needs ~2.3 GB, streamed ~0.6 GB
+    job = engine.submit(task="t2i", prompt="boat", model="fake-a", size="512x512")
+    job.finished.wait(5)
+    assert job.status == "done", job.error
+    assert job.report["strategy"] == "streamed"
+    adapter = engine.adapter(spec)
+    assert set(adapter.streamed_loads) == {"text_encoder", "transformer"}
+    # The streamed big components are freed after their phase, like sequential.
+    assert {r["component"] for r in engine.memory.resident_components()} == {"vae"}
+
+
+def test_streamed_is_the_cheapest_refusal(make_engine):
+    spec = fake_spec("fake-a")
+    spec.components["transformer"].stream = ["blocks"]
+    spec.components["transformer"].stream_size = int(0.3 * GB)
+    engine = make_engine(specs=[spec], headroom_gb=0.2)
+    job = engine.submit(task="t2i", prompt="boat", model="fake-a", size="512x512")
+    job.finished.wait(5)
+    assert job.error["code"] == "insufficient_memory"
+    # The refusal quotes the cheapest strategy: the whole 2 GB text encoder (not streamable here) + VAE + work.
+    assert 2.0 < job.error["need_gb"] < 2.5
+    spec.components["text_encoder"].stream = ["blocks"]
+    spec.components["text_encoder"].stream_size = int(0.3 * GB)
+    job = engine.submit(task="t2i", prompt="boat", model="fake-a", size="512x512")
+    job.finished.wait(5)
+    assert job.error["code"] == "insufficient_memory" and job.error["need_gb"] < 1.0

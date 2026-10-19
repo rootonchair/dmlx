@@ -8,8 +8,8 @@ tasks: [t2i]
 max_references: 0
 min_ram_gb: 16
 components:
-  text_encoder: { phase: encode, share_key: qwen3-4b-q4 }
-  transformer:  { phase: denoise }
+  text_encoder: { phase: encode, share_key: qwen3-4b-q4, stream: [layers] }
+  transformer:  { phase: denoise, stream: [noise_refiner, context_refiner, layers] }
   vae:          { phase: decode, keep: true }
 defaults: { steps: 9, guidance: 0.0, width: 1024, height: 1024 }
 # Measured on M5 at 1024x1024 (docs/benchmarks/b1.md).

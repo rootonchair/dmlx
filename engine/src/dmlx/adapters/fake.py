@@ -19,6 +19,8 @@ class FakeAdapter:
         self.path = path
         self.loaded: set[str] = set()
         self.load_calls: list[str] = []
+        self.stream_mode = False
+        self.streamed_loads: list[str] = []
         self._cache: dict[str, bool] = {}
         self.hits = self.misses = 0
 
@@ -31,6 +33,9 @@ class FakeAdapter:
     def load_component(self, name: str) -> int:
         self.loaded.add(name)
         self.load_calls.append(name)
+        if self.stream_mode and self.spec.components[name].stream_size:
+            self.streamed_loads.append(name)
+            return self.spec.components[name].stream_size
         return self.spec.components[name].size
 
     def free_component(self, name: str) -> None:
@@ -39,8 +44,8 @@ class FakeAdapter:
     def has_embedding(self, prompt: str) -> bool:
         return prompt in self._cache
 
-    def set_tiled_decode(self, tiled: bool) -> None:
-        self.tiled = tiled
+    def set_decode_mode(self, mode: str) -> None:
+        self.decode_mode = mode
 
     def embed_cache_stats(self) -> dict:
         return {"entries": len(self._cache), "hits": self.hits, "misses": self.misses}

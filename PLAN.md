@@ -14,6 +14,7 @@ Companion docs: `dmlx-spec.md` (what and why), prototype: https://claude.ai/arti
 | B4 Hardening | ✅ (scope cut) | crash recovery, 10-turn session, determinism + warm-edit integration tests. **Qwen-Image-Edit moved post-beta** (32 GB+ only; cannot be validated on the 24 GB dev Mac). Brush masks remain a stretch goal. |
 | UI visual review | ✅ | Chat turns, versions, edit headers, error card, empty state, status card and onboarding rendered with the harness `renderChat` step (ImageRenderer; the sidebar list and text field don't appear in in-process captures). Fixed: refused jobs drew an empty 1024² frame plus unusable actions; the refusal message used the model id instead of its name. |
 | B5 Release | ✅ build / ⏳ publish | `tools/bundle_app.sh --zip` → 151 MB zip, 454 MB app. Waiting on: real 16 GB run, GitHub repo + release (needs your go-ahead) |
+| B6 Lowest-memory mode | ✅ | block streaming (`streamed` strategy), exact banded VAE decode, float32 edit fix: new 1024² image in 1.4 GB, edit in 2.1 GB, no-hang gate passes. `docs/benchmarks/b2.md` |
 
 ## 1. Beta definition
 
@@ -42,7 +43,7 @@ Video, brush masks/inpainting (stretch only), upscaling, LoRA, mlx-gen / mlx-vid
 - [x] 10-turn edit session completes without engine restart on 16 GB emulation (10/10 jobs, 0 restarts).
 - [x] Engine killed mid-job → app recovers, shows the failure in the turn, next request works.
 - [x] Fresh-machine install: bundled app on an empty account (fresh HOME, empty HF cache, minimal PATH) → onboarding opens by itself → Download → 4.6 GB with progress → first image.
-- [x] Unit + integration tests green (20 + 3, plus 9 app tests); fixed-seed images are pixel-identical.
+- [x] Unit + integration tests green (22 + 5, plus 9 app tests); fixed-seed images are pixel-identical within a strategy.
 - [x] README, CONTRIBUTING, known issues, model license table, release notes.
 
 ## 2. Architecture and repo layout

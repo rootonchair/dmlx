@@ -141,7 +141,7 @@ struct ImageTurnView: View {
         if v.status == .done {
             if let s = v.seconds { parts.append(String(format: "%.1f s", s)) }
             parts.append(v.loads.isEmpty ? "model was already warm" : "loaded \(v.loads.map { AppModel.componentName($0) }.joined(separator: ", "))")
-            if let strategy = v.strategy, strategy != "eager" { parts.append(strategy == "sequential" ? "low-memory mode" : "memory-saving mode") }
+            if let label = AppModel.strategyLabel(v.strategy) { parts.append(label) }
         }
         return parts.joined(separator: " · ")
     }

@@ -9,7 +9,7 @@ Create and edit images by chatting, fully on your Mac. dMLX is a native macOS ap
 - **Chat to create.** Describe an image; follow up in plain words ("make it night") to edit the latest result. No settings to pick first.
 - **Versions, not overwrites.** Variations stack as v1, v2, v3 on the same turn; edit any version.
 - **References.** Attach up to 3 images (or use a previous result) to guide an edit.
-- **Stays responsive.** The engine checks free memory before every job, loads model parts one at a time when memory is tight, tiles the decoder when needed, and stops a job if macOS memory pressure turns critical.
+- **Stays responsive.** The engine checks free memory before every job, loads model parts one at a time when memory is tight, and in the tightest case streams the model from disk block by block (a new 1024×1024 image in about 1.5 GB). It stops a job if macOS memory pressure turns critical.
 - **Warm follow-ups.** Models stay loaded between turns and prompt embeddings are cached, so follow-up edits skip loading entirely.
 - **Local API.** The engine speaks an OpenAI-compatible images API, so other apps and agents can use it too.
 
@@ -44,8 +44,9 @@ Before each job the engine compares what the job needs with memory that can be u
 | eager | plenty of room | everything, kept warm |
 | phase-free | some room | image model + decoder; the text encoder is freed after reading the prompt |
 | sequential | tight | one large part at a time |
+| streamed | very tight | one block of a large part at a time, read from disk just before it runs (~25% slower) |
 
-If nothing fits, the job is refused with a readable message ("Try anyway" runs it in low-memory mode and stops automatically if the Mac gets slow). While a job runs, the engine watches memory pressure and swap and stops before the Mac starts to hang. Details: [`dmlx-spec.md`](dmlx-spec.md) §8 and [`docs/benchmarks/b1.md`](docs/benchmarks/b1.md).
+Below 32 GB, FLUX.2 Klein decodes with an exact, banded decoder (about 1.1 GB at 1024×1024 instead of 8.6 GB). If nothing fits, the job is refused with a readable message ("Try anyway" runs it in low-memory mode and stops automatically if the Mac gets slow). While a job runs, the engine watches memory pressure and swap and stops before the Mac starts to hang. Details: [`dmlx-spec.md`](dmlx-spec.md) §8, [`docs/benchmarks/b1.md`](docs/benchmarks/b1.md) and [`docs/benchmarks/b2.md`](docs/benchmarks/b2.md).
 
 ## Build from source
 

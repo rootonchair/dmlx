@@ -69,3 +69,62 @@ def test_warm_edit_has_no_loads():
     assert edit.status == "done", edit.error
     if first.report["strategy"] == "eager":
         assert edit.report["loads"] in ([], ["text_encoder"])
+
+
+def test_streamed_matches_sequential_when_uncompiled():
+    """Block streaming changes where weights live, not the math: identical pixels without mx.compile."""
+    import mlx.core as mx
+    from PIL import Image, ImageChops
+
+    engine = _real_engine()
+    mx.disable_compile()
+    try:
+        images = []
+        for strategy in ("sequential", "streamed"):
+            engine.memory.unload_model("flux2-klein-4b")
+            job = engine.submit(task="t2i", prompt="a paper crane on a desk", model="flux2-klein-4b",
+                                size="512x512", seed=99, strategy=strategy, force=True)
+            job.finished.wait(600)
+            assert job.status == "done", job.error
+            assert job.report["strategy"] == strategy
+            images.append(Image.open(engine.results.path(job.result_ids[0])).convert("RGB"))
+    finally:
+        mx.enable_compile()
+    assert ImageChops.difference(*images).getbbox() is None
+
+
+def test_banded_decode_matches_full_decode():
+    """Banded decode differs from the one-piece decode only by float rounding, with no regional shift."""
+    import mlx.core as mx
+    import numpy as np
+    from mflux.models.flux2.model.flux2_vae.vae import Flux2VAE
+
+    from dmlx.adapters import banded_vae
+
+    engine = _real_engine()
+    captured = {}
+    decode = banded_vae.decode
+
+    def capture(vae, latents):
+        captured["latents"] = latents
+        return decode(vae, latents)
+
+    banded_vae.decode = capture  # a forced job decodes banded
+    try:
+        job = engine.submit(task="t2i", prompt="portrait of an old fisherman, golden hour", model="flux2-klein-4b",
+                            size="512x512", seed=5, strategy="sequential", force=True)
+        job.finished.wait(600)
+        assert job.status == "done", job.error
+        assert job.report["decode_mode"] == "banded"
+    finally:
+        banded_vae.decode = decode
+    vae = engine.adapter(engine.registry.get("flux2-klein-4b")).pipe.vae
+
+    def to8(x):
+        return np.clip((np.array(x.astype(mx.float32))[0].transpose(1, 2, 0) + 1) * 127.5, 0, 255).round()
+
+    full = to8(Flux2VAE.decode(vae, captured["latents"]))
+    banded = to8(decode(vae, captured["latents"]))
+    diff = banded - full
+    assert np.abs(diff).mean() < 1.5
+    assert np.abs(diff.mean(2).reshape(8, 64, 8, 64).mean((1, 3))).max() < 0.5  # no 64 px block shifted

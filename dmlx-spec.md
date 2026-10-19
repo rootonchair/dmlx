@@ -225,7 +225,7 @@ Chosen per request from **ratio = available memory ÷ required components size**
 | > 2× | Comfortable | **Eager:** load all, keep resident across requests, cache text embeddings in RAM |
 | 1.2–2× | Adequate | **Phase-free:** load all, free text encoder after encode unless more requests are queued for that model |
 | 0.8–1.2× | Tight | **Sequential:** load encoder → encode → free → load transformer → denoise → free → load VAE → decode |
-| < 0.8× | Constrained | **Stream:** sequential + transformer block streaming from mmap'd weights; slow but runs |
+| < 0.8× | Constrained | **Stream:** sequential + block streaming of the transformer and text encoder: each block is read with plain file reads (not mmap, which stalls other processes) on a read-ahead thread, run, then dropped; ~25% slower |
 
 Rules:
 
