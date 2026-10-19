@@ -260,3 +260,57 @@ def test_streamed_is_the_cheapest_refusal(make_engine):
     job = engine.submit(task="t2i", prompt="boat", model="fake-a", size="512x512")
     job.finished.wait(5)
     assert job.error["code"] == "insufficient_memory" and job.error["need_gb"] < 1.0
+
+
+def _inspection(repo="someone/flux2-klein-9b-mflux-q4"):
+    from dmlx import catalog
+
+    return catalog.Inspection(repo=repo, id=catalog._slug(repo), name="FLUX.2 Klein 9B (4-bit)", family="flux2-klein",
+                              mflux_config="flux2_klein_9b", tasks=["t2i", "edit"], license="other",
+                              permissive_license=False, quantization=4, size_bytes=9 * GB,
+                              defaults={"steps": 4}, activation_gb_per_mp=2.0)
+
+
+def test_add_and_remove_a_model(make_engine, monkeypatch, tmp_path):
+    from dmlx import catalog, downloads
+
+    engine = make_engine()
+    monkeypatch.setattr(catalog, "inspect", lambda text: _inspection())
+    monkeypatch.setattr(downloads, "local_path", lambda spec: None)
+    added = engine.add_model("someone/flux2-klein-9b-mflux-q4", download=False)
+    assert added["user_added"] and not added["downloaded"]
+    assert (tmp_path / "models" / f"{added['id']}.yaml").exists()
+    assert engine.add_model("someone/flux2-klein-9b-mflux-q4", download=False)["id"] == added["id"]  # no duplicate
+    assert engine.inspect_model("x")["already_added"] == added["id"]
+    monkeypatch.setattr(downloads, "delete_local", lambda spec: 0)
+    assert engine.remove_model(added["id"])["removed"]
+    assert added["id"] not in engine.registry
+    assert not (tmp_path / "models" / f"{added['id']}.yaml").exists()
+
+
+def test_builtin_models_keep_their_entry_and_busy_models_are_protected(make_engine, monkeypatch):
+    from dmlx import downloads
+    from dmlx.engine import RequestError
+
+    engine = make_engine()
+    try:
+        engine.remove_model("fake-a")
+        raise AssertionError("expected a refusal")
+    except RequestError as exc:
+        assert exc.code == "builtin_model"
+    FakeAdapter.step_delay = 0.2
+    try:
+        job = engine.submit(task="t2i", prompt="boat", model="fake-a", size="512x512")
+        time.sleep(0.1)
+        try:
+            engine.delete_model_files("fake-a")
+            raise AssertionError("expected a refusal")
+        except RequestError as exc:
+            assert exc.code == "model_busy"
+        job.finished.wait(5)
+    finally:
+        FakeAdapter.step_delay = 0.0
+    deleted = []
+    monkeypatch.setattr(downloads, "delete_local", lambda spec: deleted.append(spec.id) or 2 * GB)
+    assert engine.delete_model_files("fake-a")["freed_gb"] == 2.0 and deleted == ["fake-a"]
+    assert "fake-a" in engine.registry and engine.memory.resident_models() == set()

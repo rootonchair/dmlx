@@ -15,6 +15,7 @@ struct SettingsView: View {
 
 struct ModelsSettings: View {
     @Environment(AppModel.self) private var model
+    @State private var adding = false
 
     var body: some View {
         @Bindable var model = model
@@ -29,14 +30,26 @@ struct ModelsSettings: View {
                     .padding(.bottom, 6)
                 }
                 ForEach(model.models) { m in
-                    ModelRow(model: m)
+                    ModelRow(model: m, removable: true)
                 }
+                HStack {
+                    Text("Add FLUX.2 Klein or Z-Image models from Hugging Face.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Button("Add Model…") { adding = true }
+                        .disabled(!model.isEngineRunning)
+                }
+                .padding(.top, 4)
                 if model.models.isEmpty {
                     Text("Waiting for the engine…").foregroundStyle(.secondary)
                 }
             }
         }
         .task { await model.refreshModels() }
+        .sheet(isPresented: $adding) {
+            AddModelView().environment(model)
+        }
     }
 }
 

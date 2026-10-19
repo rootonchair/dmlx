@@ -151,6 +151,41 @@ final class AppModel {
         }
     }
 
+    // MARK: adding and removing models
+
+    func catalogSuggestions() async throws -> [CatalogSuggestion] {
+        guard let client else { throw EngineClientError.notRunning }
+        return try await client.catalogSuggestions()
+    }
+
+    func inspectModel(_ text: String) async throws -> ModelInspection {
+        guard let client else { throw EngineClientError.notRunning }
+        return try await client.inspect(repo: text)
+    }
+
+    /// Adds the model and starts its download; progress shows in Settings → Models.
+    func addModel(_ repo: String) async throws {
+        guard let client else { throw EngineClientError.notRunning }
+        let added = try await client.addModel(repo: repo)
+        await refreshModels()
+        show(added.downloaded ? "\(added.name) added (already on this Mac)" : "Downloading \(added.name)…")
+    }
+
+    /// Built-in models keep their entry (and can be downloaded again); added models leave the list.
+    func remove(_ m: EngineModel) {
+        _Concurrency.Task {
+            do {
+                guard let client else { throw EngineClientError.notRunning }
+                let freed = m.isUserAdded ? try await client.removeModel(model: m.id) : try await client.deleteFiles(model: m.id)
+                if modelChoice == m.id && m.isUserAdded { modelChoice = "auto" }
+                await refreshModels()
+                show(freed > 0 ? "Removed \(m.name) · freed \(String(format: "%.1f", freed)) GB" : "Removed \(m.name)")
+            } catch {
+                show("Couldn't remove \(m.name): \(error.localizedDescription)")
+            }
+        }
+    }
+
     var isEngineRunning: Bool {
         if case .running = engineState { return true }
         return false

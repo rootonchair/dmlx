@@ -143,6 +143,10 @@ class MemoryManager:
         with self._lock:
             self._adapters[model_id] = adapter
 
+    def unregister_adapter(self, model_id: str) -> None:
+        with self._lock:
+            self._adapters.pop(model_id, None)
+
     def pin(self, model_id: str, pinned: bool = True) -> None:
         with self._lock:
             (self._pinned.add if pinned else self._pinned.discard)(model_id)

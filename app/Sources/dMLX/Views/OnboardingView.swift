@@ -56,6 +56,8 @@ struct OnboardingView: View {
 struct ModelRow: View {
     @Environment(AppModel.self) private var app
     let model: EngineModel
+    var removable = false
+    @State private var confirmRemove = false
 
     var role: String {
         model.supports(.edit) ? "Creates and edits images" : "Creates images"
@@ -74,6 +76,10 @@ struct ModelRow: View {
                 Label("Downloaded", systemImage: "checkmark.circle.fill")
                     .foregroundStyle(.green)
                     .font(.callout)
+                if removable {
+                    Button("Remove…") { confirmRemove = true }
+                        .controlSize(.small)
+                }
             } else if model.download.status == "downloading" {
                 VStack(alignment: .trailing, spacing: 4) {
                     ProgressView(value: model.download.progress).frame(width: 140)
@@ -84,7 +90,12 @@ struct ModelRow: View {
                 }
             } else {
                 VStack(alignment: .trailing, spacing: 4) {
-                    Button("Download") { app.download(model) }
+                    HStack(spacing: 6) {
+                        Button("Download") { app.download(model) }
+                        if removable && model.isUserAdded {
+                            Button("Remove") { app.remove(model) }.controlSize(.small)
+                        }
+                    }
                     if let error = model.download.error {
                         Text(error).font(.caption2).foregroundStyle(.red).lineLimit(2)
                     }
@@ -93,6 +104,18 @@ struct ModelRow: View {
         }
         .padding(12)
         .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 10))
+        .confirmationDialog(removeTitle, isPresented: $confirmRemove, titleVisibility: .visible) {
+            Button(model.isUserAdded ? "Remove and Delete Files" : "Delete Files", role: .destructive) { app.remove(model) }
+        } message: {
+            Text(removeMessage)
+        }
+    }
+
+    var removeTitle: String { model.isUserAdded ? "Remove \(model.name)?" : "Delete the files of \(model.name)?" }
+
+    var removeMessage: String {
+        let files = "This deletes \(sizeText) from the Hugging Face cache on this Mac. Other apps that use the same model would need to download it again."
+        return model.isUserAdded ? files : files + " \(model.name) stays in the list, and you can download it again anytime."
     }
 
     var sizeText: String {

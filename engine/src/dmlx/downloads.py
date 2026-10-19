@@ -52,6 +52,33 @@ def fill_component_sizes(spec: ModelSpec, path: Path) -> None:
     spec.local_path = path
 
 
+def delete_local(spec: ModelSpec) -> int:
+    """Delete this model's repo from the Hugging Face cache. Returns the bytes freed.
+
+    Goes through huggingface_hub's own deletion: recent versions keep files in a shared,
+    deduplicated store that the repo folder only links to, and only the library knows which
+    shared files no other repo still uses.
+    """
+    from huggingface_hub import scan_cache_dir
+
+    cache = scan_cache_dir()
+    revisions = [
+        rev.commit_hash
+        for repo in cache.repos
+        if repo.repo_type == "model" and repo.repo_id == spec.repo
+        for rev in repo.revisions
+    ]
+    freed = 0
+    if revisions:
+        strategy = cache.delete_revisions(*revisions)
+        freed = strategy.expected_freed_size
+        strategy.execute()
+    spec.local_path = None
+    for comp in spec.components.values():
+        comp.stream_size = 0
+    return freed
+
+
 @dataclass
 class DownloadState:
     model_id: str

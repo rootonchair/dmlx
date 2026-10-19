@@ -338,7 +338,7 @@ class Flux2KleinAdapter(_MfluxAdapterBase):
         from mflux.models.flux2.flux2_initializer import Flux2Initializer
         from mflux.models.flux2.variants import Flux2Klein, Flux2KleinEdit
 
-        cfg = ModelConfig.flux2_klein_4b()
+        cfg = getattr(ModelConfig, self.spec.mflux_config or "flux2_klein_4b")()
         init = Flux2Initializer._init_config
         return {
             "t2i": _empty_pipeline(self, Flux2Klein, init, cfg, "_encode_prompt_pair"),
@@ -395,7 +395,7 @@ class ZImageAdapter(_MfluxAdapterBase):
         from mflux.models.z_image.variants.z_image import ZImage
         from mflux.models.z_image.z_image_initializer import ZImageInitializer
 
-        cfg = ModelConfig.z_image_turbo()
+        cfg = getattr(ModelConfig, self.spec.mflux_config or "z_image_turbo")()
         return {"t2i": _empty_pipeline(self, ZImage, ZImageInitializer._init_config, cfg, "_encode_prompts", {"float32": False})}
 
     def _construct(self, name: str) -> nn.Module:
@@ -421,6 +421,7 @@ class ZImageAdapter(_MfluxAdapterBase):
             num_inference_steps=req.steps,
             width=req.width,
             height=req.height,
+            guidance=req.guidance,  # Z-Image base uses CFG; Turbo ignores it
             image_path=str(req.image_paths[0]) if req.image_paths else None,
         )
         return generated.image

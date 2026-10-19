@@ -139,6 +139,35 @@ public struct EngineModel: Codable, Identifiable, Hashable, Sendable {
     public var pinned: Bool
     public var fits_this_mac: Bool
     public var download: Download
+    public var repo: String?
+    public var user_added: Bool?
 
     public func supports(_ task: GenTask) -> Bool { tasks.contains(task.rawValue) }
+    /// Added from the app (removable); built-in models can only have their files deleted.
+    public var isUserAdded: Bool { user_added ?? false }
+}
+
+/// What a Hugging Face repo is, as the engine reads it before anything is downloaded.
+public struct ModelInspection: Codable, Hashable, Sendable {
+    public var repo: String
+    public var id: String
+    public var name: String
+    public var family: String
+    public var tasks: [String]
+    public var license: String
+    public var permissive_license: Bool
+    public var quantization: Int?
+    public var size_gb: Double
+    public var url: String
+    public var already_added: String?
+
+    public func supports(_ task: GenTask) -> Bool { tasks.contains(task.rawValue) }
+}
+
+public struct CatalogSuggestion: Codable, Hashable, Sendable, Identifiable {
+    public var repo: String
+    public var label: String?
+    public var downloads: Int
+    public var added: Bool
+    public var id: String { repo }
 }

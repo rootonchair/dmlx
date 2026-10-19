@@ -39,6 +39,8 @@ class ModelSpec:
     decode_gb_per_mp: float = 9.0  # untiled VAE decode spike per megapixel
     decode_tiled_gb_per_mp: float = 2.5  # tiled VAE decode spike per megapixel
     decode_banded_gb_per_mp: float | None = None  # banded (exact, low-memory) decode, where the VAE supports it
+    mflux_config: str | None = None  # mflux ModelConfig factory (e.g. flux2_klein_9b); adapter default if None
+    user_added: bool = False  # added from the app; stored in the user's models folder and removable
     local_path: Path | None = field(default=None, repr=False)
 
     def supports(self, task: str) -> bool:
@@ -78,6 +80,7 @@ class ModelSpec:
             "max_references": self.max_references,
             "min_ram_gb": self.min_ram_gb,
             "repo": self.repo,
+            "user_added": self.user_added,
             "defaults": self.defaults,
             "size_gb": round(self.size / GB, 2) if self.size else None,
         }
@@ -110,6 +113,8 @@ def _parse(data: dict) -> ModelSpec:
         decode_gb_per_mp=float(data.get("decode_gb_per_mp", 9.0)),
         decode_tiled_gb_per_mp=float(data.get("decode_tiled_gb_per_mp", 2.5)),
         decode_banded_gb_per_mp=float(data["decode_banded_gb_per_mp"]) if "decode_banded_gb_per_mp" in data else None,
+        mflux_config=data.get("mflux_config"),
+        user_added=bool(data.get("user_added", False)),
     )
 
 
@@ -123,10 +128,22 @@ class Registry:
         for entry in sorted(resources.files("dmlx.models").iterdir(), key=lambda p: p.name):
             if entry.name.endswith(".yaml"):
                 specs.append(_parse(yaml.safe_load(entry.read_text())))
+        builtin = {s.id for s in specs}
         if extra_dir and extra_dir.is_dir():
             for path in sorted(extra_dir.glob("*.yaml")):
-                specs.append(_parse(yaml.safe_load(path.read_text())))
+                try:
+                    spec = _parse(yaml.safe_load(path.read_text()))
+                except Exception:  # a hand-edited or truncated file must not stop the engine
+                    continue
+                if spec.id not in builtin:
+                    specs.append(spec)
         return cls(specs)
+
+    def add(self, spec: ModelSpec) -> None:
+        self._specs[spec.id] = spec
+
+    def remove(self, model_id: str) -> None:
+        self._specs.pop(model_id, None)
 
     def get(self, model_id: str) -> ModelSpec:
         try:

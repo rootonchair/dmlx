@@ -148,6 +148,31 @@ public final class EngineClient: @unchecked Sendable {
         _ = try await send(try request("admin/models/\(model)/pull", method: "POST", json: [:]), as: Ack.self)
     }
 
+    public func catalogSuggestions() async throws -> [CatalogSuggestion] {
+        struct List: Decodable { var data: [CatalogSuggestion] }
+        return try await send(try request("admin/catalog/suggestions"), as: List.self).data
+    }
+
+    public func inspect(repo: String) async throws -> ModelInspection {
+        try await send(try request("admin/models/inspect", method: "POST", json: ["repo": repo]), as: ModelInspection.self)
+    }
+
+    public func addModel(repo: String) async throws -> EngineModel {
+        try await send(try request("admin/models", method: "POST", json: ["repo": repo, "download": true]), as: EngineModel.self)
+    }
+
+    /// Deletes the downloaded files (the model stays listed and can be downloaded again). Returns GB freed.
+    public func deleteFiles(model: String) async throws -> Double {
+        struct Ack: Decodable { var freed_gb: Double }
+        return try await send(try request("admin/models/\(model)/files", method: "DELETE"), as: Ack.self).freed_gb
+    }
+
+    /// Removes a model added from the app, with its files. Returns GB freed.
+    public func removeModel(model: String) async throws -> Double {
+        struct Ack: Decodable { var freed_gb: Double }
+        return try await send(try request("admin/models/\(model)", method: "DELETE"), as: Ack.self).freed_gb
+    }
+
     public func cancel(job: String) async throws {
         struct Ack: Decodable { var status: String }
         _ = try await send(try request("v1/jobs/\(job)", method: "DELETE"), as: Ack.self)

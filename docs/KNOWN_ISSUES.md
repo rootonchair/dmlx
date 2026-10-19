@@ -10,6 +10,7 @@
 | Reproducibility | A fixed seed reproduces the same image within a memory mode. Lowest-memory mode runs the model uncompiled, so its image can differ very slightly (≈1/255 on average) from the same seed in other modes. | — |
 | Previews | No live preview frames yet; the card shows progress (and the blurred source image while editing). | Planned: cheap latent previews. |
 | Features | No video, no brush/mask edits, no upscaling, no LoRA in this beta. | On the roadmap (`dmlx-spec.md` §13). |
+| Models | Only FLUX.2 Klein and Z-Image models in mflux format can be added; other families need their own adapter. Memory estimates for added 9B and base models are derived, not measured on every variant. | Pick an mflux-community version; report variants that misbehave. |
 | History | A job that is running when you quit the app is not resumed; it shows as stopped. | Retry from the turn. |
 | Cache | Prompt embeddings are cached in memory only and are cleared when the engine restarts. | Planned SSD tier (spec F6). |
 | Network | Models download from Hugging Face once; downloads need network access. | After that dMLX works offline. |

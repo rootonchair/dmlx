@@ -15,6 +15,7 @@ import SwiftUI
 enum DevHarness {
     /// When no SwiftUI window is on screen (e.g. the Mac is locked), render RootView in our own window.
     private static var hostWindow: NSWindow?
+    private static var addModelWindow: NSWindow?
 
     private static func ensureHostWindow(_ model: AppModel) {
         guard hostWindow == nil, !NSApp.windows.contains(where: { $0.isVisible && $0.frame.width > 300 }) else { return }
@@ -70,6 +71,23 @@ enum DevHarness {
         if let name = step["renderChat"] as? String { renderChat(model, name: name, out: out) }
         if let text = step["draft"] as? String { model.draft = text }
         if let choice = step["modelChoice"] as? String { model.modelChoice = choice }
+        if step["suggestions"] != nil {
+            do { log("suggestions: \(try await model.catalogSuggestions().count)") } catch { log("suggestions error: \(error.localizedDescription)") }
+        }
+        if let repo = step["inspect"] as? String {
+            do {
+                let i = try await model.inspectModel(repo)
+                log("inspect \(repo): \(i.name) | \(i.tasks) | \(i.license) permissive=\(i.permissive_license) | \(i.size_gb) GB | added=\(i.already_added ?? "-")")
+            } catch {
+                log("inspect \(repo): error \(error.localizedDescription)")
+            }
+        }
+        if step["addModelSheet"] != nil {
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 560, height: 600), styleMask: [.titled], backing: .buffered, defer: false)
+            window.contentView = NSHostingView(rootView: AddModelView().environment(model))
+            window.orderFrontRegardless()
+            addModelWindow = window
+        }
         if step["logPreview"] != nil { log("preview [\(model.modelChoice)] \(model.draft.isEmpty ? "(empty)" : model.draft): \(model.routePreview)") }
         if let text = step["send"] as? String { model.send(text) }
         if step["variation"] != nil, let t = model.latestImageTurn { model.variation(t.id) }

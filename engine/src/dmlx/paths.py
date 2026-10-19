@@ -25,6 +25,13 @@ def uploads_dir() -> Path:
     return path
 
 
+def models_dir() -> Path:
+    """Model specs added from the app (one YAML file per model)."""
+    path = home() / "models"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
 def logs_dir() -> Path:
     path = home() / "logs"
     path.mkdir(parents=True, exist_ok=True)

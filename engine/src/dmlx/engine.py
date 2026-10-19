@@ -12,7 +12,7 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from dmlx import downloads, sysmem
+from dmlx import catalog, downloads, paths, sysmem
 from dmlx.adapters.base import GenRequest, JobAborted
 from dmlx.memory import GB, InsufficientMemory, JobGuard, MemoryManager
 from dmlx.registry import ModelSpec, Registry
@@ -90,7 +90,7 @@ class Job:
 
 class Engine:
     def __init__(self, registry: Registry | None = None, results: ResultStore | None = None, adapter_factory=None):
-        self.registry = registry or Registry.load_builtin()
+        self.registry = registry or Registry.load_builtin(extra_dir=paths.models_dir())
         self.results = results or ResultStore()
         self.memory = MemoryManager()
         self.downloader = downloads.Downloader()
@@ -165,6 +165,77 @@ class Engine:
             self.memory.ensure(spec.id, name)
         del adapter
         return {"model": spec.id, "strategy": plan.strategy, "resident": self.memory.resident_components()}
+
+    # -- adding and removing models ---------------------------------------------------
+    def inspect_model(self, text: str) -> dict:
+        """What a Hugging Face repo is, before anything is downloaded."""
+        try:
+            found = catalog.inspect(text)
+        except catalog.InspectError as exc:
+            raise RequestError("unsupported_model", str(exc), 422) from exc
+        existing = next((s.id for s in self.registry.all() if s.repo.lower() == found.repo.lower()), None)
+        return {**found.as_dict(), "already_added": existing}
+
+    def add_model(self, text: str, download: bool = True) -> dict:
+        try:
+            found = catalog.inspect(text)
+        except catalog.InspectError as exc:
+            raise RequestError("unsupported_model", str(exc), 422) from exc
+        existing = next((s for s in self.registry.all() if s.repo.lower() == found.repo.lower()), None)
+        if existing is None:
+            base, n = found.id, 2
+            while found.id in self.registry:
+                found.id, n = f"{base}-{n}", n + 1
+            existing = catalog.save_spec(found)
+            self.registry.add(existing)
+            log.info("added model %s from %s", existing.id, existing.repo)
+        path = self._resolve_local(existing)  # another tool may already have downloaded it
+        if path:
+            downloads.fill_component_sizes(existing, path)
+        elif download:
+            self.downloader.start(existing)
+        return next(m for m in self.models() if m["id"] == existing.id)
+
+    def _ensure_idle(self, spec: ModelSpec) -> None:
+        if any(j.model_id == spec.id and not j.terminal for j in list(self._jobs.values())):
+            raise RequestError("model_busy", f"{spec.name} is generating right now. Try again when it finishes.", 409)
+        if self.downloader.state(spec.id).status == "downloading":
+            raise RequestError("model_busy", f"{spec.name} is still downloading.", 409)
+
+    def delete_model_files(self, model_id: str) -> dict:
+        """Free the model from memory and delete its downloaded files; it can be downloaded again."""
+        spec = self._spec(model_id)
+        self._ensure_idle(spec)
+        self.memory.unload_model(spec.id)
+        with self._lock:
+            self._adapters.pop(spec.id, None)
+        self.memory.unregister_adapter(spec.id)
+        freed = downloads.delete_local(spec)
+        state = self.downloader.state(spec.id)
+        state.status, state.done, state.error = "idle", 0, None
+        log.info("deleted files of %s (%.2f GB)", spec.id, freed / GB)
+        return {"model": spec.id, "freed_gb": round(freed / GB, 2)}
+
+    def remove_model(self, model_id: str, delete_files: bool = True) -> dict:
+        """Remove a model added from the app (built-in models can only have their files deleted)."""
+        spec = self._spec(model_id)
+        if not spec.user_added:
+            raise RequestError("builtin_model", f"{spec.name} comes with dMLX; you can delete its files instead.", 409)
+        freed = 0.0
+        if delete_files:
+            freed = self.delete_model_files(spec.id)["freed_gb"]
+        else:
+            self._ensure_idle(spec)
+            self.memory.unload_model(spec.id)
+        catalog.delete_spec(spec.id)
+        self.registry.remove(spec.id)
+        return {"model": spec.id, "removed": True, "freed_gb": freed}
+
+    def _spec(self, model_id: str) -> ModelSpec:
+        try:
+            return self.registry.get(model_id)
+        except KeyError as exc:
+            raise RequestError("unknown_model", str(exc), 404) from exc
 
     def unload(self, model_id: str) -> dict:
         spec = self.registry.get(model_id)

@@ -8,6 +8,8 @@ First public beta: chat to create and edit images, fully on your Mac.
   The composer shows what will happen ("Will edit image 2 · FLUX.2 Klein 4B") before you send.
 - **Model menu in the message box.** Auto by default, or pick a model; the line above the box says
   which model the next message uses, and notes when it has to load a different one.
+- **Add and remove models.** Any FLUX.2 Klein or Z-Image model in mflux format, from a list of
+  community versions or a pasted Hugging Face link; checked (family, size, license) before download.
 - **Versions.** Variations stack as v1, v2, v3 on the same turn; edit any version; use any result
   as a reference for the next edit.
 - **Never hangs your Mac.** Memory is checked before every job; model parts load one at a time when

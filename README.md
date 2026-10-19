@@ -35,6 +35,8 @@ Create and edit images by chatting, fully on your Mac. dMLX is a native macOS ap
 
 Weights are downloaded from Hugging Face into the standard cache (`~/.cache/huggingface`) and are never bundled.
 
+**Adding and removing models.** Settings → Models → **Add Model…** lists the community versions of the supported families (FLUX.2 Klein 4B/9B, base and distilled; Z-Image Turbo and base, 3- to 16-bit) and accepts any Hugging Face repo or link in mflux format. dMLX checks the repo before downloading anything (family, size, license) and warns when a license may not allow commercial use (FLUX.2 Klein 9B is non-commercial). **Remove…** deletes a model's files from the Hugging Face cache; built-in models stay listed and can be downloaded again.
+
 ## How memory is handled
 
 Before each job the engine compares what the job needs with memory that can be used *without* making macOS compress or swap other apps (minus a reserve for the system), then picks a strategy:

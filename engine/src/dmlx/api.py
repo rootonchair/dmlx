@@ -144,6 +144,35 @@ def create_app(engine: Engine | None = None, token: str | None = None) -> FastAP
     async def unload(model_id: str):
         return await asyncio.to_thread(engine.unload, model_id)
 
+    @app.get("/admin/catalog/suggestions", dependencies=[Depends(auth)])
+    async def catalog_suggestions():
+        from dmlx import catalog
+
+        try:
+            repos = await asyncio.to_thread(catalog.suggestions)
+        except Exception as exc:
+            raise RequestError("catalog_unavailable", f"Could not reach Hugging Face: {exc}", 502) from exc
+        added = {s.repo.lower() for s in engine.registry.all()}
+        return {"data": [{**r, "added": r["repo"].lower() in added} for r in repos]}
+
+    @app.post("/admin/models/inspect", dependencies=[Depends(auth)])
+    async def inspect_model(request: Request):
+        body = await _json_or_empty(request)
+        return await asyncio.to_thread(engine.inspect_model, str(body.get("repo", "")))
+
+    @app.post("/admin/models", dependencies=[Depends(auth)])
+    async def add_model(request: Request):
+        body = await _json_or_empty(request)
+        return await asyncio.to_thread(engine.add_model, str(body.get("repo", "")), bool(body.get("download", True)))
+
+    @app.delete("/admin/models/{model_id}/files", dependencies=[Depends(auth)])
+    async def delete_model_files(model_id: str):
+        return await asyncio.to_thread(engine.delete_model_files, model_id)
+
+    @app.delete("/admin/models/{model_id}", dependencies=[Depends(auth)])
+    async def remove_model(model_id: str):
+        return await asyncio.to_thread(engine.remove_model, model_id)
+
     @app.get("/admin/memory", dependencies=[Depends(auth)])
     async def memory():
         return engine.status()
