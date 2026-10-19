@@ -6,6 +6,8 @@ First public beta: chat to create and edit images, fully on your Mac.
 
 - **Chat-style creation.** Describe an image; follow up in plain words to edit the latest result.
   The composer shows what will happen ("Will edit image 2 · FLUX.2 Klein 4B") before you send.
+- **Model menu in the message box.** Auto by default, or pick a model; the line above the box says
+  which model the next message uses, and notes when it has to load a different one.
 - **Versions.** Variations stack as v1, v2, v3 on the same turn; edit any version; use any result
   as a reference for the next edit.
 - **Never hangs your Mac.** Memory is checked before every job; model parts load one at a time when

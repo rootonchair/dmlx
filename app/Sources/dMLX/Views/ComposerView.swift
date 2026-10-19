@@ -81,6 +81,10 @@ struct ComposerView: View {
                     .fixedSize()
                     .help("Size for new images (edits keep the source size)")
 
+                    if model.choosableModels.count > 1 {
+                        ModelMenu()
+                    }
+
                     Text(model.routePreview)
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -151,5 +155,32 @@ struct ContextChip: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel("\(title). Remove")
+    }
+}
+
+
+/// Model choice in the message box: Auto, or one downloaded model.
+struct ModelMenu: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        Menu {
+            Picker("Model", selection: Binding(get: { model.modelChoice }, set: { model.modelChoice = $0 })) {
+                Text("Auto — picks for this Mac, one model for new images and edits").tag("auto")
+                ForEach(model.choosableModels) { m in
+                    Text("\(m.name) — \(AppModel.modelSummary(m))").tag(m.id)
+                }
+            }
+            .pickerStyle(.inline)
+            .labelsHidden()
+            Divider()
+            SettingsLink { Text("Manage models…") }
+        } label: {
+            Text(model.chosenModel?.name ?? "Auto").font(.caption)
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+        .help("Model for new images and edits")
+        .accessibilityLabel("Model: \(model.chosenModel?.name ?? "Auto")")
     }
 }

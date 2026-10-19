@@ -50,8 +50,16 @@ final class AppModel {
     var targetTurnId: String?
     var attachments: [Attachment] = []
     var aspect: Aspect = .square
-    var preferredGenerateModel: String = UserDefaults.standard.string(forKey: "generateModel") ?? "flux2-klein-4b" {
-        didSet { UserDefaults.standard.set(preferredGenerateModel, forKey: "generateModel") }
+    /// "auto" or a model id; chosen from the composer's model menu (and mirrored in Settings).
+    var modelChoice: String = AppModel.savedModelChoice() {
+        didSet { UserDefaults.standard.set(modelChoice, forKey: "modelChoice") }
+    }
+
+    private static func savedModelChoice() -> String {
+        if let saved = UserDefaults.standard.string(forKey: "modelChoice") { return saved }
+        // Earlier builds kept a "model for new images" setting; carry a non-default pick over.
+        if let old = UserDefaults.standard.string(forKey: "generateModel"), old != "flux2-klein-4b" { return old }
+        return "auto"
     }
 
     // UI
@@ -166,14 +174,36 @@ final class AppModel {
 
     // MARK: model choice
 
+    /// Downloaded models that fit this Mac: what the composer's model menu offers.
+    var choosableModels: [EngineModel] {
+        models.filter { $0.downloaded && $0.fits_this_mac }
+    }
+
+    /// The model the menu's choice resolves to, or nil for Auto (or a choice that is no longer available).
+    var chosenModel: EngineModel? {
+        modelChoice == "auto" ? nil : choosableModels.first(where: { $0.id == modelChoice })
+    }
+
     func defaultModel(for task: GenTask) -> EngineModel? {
+        if let chosen = chosenModel, chosen.supports(task) { return chosen }
         let downloaded = models.filter { $0.downloaded && $0.supports(task) && $0.fits_this_mac }
-        // One model for both tasks keeps generate/edit turns warm; others are opt-in.
-        let preference = task == .t2i ? [preferredGenerateModel, "flux2-klein-4b", "z-image-turbo"] : ["flux2-klein-4b"]
-        for id in preference {
+        // Auto: one model for both tasks keeps generate/edit turns warm.
+        for id in ["flux2-klein-4b", "z-image-turbo"] {
             if let m = downloaded.first(where: { $0.id == id }) { return m }
         }
         return downloaded.first
+    }
+
+    /// One line for the model menu: what the model does and its size.
+    static func modelSummary(_ m: EngineModel) -> String {
+        let does = m.supports(.edit) ? "New images and edits" : "New images only"
+        return m.size_gb.map { "\(does) · \(String(format: "%.1f", $0)) GB" } ?? does
+    }
+
+    /// Appended to the route preview when sending would swap another model out of memory.
+    private func loadHint(_ m: EngineModel) -> String {
+        guard !m.resident, models.contains(where: { $0.resident && $0.id != m.id }), let gb = m.size_gb else { return "" }
+        return " · loads \(String(format: "%.1f", gb)) GB"
     }
 
     func modelName(_ id: String) -> String {
@@ -245,15 +275,15 @@ final class AppModel {
     var routePreview: String {
         switch Router.route(draft, routingContext) {
         case .none:
-            return "Model picked for you"
+            return chosenModel == nil ? "Model picked for you" : ""  // the model menu already names the choice
         case .generate:
-            return defaultModel(for: .t2i).map { "Will generate · \($0.name)" } ?? "No image model downloaded"
+            return defaultModel(for: .t2i).map { "Will generate · \($0.name)\(loadHint($0))" } ?? "No image model downloaded"
         case .edit(_, let fromTurn):
-            let name = defaultModel(for: .edit)?.name ?? "no edit model"
-            if let fromTurn, let t = turns.first(where: { $0.id == fromTurn }) {
-                return "Will edit image \(t.number) · \(name)"
-            }
-            return "Will edit the attached image · \(name)"
+            guard let m = defaultModel(for: .edit) else { return "No model that can edit is downloaded" }
+            // The chosen model may not edit; say which one is used instead.
+            let fallback = chosenModel.map { $0.supports(.edit) ? "" : " (\($0.name) can't edit)" } ?? ""
+            let what = fromTurn.flatMap { id in turns.first(where: { $0.id == id }) }.map { "image \($0.number)" } ?? "the attached image"
+            return "Will edit \(what) · \(m.name)\(fallback)\(loadHint(m))"
         case .video:
             return "Video isn't in this beta yet"
         }

@@ -9,6 +9,7 @@ import SwiftUI
 /// Script: {"out": "/dir", "steps": [{"newSession": true}, {"send": "a boat"}, {"waitIdle": 300},
 ///          {"snapshot": "name"}, {"variation": true}, {"edit": true}, {"draft": "text"}, {"sleep": 1},
 ///          {"onboarding": true|false}, {"settings": true}, {"selectSession": 0}, {"renderChat": "name"},
+///          {"modelChoice": "auto"|"<model id>"}, {"logPreview": true},
 ///          {"quit": true}]}
 @MainActor
 enum DevHarness {
@@ -68,6 +69,8 @@ enum DevHarness {
         }
         if let name = step["renderChat"] as? String { renderChat(model, name: name, out: out) }
         if let text = step["draft"] as? String { model.draft = text }
+        if let choice = step["modelChoice"] as? String { model.modelChoice = choice }
+        if step["logPreview"] != nil { log("preview [\(model.modelChoice)] \(model.draft.isEmpty ? "(empty)" : model.draft): \(model.routePreview)") }
         if let text = step["send"] as? String { model.send(text) }
         if step["variation"] != nil, let t = model.latestImageTurn { model.variation(t.id) }
         if step["edit"] != nil, let t = model.latestImageTurn { model.edit(t.id) }

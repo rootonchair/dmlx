@@ -6,7 +6,7 @@ Create and edit images by chatting, fully on your Mac. dMLX is a native macOS ap
 
 ## What it does
 
-- **Chat to create.** Describe an image; follow up in plain words ("make it night") to edit the latest result. No settings to pick first.
+- **Chat to create.** Describe an image; follow up in plain words ("make it night") to edit the latest result. No settings to pick first: the model menu in the message box starts on **Auto**, and you can pick a specific model there.
 - **Versions, not overwrites.** Variations stack as v1, v2, v3 on the same turn; edit any version.
 - **References.** Attach up to 3 images (or use a previous result) to guide an edit.
 - **Stays responsive.** The engine checks free memory before every job, loads model parts one at a time when memory is tight, and in the tightest case streams the model from disk block by block (a new 1024×1024 image in about 1.5 GB). It stops a job if macOS memory pressure turns critical.
