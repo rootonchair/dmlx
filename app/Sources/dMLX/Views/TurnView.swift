@@ -76,6 +76,8 @@ struct ImageTurnView: View {
 
     var version: ImageVersion? { turn.current }
     var isTarget: Bool { model.targetTurnId == turn.id }
+    /// A version that stopped before producing an image: no empty frame, only the error and its actions.
+    var hasNoImage: Bool { version.map { !$0.isActive && $0.resultId == nil } ?? false }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -83,10 +85,12 @@ struct ImageTurnView: View {
                 Text("Image \(turn.number)").font(.callout.weight(.semibold))
                 Text(turn.route).font(.callout).foregroundStyle(.secondary)
             }
-            ResultImage(turn: turn)
-                .overlay(
-                    RoundedRectangle(cornerRadius: Theme.corner)
-                        .strokeBorder(isTarget ? Theme.accent : Color.secondary.opacity(0.2), lineWidth: isTarget ? 2 : 1))
+            if !hasNoImage {
+                ResultImage(turn: turn)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: Theme.corner)
+                            .strokeBorder(isTarget ? Theme.accent : Color.secondary.opacity(0.2), lineWidth: isTarget ? 2 : 1))
+            }
 
             if let v = version, v.status == .error || v.status == .cancelled {
                 ErrorBox(turn: turn, version: v)
@@ -105,7 +109,7 @@ struct ImageTurnView: View {
                 }
                 if version?.isActive == true {
                     Button("Cancel") { model.cancel(turn.id) }
-                } else {
+                } else if !hasNoImage {
                     Button("Edit") { model.edit(turn.id) }
                         .help("Make the next message change this image")
                     Button("Variations") { model.variation(turn.id) }

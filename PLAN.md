@@ -12,7 +12,7 @@ Companion docs: `dmlx-spec.md` (what and why), prototype: https://claude.ai/arti
 | B2 Engine v0 | ✅ | per-component load/free, eager/phase_free/sequential, admission, swap-in + pressure guard, embed cache, SSE, OpenAI-compatible API |
 | B3 App v0 | ✅ | chat thread, versions, actions, routing, onboarding/downloads, settings, SQLite history, scripted harness |
 | B4 Hardening | ✅ (scope cut) | crash recovery, 10-turn session, determinism + warm-edit integration tests. **Qwen-Image-Edit moved post-beta** (32 GB+ only; cannot be validated on the 24 GB dev Mac). Brush masks remain a stretch goal. |
-| UI visual review | ⏳ | The Mac was locked during the whole session, so no window could be rendered or captured; behaviour was verified through the app harness's state dumps. Needs a human look. |
+| UI visual review | ✅ | Chat turns, versions, edit headers, error card, empty state, status card and onboarding rendered with the harness `renderChat` step (ImageRenderer; the sidebar list and text field don't appear in in-process captures). Fixed: refused jobs drew an empty 1024² frame plus unusable actions; the refusal message used the model id instead of its name. |
 | B5 Release | ✅ build / ⏳ publish | `tools/bundle_app.sh --zip` → 151 MB zip, 454 MB app. Waiting on: real 16 GB run, GitHub repo + release (needs your go-ahead) |
 
 ## 1. Beta definition

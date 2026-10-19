@@ -33,12 +33,12 @@ CACHE_LIMIT = 512 * 1024**2
 
 
 class InsufficientMemory(Exception):
-    def __init__(self, need: int, headroom: int, model_id: str):
+    def __init__(self, need: int, headroom: int, model_id: str, model_name: str | None = None):
         self.need = need
         self.headroom = headroom
         self.model_id = model_id
         super().__init__(
-            f"{model_id} needs about {need / GB:.1f} GB but only {max(headroom, 0) / GB:.1f} GB can be used "
+            f"{model_name or model_id} needs about {need / GB:.1f} GB but only {max(headroom, 0) / GB:.1f} GB can be used "
             f"without slowing down your Mac. Close some apps, pick a smaller size, or choose a lighter model."
         )
 
@@ -258,7 +258,7 @@ class MemoryManager:
                 room = self.headroom()
                 cheapest = order[-1]
                 if not force:
-                    raise InsufficientMemory(needs[cheapest], room, spec.id)
+                    raise InsufficientMemory(needs[cheapest], room, spec.id, spec.name)
                 plan = Plan(spec.id, cheapest, needs[cheapest], room, evicted, forced=True)
             mx.set_memory_limit(max(int(plan.headroom + self.resident_bytes()), 2 * GB))
             return plan

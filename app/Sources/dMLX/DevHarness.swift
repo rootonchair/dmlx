@@ -8,7 +8,8 @@ import SwiftUI
 ///
 /// Script: {"out": "/dir", "steps": [{"newSession": true}, {"send": "a boat"}, {"waitIdle": 300},
 ///          {"snapshot": "name"}, {"variation": true}, {"edit": true}, {"draft": "text"}, {"sleep": 1},
-///          {"onboarding": true|false}, {"settings": true}, {"quit": true}]}
+///          {"onboarding": true|false}, {"settings": true}, {"selectSession": 0}, {"renderChat": "name"},
+///          {"quit": true}]}
 @MainActor
 enum DevHarness {
     /// When no SwiftUI window is on screen (e.g. the Mac is locked), render RootView in our own window.
@@ -62,6 +63,10 @@ enum DevHarness {
     private static func run(_ step: [String: Any], model: AppModel, out: URL) async {
         log("step \(step)")
         if step["newSession"] != nil { model.newSession() }
+        if let index = step["selectSession"] as? Int, model.sessions.indices.contains(index) {
+            model.select(model.sessions[index].id)
+        }
+        if let name = step["renderChat"] as? String { renderChat(model, name: name, out: out) }
         if let text = step["draft"] as? String { model.draft = text }
         if let text = step["send"] as? String { model.send(text) }
         if step["variation"] != nil, let t = model.latestImageTurn { model.variation(t.id) }
@@ -128,7 +133,9 @@ enum DevHarness {
             window.displayIfNeeded()
             guard let view = window.contentView else { continue }
             let file = out.appendingPathComponent(all ? "\(name)-\(i).png" : "\(name).png")
-            if let png = renderLayers(view) ?? renderCache(view) {
+            // A real on-screen window draws correctly through AppKit; the off-screen host window needs layers.
+            let png = window === hostWindow ? renderLayers(view) ?? renderCache(view) : renderCache(view)
+            if let png {
                 try? png.write(to: file)
                 log("snapshot \(file.path) \(Int(view.bounds.width))x\(Int(view.bounds.height))")
             }
@@ -155,6 +162,41 @@ enum DevHarness {
         layer.render(in: ctx)
         guard let image = ctx.makeImage() else { return nil }
         return NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:])
+    }
+
+    /// Draws the chat turns and status card with ImageRenderer. AppKit-backed parts (the sidebar list,
+    /// scroll view, text field) do not appear in window snapshots, so this is how the chat itself is reviewed.
+    static func renderChat(_ model: AppModel, name: String, out: URL) {
+        let content = HStack(alignment: .top, spacing: 24) {
+            VStack(alignment: .leading, spacing: 8) {
+                ForEach(model.sessions.prefix(8)) { s in
+                    Text(s.title).lineLimit(1).fontWeight(s.id == model.currentSessionId ? .semibold : .regular)
+                }
+                Spacer(minLength: 24)
+                StatusCard()
+            }
+            .frame(width: 220)
+            .padding(12)
+            VStack(alignment: .leading, spacing: 22) {
+                if model.turns.isEmpty { EmptyStateView(starters: ["A fox logo, flat vector, two colors"]) }
+                ForEach(model.turns) { TurnView(turn: $0) }
+            }
+            .frame(width: 780)
+        }
+        .padding(24)
+        .background(Color(nsColor: .windowBackgroundColor))
+        .environment(model)
+        .tint(Theme.accent)
+        .environment(\.colorScheme, NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? .dark : .light)
+        let renderer = ImageRenderer(content: content)
+        renderer.scale = 2
+        guard let image = renderer.cgImage,
+              let png = NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:]) else {
+            log("renderChat failed"); return
+        }
+        let file = out.appendingPathComponent("\(name).png")
+        try? png.write(to: file)
+        log("renderChat \(file.path) \(image.width)x\(image.height)")
     }
 
     private static func renderCache(_ view: NSView) -> Data? {
