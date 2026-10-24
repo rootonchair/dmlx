@@ -33,8 +33,10 @@ class GenRequest:
     height: int
     steps: int
     seed: int
+    negative_prompt: str | None = None
     guidance: float | None = None
     image_paths: list[Path] = field(default_factory=list)  # edit sources/references, primary first
+    extras: dict = field(default_factory=dict)
 
 
 class PhaseHooks(Protocol):

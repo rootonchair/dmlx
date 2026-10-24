@@ -47,6 +47,29 @@ public final class EngineProcess {
         var env = ProcessInfo.processInfo.environment
         env["DMLX_TOKEN"] = token
         env["PYTHONUNBUFFERED"] = "1"
+        let router = RouterProviderSettings.load()
+        if router.kind == .localLLM, !router.localModelPath.isEmpty, !router.localRevision.isEmpty {
+            env["DMLX_ROUTER_PROVIDER"] = "local-llm"
+            env["DMLX_LOCAL_LLM_MODEL_PATH"] = router.localModelPath
+            env["DMLX_LOCAL_LLM_REVISION"] = router.localRevision
+        } else if router.kind == .openAICompatible, !router.baseURL.isEmpty, !router.model.isEmpty {
+            env["DMLX_ROUTER_PROVIDER"] = "openai-compatible"
+            env["DMLX_ROUTER_BASE_URL"] = router.baseURL
+            env["DMLX_ROUTER_MODEL"] = router.model
+            env["DMLX_ROUTER_TIMEOUT"] = String(router.timeout)
+            let key = RouterSecretStore.load()
+            if !key.isEmpty { env["DMLX_ROUTER_API_KEY"] = key }
+        } else if router.kind == .disabled {
+            env["DMLX_ROUTER_PROVIDER"] = "disabled"
+        }
+        let prompt = PromptProviderSettings.load()
+        if !prompt.baseURL.isEmpty, !prompt.model.isEmpty {
+            env["DMLX_PROMPT_BASE_URL"] = prompt.baseURL
+            env["DMLX_PROMPT_MODEL"] = prompt.model
+            env["DMLX_PROMPT_TIMEOUT"] = String(prompt.timeout)
+            let key = PromptSecretStore.load()
+            if !key.isEmpty { env["DMLX_PROMPT_API_KEY"] = key }
+        }
         let serveArgs = ["serve", "--port", "0", "--port-file", portFile.path, "--parent-pid", String(ProcessInfo.processInfo.processIdentifier)]
 
         // 1. Bundled engine: Contents/Resources/engine/python/bin/python3
@@ -69,9 +92,11 @@ public final class EngineProcess {
                 "/usr/local/bin/uv",
             ].compactMap { $0 }
             if let uv = uvPaths.first(where: { FileManager.default.isExecutableFile(atPath: $0) }) {
+                var runArguments = ["run", "--project", dir]
+                if router.kind == .localLLM { runArguments += ["--extra", "local-llm"] }
                 return Launch(
                     executable: URL(fileURLWithPath: uv),
-                    arguments: ["run", "--project", dir, "dmlx"] + serveArgs, environment: env)
+                    arguments: runArguments + ["dmlx"] + serveArgs, environment: env)
             }
         }
         return nil

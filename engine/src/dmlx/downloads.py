@@ -24,12 +24,14 @@ def local_path(spec: ModelSpec) -> Path | None:
     from huggingface_hub.errors import LocalEntryNotFoundError
 
     try:
-        path = Path(snapshot_download(spec.repo, local_files_only=True))
+        path = Path(snapshot_download(spec.repo, revision=spec.revision, local_files_only=True))
     except (LocalEntryNotFoundError, FileNotFoundError, OSError):
         return None
     import json
 
-    for name in spec.components:
+    for name, component in spec.components.items():
+        if component.external:
+            continue
         comp = path / name
         if not any(comp.glob("*.safetensors")):
             return None
@@ -43,6 +45,8 @@ def local_path(spec: ModelSpec) -> Path | None:
 
 def fill_component_sizes(spec: ModelSpec, path: Path) -> None:
     for name, comp in spec.components.items():
+        if comp.external:
+            continue
         on_disk = sum(f.stat().st_size for f in (path / name).glob("*.safetensors"))
         comp.size = max(comp.size, on_disk)
         if comp.stream and on_disk:
@@ -121,8 +125,13 @@ class Downloader:
         from huggingface_hub import hf_hub_download
 
         try:
-            info = _api().model_info(spec.repo, files_metadata=True)
-            files = [(s.rfilename, s.size or 0) for s in info.siblings]
+            info = _api().model_info(spec.repo, revision=spec.revision, files_metadata=True)
+            external = {name for name, component in spec.components.items() if component.external}
+            files = [
+                (s.rfilename, s.size or 0)
+                for s in info.siblings
+                if s.rfilename.split("/", 1)[0] not in external
+            ]
             state.total = sum(size for _, size in files)
             completed = 0
             for name, size in files:
@@ -131,7 +140,7 @@ class Downloader:
                     target=self._watch_partial, args=(spec, name, size, completed, state, done_event), daemon=True
                 )
                 watcher.start()
-                hf_hub_download(spec.repo, name)
+                hf_hub_download(spec.repo, name, revision=spec.revision)
                 done_event.set()
                 completed += size
                 state.done = completed

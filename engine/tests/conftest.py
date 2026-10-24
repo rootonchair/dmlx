@@ -22,6 +22,8 @@ def fake_spec(model_id: str, tasks=("t2i", "edit"), te=2.0, tr=2.0, vae=0.2, ref
 @pytest.fixture
 def make_engine(tmp_path, monkeypatch):
     monkeypatch.setenv("DMLX_HOME", str(tmp_path))
+    # Never load a real prompt assistant from the Hugging Face cache; tests install a stub.
+    monkeypatch.setenv("DMLX_PROMPT_ASSISTANT", "off")
     from dmlx.engine import Engine
     from dmlx.results import ResultStore
 

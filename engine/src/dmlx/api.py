@@ -13,6 +13,7 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 
 from dmlx import __version__
 from dmlx.engine import Engine, Job, RequestError
+from dmlx.workflow import WorkflowError, WorkflowPlan
 
 TERMINAL_EVENTS = {"done", "error", "cancelled"}
 
@@ -47,6 +48,34 @@ def create_app(engine: Engine | None = None, token: str | None = None) -> FastAP
     async def models():
         return {"object": "list", "data": engine.models()}
 
+    @app.get("/v1/capabilities", dependencies=[Depends(auth)])
+    async def capabilities():
+        return engine.capabilities()
+
+    @app.post("/v1/workflows", dependencies=[Depends(auth)])
+    async def workflows(request: Request):
+        body = await request.json()
+        try:
+            plan = WorkflowPlan.from_dict(body)
+        except WorkflowError as exc:
+            raise RequestError(exc.code, str(exc), 422) from exc
+        job = await asyncio.to_thread(engine.submit_workflow, plan)
+        return await _respond(job, stream=bool(body.get("stream")), response_format=body.get("response_format"))
+
+    @app.post("/v1/workflows/route", dependencies=[Depends(auth)])
+    async def route_workflow(request: Request):
+        body = await request.json()
+        return await asyncio.to_thread(engine.route, body)
+
+    @app.post("/admin/intelligence/router/test", dependencies=[Depends(auth)])
+    async def test_workflow_router():
+        return await asyncio.to_thread(engine.test_router)
+
+    @app.post("/v1/prompts/compile", dependencies=[Depends(auth)])
+    async def compile_prompt(request: Request):
+        body = await request.json()
+        return await asyncio.to_thread(engine.compile_prompt, body)
+
     # -- images -----------------------------------------------------------------------
     @app.post("/v1/images/generations", dependencies=[Depends(auth)])
     async def generations(request: Request):
@@ -55,6 +84,7 @@ def create_app(engine: Engine | None = None, token: str | None = None) -> FastAP
         job = engine.submit(
             task="t2i",
             prompt=body.get("prompt", ""),
+            negative_prompt=body.get("negative_prompt"),
             model=body.get("model"),
             size=body.get("size"),
             steps=body.get("steps") or ext.get("steps"),
@@ -88,6 +118,7 @@ def create_app(engine: Engine | None = None, token: str | None = None) -> FastAP
         job = engine.submit(
             task="edit",
             prompt=body.get("prompt", ""),
+            negative_prompt=body.get("negative_prompt"),
             model=body.get("model") or None,
             size=body.get("size"),
             steps=_int(body.get("steps") or ext.get("steps")),
@@ -129,6 +160,12 @@ def create_app(engine: Engine | None = None, token: str | None = None) -> FastAP
     @app.delete("/v1/jobs/{job_id}", dependencies=[Depends(auth)])
     async def job_cancel(job_id: str):
         return engine.cancel(job_id).as_dict()
+
+    @app.post("/v1/jobs/{job_id}/retry", dependencies=[Depends(auth)])
+    async def job_retry(job_id: str, request: Request):
+        body = await _json_or_empty(request)
+        job = await asyncio.to_thread(engine.retry_workflow, job_id, body.get("from_step"))
+        return await _respond(job, stream=bool(body.get("stream")), response_format=body.get("response_format"))
 
     # -- admin ------------------------------------------------------------------------
     @app.post("/admin/models/{model_id}/pull", dependencies=[Depends(auth)])
@@ -172,6 +209,14 @@ def create_app(engine: Engine | None = None, token: str | None = None) -> FastAP
     @app.delete("/admin/models/{model_id}", dependencies=[Depends(auth)])
     async def remove_model(model_id: str):
         return await asyncio.to_thread(engine.remove_model, model_id)
+
+    @app.get("/admin/prompt-assistant", dependencies=[Depends(auth)])
+    def prompt_assistant():
+        return engine.prompt_assistant_status()
+
+    @app.post("/admin/prompt-assistant/pull", dependencies=[Depends(auth)])
+    def pull_prompt_assistant():
+        return engine.pull_prompt_assistant()
 
     @app.get("/admin/memory", dependencies=[Depends(auth)])
     async def memory():

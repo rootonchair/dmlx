@@ -1,6 +1,7 @@
 import base64
 import io
 import json
+import threading
 import time
 
 from PIL import Image
@@ -8,6 +9,7 @@ from PIL import Image
 from conftest import fake_spec
 from dmlx.adapters.fake import FakeAdapter
 from dmlx.registry import GB
+from dmlx.memory import JobGuard, Plan, PressureMonitor
 
 
 def _gen(client, **body):
@@ -63,6 +65,22 @@ def test_multipart_edit_upload(make_engine, client_for):
     assert out.size == (640, 480)  # auto size follows the source
 
 
+def test_upload_normalizes_exif_orientation(make_engine, client_for):
+    client = client_for(make_engine())
+    buf = io.BytesIO()
+    image = Image.new("RGB", (40, 20), (10, 20, 30))
+    exif = image.getexif()
+    exif[274] = 6  # displayed orientation is 90 degrees clockwise
+    image.save(buf, format="JPEG", exif=exif)
+    response = client.post(
+        "/v1/uploads", files={"file": ("rotated.jpg", buf.getvalue(), "image/jpeg")}
+    )
+    assert response.status_code == 200
+    with Image.open(client.app.state.engine.results.path(response.json()["id"])) as stored:
+        assert stored.size == (20, 40)
+        assert stored.getexif().get(274) is None
+
+
 def test_sse_event_sequence(make_engine, client_for):
     client = client_for(make_engine())
     with client.stream("POST", "/v1/images/generations",
@@ -110,6 +128,26 @@ def test_phase_free_keeps_transformer(make_engine, client_for):
     assert body["dmlx"]["strategy"] == "phase_free"
     resident = {r["component"] for r in engine.memory.resident_components()}
     assert resident == {"vae", "transformer"}
+
+
+def test_multimodal_layout_loads_transformer_before_releasing_preprocess_vae(make_engine):
+    engine = make_engine(headroom_gb=64)
+    spec = engine.registry.get("fake-a")
+    engine.adapter(spec)
+    guard = JobGuard(
+        engine.memory, spec, Plan(spec.id, "sequential", 0, 64 * GB, []),
+        threading.Event(), lambda *_args: None,
+    )
+
+    guard.start()
+    guard.before_phase("encode")
+    guard.after_phase("encode")
+    guard.before_phase("preprocess")
+    guard.before_phase("layout")
+    assert {r["component"] for r in engine.memory.resident_components()} == {"vae", "transformer"}
+
+    guard.before_phase("denoise")
+    assert {r["component"] for r in engine.memory.resident_components()} == {"transformer"}
 
 
 def test_insufficient_memory_is_readable(make_engine, client_for):
@@ -173,6 +211,15 @@ def test_validation(make_engine, client_for):
     assert _gen(client, model="nope").status_code == 404
 
 
+def test_model_specific_minimum_steps_is_validated_before_queueing(make_engine, client_for):
+    spec = fake_spec("fake-a")
+    spec.min_steps = 2
+    response = _gen(client_for(make_engine(specs=[spec])), steps=1)
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "invalid_steps"
+    assert "between 2 and 100" in response.json()["error"]["message"]
+
+
 def test_builtin_registry_parses():
     from dmlx.registry import Registry
 
@@ -181,6 +228,17 @@ def test_builtin_registry_parses():
     assert reg.get("z-image-turbo").license == "apache-2.0"
     assert reg.default_for("edit", 16).id == "flux2-klein-4b"
     assert reg.default_for("t2i", 16).id == "flux2-klein-4b"
+    qwen = reg.get("qwen-image-2.1-q4")
+    assert qwen.revision == "235fd28de40d745382e9d7a33f008c7735ec21c2"
+    assert qwen.auto_select is False
+    assert qwen.experimental is True
+    assert qwen.license == "qwen-research" and qwen.license_acceptance_id
+    assert qwen.max_references == 10
+    assert qwen.min_steps == 2
+    assert qwen.reference_activation_factor == 2.2
+    assert qwen.min_ram_gb == 16
+    assert qwen.components["text_encoder"].external is True
+    assert 2.3 * GB < qwen.components["text_encoder"].size < 2.5 * GB
 
 
 def test_sysmem_snapshot():
@@ -192,6 +250,26 @@ def test_sysmem_snapshot():
     json.dumps(snap.as_dict())
 
 
+def test_new_pressure_window_drops_previous_job_swap_samples():
+    from dmlx import sysmem
+
+    old = sysmem.MemorySnapshot(1, 1, 0, 0, 0, sysmem.PRESSURE_NORMAL, swapins=0, taken=1.0)
+    current = sysmem.MemorySnapshot(
+        1, 1, 0, 0, 0, sysmem.PRESSURE_NORMAL,
+        swapins=500 * 1024**2, taken=4.0,
+    )
+    monitor = object.__new__(PressureMonitor)
+    monitor._lock = threading.Lock()
+    monitor._last = current
+    monitor._history = [old, current]
+    monitor._window_max_pressure = sysmem.PRESSURE_CRITICAL
+
+    assert monitor.swapin_rate() > 64 * 1024**2
+    monitor.start_window()
+    assert monitor.swapin_rate() == 0
+    assert monitor.window_max_pressure() == sysmem.PRESSURE_NORMAL
+
+
 def test_cached_prompt_skips_encoder_in_planning(make_engine, client_for):
     engine = make_engine(headroom_gb=2.5)  # only sequential fits when the encoder must load
     client = client_for(engine)
@@ -200,6 +278,25 @@ def test_cached_prompt_skips_encoder_in_planning(make_engine, client_for):
     second = _gen(client, prompt="same prompt").json()["dmlx"]
     assert "text_encoder" not in second["loads"]
     assert second["embed_cache"]["hits"] >= 1
+
+
+def test_cached_prompt_starts_low_memory_strategy_without_eager_components(make_engine):
+    engine = make_engine(headroom_gb=64)
+    first = engine.submit(task="t2i", prompt="same prompt", model="fake-a", size="512x512")
+    first.finished.wait(5)
+    assert first.status == "done" and first.report["strategy"] == "eager"
+    assert {r["component"] for r in engine.memory.resident_components()} == {
+        "text_encoder", "transformer", "vae",
+    }
+
+    second = engine.submit(
+        task="t2i", prompt="same prompt", model="fake-a", size="512x512",
+        strategy="sequential", force=True,
+    )
+    second.finished.wait(5)
+    assert second.status == "done"
+    assert "text_encoder" not in second.report["loads"]
+    assert {r["component"] for r in engine.memory.resident_components()} == {"vae"}
 
 
 def test_low_memory_decode_only_when_tight(make_engine, client_for):

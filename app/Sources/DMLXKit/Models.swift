@@ -33,6 +33,7 @@ public struct ImageVersion: Codable, Identifiable, Hashable, Sendable {
     public var prompt: String
     public var model: String
     public var task: GenTask
+    public var operation: String?
     public var size: String
     public var seed: Int?
     public var sourceIds: [String]
@@ -45,12 +46,16 @@ public struct ImageVersion: Codable, Identifiable, Hashable, Sendable {
     public var errorCode: String?
     public var errorMessage: String?
     public var label: String?
+    public var workflowRoute: WorkflowRoute?
+    public var mediaInputs: [MediaInput]?
+    public var workflowPrompt: PromptSpec?
 
     public init(
         id: String = UUID().uuidString, status: VersionStatus = .queued, jobId: String? = nil, resultId: String? = nil,
-        prompt: String, model: String, task: GenTask, size: String, seed: Int? = nil, sourceIds: [String] = [],
+        prompt: String, model: String, task: GenTask, operation: String? = nil, size: String, seed: Int? = nil, sourceIds: [String] = [],
         step: Int = 0, totalSteps: Int = 0, phase: String = "queued", strategy: String? = nil, loads: [String] = [],
-        seconds: Double? = nil, errorCode: String? = nil, errorMessage: String? = nil, label: String? = nil
+        seconds: Double? = nil, errorCode: String? = nil, errorMessage: String? = nil, label: String? = nil,
+        workflowRoute: WorkflowRoute? = nil, mediaInputs: [MediaInput]? = nil, workflowPrompt: PromptSpec? = nil
     ) {
         self.id = id
         self.status = status
@@ -59,6 +64,7 @@ public struct ImageVersion: Codable, Identifiable, Hashable, Sendable {
         self.prompt = prompt
         self.model = model
         self.task = task
+        self.operation = operation
         self.size = size
         self.seed = seed
         self.sourceIds = sourceIds
@@ -71,6 +77,9 @@ public struct ImageVersion: Codable, Identifiable, Hashable, Sendable {
         self.errorCode = errorCode
         self.errorMessage = errorMessage
         self.label = label
+        self.workflowRoute = workflowRoute
+        self.mediaInputs = mediaInputs
+        self.workflowPrompt = workflowPrompt
     }
 
     public var isActive: Bool { status == .queued || status == .rendering }
@@ -92,12 +101,13 @@ public struct Turn: Codable, Identifiable, Hashable, Sendable {
     public var versions: [ImageVersion]
     public var activeVersion: Int
     public var attachments: [String]  // result ids attached to a user turn
+    public var attachmentInputs: [MediaInput]?
     public var created: Date
 
     public init(
         id: String = UUID().uuidString, sessionId: String, index: Int, kind: TurnKind, text: String = "",
         number: Int = 0, route: String = "", versions: [ImageVersion] = [], activeVersion: Int = 0,
-        attachments: [String] = [], created: Date = .now
+        attachments: [String] = [], attachmentInputs: [MediaInput]? = nil, created: Date = .now
     ) {
         self.id = id
         self.sessionId = sessionId
@@ -109,6 +119,7 @@ public struct Turn: Codable, Identifiable, Hashable, Sendable {
         self.versions = versions
         self.activeVersion = activeVersion
         self.attachments = attachments
+        self.attachmentInputs = attachmentInputs
         self.created = created
     }
 
@@ -141,10 +152,17 @@ public struct EngineModel: Codable, Identifiable, Hashable, Sendable {
     public var download: Download
     public var repo: String?
     public var user_added: Bool?
+    public var auto_select: Bool?
+    public var experimental: Bool?
+    public var license_url: String?
+    public var license_acceptance_id: String?
 
     public func supports(_ task: GenTask) -> Bool { tasks.contains(task.rawValue) }
     /// Added from the app (removable); built-in models can only have their files deleted.
     public var isUserAdded: Bool { user_added ?? false }
+    public var autoSelectable: Bool { auto_select ?? true }
+    public var isExperimental: Bool { experimental ?? false }
+    public var requiresLicenseAcceptance: Bool { license_acceptance_id != nil }
 }
 
 /// What a Hugging Face repo is, as the engine reads it before anything is downloaded.

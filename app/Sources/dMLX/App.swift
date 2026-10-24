@@ -27,7 +27,9 @@ struct DMLXApp: App {
         Window("dMLX", id: "main") {
             RootView()
                 .environment(model)
-                .frame(minWidth: 820, minHeight: 600)
+                // Stay usable on compact or scaled secondary displays. The
+                // split view and composer adapt when the detail column narrows.
+                .frame(minWidth: 680, minHeight: 520)
                 .tint(Theme.accent)
         }
         .windowToolbarStyle(.unified(showsTitle: false))

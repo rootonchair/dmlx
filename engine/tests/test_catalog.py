@@ -50,6 +50,35 @@ def test_detects_z_image_and_flags_restrictive_license(remote):
     assert base.mflux_config == "z_image" and base.name == "Z-Image Base (4-bit)" and not base.permissive_license
 
 
+def test_detects_qwen_image_21_base_as_explicit_research_model(remote):
+    files = {
+        **{key: value for key, value in FILES.items() if not key.startswith("tokenizer/")},
+        "processor/preprocessor_config.json": 1000,
+    }
+    remote(_names(double=60), {"mflux_version": "0.23.0", "quantization_level": "4"})
+    found = catalog.detect("someone/Qwen-Image-2.1-mflux-4bit", files, "qwen-research")
+    spec = found.to_spec_data()
+
+    assert (found.family, found.mflux_config) == ("qwen-image-2.1", "qwen_image_21")
+    assert found.tasks == ["t2i", "edit"] and found.defaults["steps"] == 40
+    assert spec["auto_select"] is False and spec["min_ram_gb"] == 16
+    assert spec["experimental"] is True
+    assert spec["min_steps"] == 2
+    assert spec["max_references"] == 10
+    assert spec["components"]["text_encoder"]["stream"] == []
+    assert spec["components"]["text_encoder"]["external"] is True
+    assert spec["components"]["transformer"]["stream"] == []
+    assert spec["reference_activation_factor"] == 2.2
+    assert spec["capabilities"]["image.edit"]["inputs"]["image"]["ordered"] is True
+    assert spec["capabilities"]["image.edit"]["prompt"]["negative"] is True
+
+
+def test_refuses_qwen_image_21_turbo(remote):
+    remote(_names(double=60), {"mflux_version": "0.23.0", "quantization_level": "4"})
+    with pytest.raises(catalog.InspectError, match="Turbo is not supported"):
+        catalog.detect("someone/Qwen-Image-2.1-Turbo-mflux-4bit", FILES, "qwen-research")
+
+
 @pytest.mark.parametrize("repo,files,names,meta,message", [
     ("x/z-image-turbo-controlnet-q4", FILES, [], None, "add-ons"),
     ("x/model", {"model.safetensors": 1}, [], None, "different model"),

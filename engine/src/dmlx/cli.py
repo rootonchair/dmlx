@@ -104,8 +104,10 @@ def main(argv: list[str] | None = None) -> None:
     models.set_defaults(func=_models)
 
     from dmlx.bench import add_bench_parser
+    from dmlx.seedvr2_bench import add_seedvr2_bench_parser
 
     add_bench_parser(sub)
+    add_seedvr2_bench_parser(sub)
 
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s", stream=sys.stderr)

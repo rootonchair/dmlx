@@ -143,6 +143,46 @@ public final class EngineClient: @unchecked Sendable {
         try await send(try request("admin/memory"), as: MemoryStatus.self)
     }
 
+    public func capabilities() async throws -> CapabilityCatalog {
+        try await send(try request("v1/capabilities"), as: CapabilityCatalog.self)
+    }
+
+    public func routeWorkflow(
+        message: String, currentResultId: String?, currentPrompt: String?, attachments: [String],
+        history: [RoutingHistoryItem] = [], selectedModel: String? = nil, plan: Bool = false
+    ) async throws -> WorkflowDecision {
+        var body: [String: Any] = [
+            "message": message, "attachments": attachments,
+            "history": history.map(\.jsonObject),
+        ]
+        // A sent message (not the typing preview) is planned by the local agent when it is installed.
+        if plan { body["plan"] = true }
+        if let currentResultId { body["current_result_id"] = currentResultId }
+        if let currentPrompt { body["current_prompt"] = currentPrompt }
+        if let selectedModel { body["selected_model"] = selectedModel }
+        return try await send(try request("v1/workflows/route", method: "POST", json: body), as: WorkflowDecision.self)
+    }
+
+    public func testRouter() async throws -> RouterTestResult {
+        try await send(try request("admin/intelligence/router/test", method: "POST", json: [:]), as: RouterTestResult.self)
+    }
+
+    /// For an edit, `imageIds` lets the local prompt assistant see the images being edited.
+    public func compilePrompt(prompt: String, operation: String, model: String?, imageIds: [String] = []) async throws -> CompiledPromptResponse {
+        var body: [String: Any] = ["prompt": prompt, "operation": operation]
+        if let model { body["model"] = model }
+        if !imageIds.isEmpty { body["image_ids"] = imageIds }
+        return try await send(try request("v1/prompts/compile", method: "POST", json: body), as: CompiledPromptResponse.self)
+    }
+
+    public func promptAssistant() async throws -> PromptAssistantStatus {
+        try await send(try request("admin/prompt-assistant"), as: PromptAssistantStatus.self)
+    }
+
+    public func pullPromptAssistant() async throws -> PromptAssistantStatus {
+        try await send(try request("admin/prompt-assistant/pull", method: "POST", json: [:]), as: PromptAssistantStatus.self)
+    }
+
     public func pull(model: String) async throws {
         struct Ack: Decodable { var status: String }
         _ = try await send(try request("admin/models/\(model)/pull", method: "POST", json: [:]), as: Ack.self)
@@ -194,20 +234,35 @@ public final class EngineClient: @unchecked Sendable {
     /// Start a generation or edit and stream its events until a terminal event.
     public func run(
         task: GenTask, prompt: String, model: String?, size: String?, seed: Int? = nil,
-        sourceIds: [String] = [], force: Bool = false
+        sourceIds: [String] = [], mediaInputs: [MediaInput]? = nil,
+        force: Bool = false, route: WorkflowRoute? = nil, promptSpec: PromptSpec? = nil,
+        operation requestedOperation: String? = nil
     ) -> AsyncThrowingStream<EngineEvent, Error> {
-        var body: [String: Any] = ["prompt": prompt, "stream": true]
-        if let model { body["model"] = model }
-        if let size { body["size"] = size }
-        if let seed { body["seed"] = seed }
-        var ext: [String: Any] = ["force": force]
-        if task == .edit, let first = sourceIds.first {
-            ext["source_id"] = first
-            ext["reference_ids"] = Array(sourceIds.dropFirst())
+        let fallbackInputs = sourceIds.enumerated().map { index, id in
+            MediaInput(id: id, role: index == 0 ? .source : .reference, order: index)
         }
-        body["dmlx"] = ext
-        let path = task == .edit ? "v1/images/edits" : "v1/images/generations"
-        return stream(path: path, body: body)
+        let inputs = mediaInputs ?? fallbackInputs
+        let operation = requestedOperation ?? (task == .edit ? "image.edit" : "image.generate")
+        let step = WorkflowStep(
+            operation: operation,
+            executor: model,
+            inputs: inputs,
+            prompt: promptSpec ?? PromptSpec(user: prompt),
+            parameters: WorkflowParameters(size: size, seed: seed, force: force))
+        return runWorkflow(WorkflowPlan(steps: [step], route: route ?? WorkflowRoute(intent: operation)))
+    }
+
+    public func runWorkflow(_ plan: WorkflowPlan) -> AsyncThrowingStream<EngineEvent, Error> {
+        do {
+            let encoded = try JSONEncoder().encode(plan)
+            var body = try JSONSerialization.jsonObject(with: encoded) as? [String: Any] ?? [:]
+            body["stream"] = true
+            return stream(path: "v1/workflows", body: body)
+        } catch {
+            return AsyncThrowingStream { continuation in
+                continuation.finish(throwing: error)
+            }
+        }
     }
 
     private func stream(path: String, body: [String: Any]) -> AsyncThrowingStream<EngineEvent, Error> {

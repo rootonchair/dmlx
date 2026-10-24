@@ -13,6 +13,7 @@ struct AddModelView: View {
     @State private var adding = false
     @State private var inspection: ModelInspection?
     @State private var error: String?
+    @State private var confirmRestrictedLicense = false
 
     private var filtered: [CatalogSuggestion] {
         let words = query.lowercased().split(separator: " ").map(String.init)
@@ -26,7 +27,7 @@ struct AddModelView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Add a model").font(.title2.weight(.semibold))
-            Text("dMLX runs FLUX.2 Klein and Z-Image models saved in mflux format. Search the community versions below, or paste any Hugging Face repo or link.")
+            Text("dMLX runs FLUX.2 Klein, Z-Image, and Qwen Image 2.1 Base models saved in mflux format. Search the community versions below, or paste any Hugging Face repo or link.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -88,7 +89,13 @@ struct AddModelView: View {
                 Spacer()
                 Button("Cancel") { dismiss() }
                     .keyboardShortcut(.cancelAction)
-                Button(addTitle) { add() }
+                Button(addTitle) {
+                    if inspection?.permissive_license == false {
+                        confirmRestrictedLicense = true
+                    } else {
+                        addConfirmed()
+                    }
+                }
                     .keyboardShortcut(.defaultAction)
                     .disabled(inspection == nil || inspection?.already_added != nil || adding)
             }
@@ -96,6 +103,15 @@ struct AddModelView: View {
         .padding(20)
         .frame(width: 560, height: 600)
         .task { await loadSuggestions() }
+        .confirmationDialog(
+            "Use a restricted-license model?", isPresented: $confirmRestrictedLicense,
+            titleVisibility: .visible
+        ) {
+            Button("I Understand — Add and Download") { addConfirmed() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This model may prohibit commercial use. By continuing, you confirm that you have read its model card and will follow its license.")
+        }
     }
 
     private var addTitle: String {
@@ -128,7 +144,7 @@ struct AddModelView: View {
         }
     }
 
-    private func add() {
+    private func addConfirmed() {
         guard let inspection else { return }
         adding = true
         _Concurrency.Task {

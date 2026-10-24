@@ -73,11 +73,17 @@ class _LoopHooks:
     def __init__(self):
         self.hooks: PhaseHooks | None = None
         self.total = 0
+        self.denoise_started = False
 
     def call_before_loop(self, seed, prompt, latents, config, **_kwargs):
         if self.hooks:
+            # Most adapters close this phase immediately after producing embeddings.
+            # Unified multimodal pipelines also encode reference images before entering
+            # their denoise callback, so this is their safe boundary for releasing the encoder.
+            self.hooks.after_phase("encode")
             self.total = config.num_inference_steps
-            self.hooks.before_phase("denoise")
+            if not self.denoise_started:
+                self.hooks.before_phase("denoise")
 
     def call_in_loop(self, t, seed, prompt, latents, config, time_steps, **_kwargs):
         if self.hooks:
@@ -89,6 +95,7 @@ class _LoopHooks:
         if self.hooks:
             self.hooks.after_phase("denoise")
             self.hooks.before_phase("decode")
+        self.denoise_started = False
 
     def call_interrupt(self, *args, **kwargs):
         pass
@@ -194,7 +201,11 @@ class _MfluxAdapterBase:
         module = self._construct(name)
         component = self._components[name]
         nbytes = make_streamed(
-            module, self.path / component.hf_subdir, self.stream_lists[name], self.stream_skip_from.get(name)
+            module,
+            self.path / component.hf_subdir,
+            self.stream_lists[name],
+            self.stream_skip_from.get(name),
+            check=lambda: self._current_hooks.check() if self._current_hooks else None,
         )
         if name == "transformer":
             self._after_transformer_load(module)
@@ -418,6 +429,7 @@ class ZImageAdapter(_MfluxAdapterBase):
         generated = self.pipe.generate_image(
             seed=req.seed,
             prompt=req.prompt,
+            negative_prompt=req.negative_prompt,
             num_inference_steps=req.steps,
             width=req.width,
             height=req.height,
@@ -427,7 +439,204 @@ class ZImageAdapter(_MfluxAdapterBase):
         return generated.image
 
 
+class QwenImage21Adapter(_MfluxAdapterBase):
+    """Unified Qwen Image 2.1 generation and ordered reference editing."""
+
+    def __init__(self, spec: ModelSpec, path: Path):
+        import json
+
+        from mflux.models.common.config.model_config import ModelConfig
+        from mflux.models.qwen21.weights.qwen_image21_weight_definition import (
+            QwenImage21NoTextEncoderWeightDefinition,
+        )
+
+        self.model_config = getattr(ModelConfig, spec.mflux_config or "qwen_image_21")()
+        self.weight_definition = QwenImage21NoTextEncoderWeightDefinition
+        self._component_configs = {
+            name: json.loads((Path(path) / name / "config.json").read_text())
+            for name in ("vae", "transformer")
+        }
+        super().__init__(spec, path)
+
+    def _build_empty_pipelines(self) -> dict:
+        from mflux.models.common.compute_precision import ComputePrecision
+        from mflux.models.qwen21.qwen21_initializer import Qwen21Initializer
+        from mflux.models.qwen21.variants.edit.qwen_image_21_edit import QwenImage21Edit
+        from mlx import nn
+
+        adapter = self
+
+        class EmptyQwenImage21Edit(QwenImage21Edit):
+            def __init__(self):
+                nn.Module.__init__(self)
+                Qwen21Initializer.init_config(self, adapter.model_config)
+                self._checkpoint_path = str(adapter.path)
+                self._component_configs = adapter._component_configs
+                self.small_text_encoder = True
+                self.tokenizers = {}
+                self.processor = None
+                self.vae = None
+                self.transformer = None
+                self.text_encoder = None
+                self.bits = None
+                self.lora_paths = None
+                self.lora_scales = None
+                self.compute_precision = ComputePrecision(None)
+                self._dmlx_prompt_encodes_remaining = 1
+
+            def _encode_prompt(self, prompt, images):
+                value = QwenImage21Edit._encode_prompt(self, prompt, images)
+                self._dmlx_prompt_encodes_remaining -= 1
+                if self._dmlx_prompt_encodes_remaining == 0 and adapter._current_hooks:
+                    mx.eval([array for _, array in tree_flatten(value) if isinstance(array, mx.array)])
+                    adapter._current_hooks.after_phase("encode")
+                    if images:
+                        # Reference latents are produced after prompt encoding but before
+                        # Qwen constructs its transformer layout before the normal loop
+                        # callback. Load it now; the VAE remains available for references
+                        # until the callback enters denoise.
+                        adapter._current_hooks.before_phase("preprocess")
+                        adapter._current_hooks.before_phase("layout")
+                    else:
+                        adapter._enter_denoise()
+                return value
+
+        return {"unified": EmptyQwenImage21Edit()}
+
+    def load_component(self, name: str) -> int:
+        if name != "text_encoder":
+            return super().load_component(name)
+        from mflux.models.qwen21.model.qwen21_small_text_encoder.qwen21_small_text_encoder import (
+            Qwen21SmallTextEncoder,
+        )
+
+        with self._lock:
+            if self.is_loaded(name):
+                return _module_bytes(self.pipe.text_encoder)
+            self.free_component(name)
+            encoder, processor = Qwen21SmallTextEncoder.load()
+            mx.eval(encoder.parameters())
+            for pipe in self.pipes.values():
+                pipe.text_encoder = encoder
+                pipe.processor = processor
+                pipe.small_text_encoder = True
+            self._streamed[name] = False
+            gc.collect()
+            return _module_bytes(encoder)
+
+    def _construct(self, name: str) -> nn.Module:
+        from mflux.models.qwen21.model.qwen21_transformer.qwen_image21_transformer import QwenImage21Transformer
+        from mflux.models.qwen21.model.qwen21_vae.vae import QwenImage21VAE
+
+        config = self._component_configs[name]
+        if name == "vae":
+            return QwenImage21VAE(config)
+        if name == "transformer":
+            return QwenImage21Transformer(config)
+        raise KeyError(name)
+
+    def _run(self, req: GenRequest) -> Image.Image:
+        negative = req.negative_prompt or None
+        # The base checkpoint is guidance-free by default. A negative prompt opts
+        # into true CFG, which evaluates both branches and therefore costs more.
+        guidance = float(req.guidance or 4.0) if negative else 1.0
+        self.pipe._dmlx_prompt_encodes_remaining = 2 if negative else 1
+        generated = self.pipe.generate_image(
+            seed=req.seed,
+            prompt=req.prompt,
+            negative_prompt=negative,
+            num_inference_steps=req.steps,
+            width=req.width,
+            height=req.height,
+            guidance=guidance,
+            image_paths=[str(path) for path in req.image_paths],
+            output_resolution=max(req.width, req.height),
+            use_kv_cache=True,
+        )
+        return generated.image
+
+    def _enter_denoise(self) -> None:
+        if self._current_hooks and not self._loop_hooks.denoise_started:
+            # Qwen reads transformer.axes before mflux's normal before-loop
+            # callback, so the transformer must be available at this boundary.
+            self._current_hooks.before_phase("denoise")
+            self._loop_hooks.denoise_started = True
+
+    def generate(self, req: GenRequest, hooks: PhaseHooks) -> Image.Image:
+        # Qwen's multimodal encoder and source-image VAE preprocessing happen
+        # before the pipeline's denoise callback. The prompt hook releases the
+        # encoder; edit layout setup overlaps the smaller VAE and transformer,
+        # then the callback releases the VAE before denoising.
+        hooks.before_phase("encode")
+        return super().generate(req, hooks)
+
+
+class SeedVR2Adapter(_MfluxAdapterBase):
+    """Lifecycle integration for the gated SeedVR2 upscaler.
+
+    The adapter is registered for benchmark/prototype use, but no built-in model
+    spec exposes it until its memory gate has passed.
+    """
+
+    def __init__(self, spec: ModelSpec, path: Path):
+        from mflux.models.common.config.model_config import ModelConfig
+        from mflux.models.seedvr2.weights.seedvr2_weight_definition import SeedVR2WeightDefinition
+
+        self.model_config = getattr(ModelConfig, spec.mflux_config or "seedvr2_3b")()
+        self.weight_definition = SeedVR2WeightDefinition.resolve(self.model_config)
+        super().__init__(spec, path)
+
+    def _build_empty_pipelines(self) -> dict:
+        from mflux.models.seedvr2.seedvr2_initializer import SeedVR2Initializer
+        from mflux.models.seedvr2.variants.upscale.seedvr2 import SeedVR2
+
+        model_config = self.model_config
+
+        class EmptySeedVR2(SeedVR2):
+            def __init__(self):
+                nn.Module.__init__(self)
+                SeedVR2Initializer._init_config(self, model_config)
+                self.vae = None
+                self.transformer = None
+                self.bits = None
+
+        return {"upscale": EmptySeedVR2()}
+
+    def _construct(self, name: str) -> nn.Module:
+        from mflux.models.seedvr2.model.seedvr2_transformer.transformer import SeedVR2Transformer
+        from mflux.models.seedvr2.model.seedvr2_vae.vae import SeedVR2VAE
+
+        if name == "vae":
+            return SeedVR2VAE()
+        if name == "transformer":
+            return SeedVR2Transformer(**(self.model_config.transformer_overrides or {}))
+        raise KeyError(name)
+
+    def _run(self, req: GenRequest) -> Image.Image:
+        if len(req.image_paths) != 1:
+            raise ValueError("SeedVR2 requires exactly one source image.")
+        from mflux.utils.scale_factor import ScaleFactor
+
+        scale = int(req.extras.get("scale", 2))
+        generated = self.pipe.generate_image(
+            seed=req.seed,
+            image_path=req.image_paths[0],
+            resolution=ScaleFactor.parse(f"{scale}x"),
+            softness=float(req.extras.get("softness", 0.0)),
+        )
+        return generated.image
+
+    def generate(self, req: GenRequest, hooks: PhaseHooks) -> Image.Image:
+        # SeedVR2 encodes the source with its VAE before callbacks enter the
+        # denoise loop. Announce that phase so sequential mode can load the VAE,
+        # release it before the transformer, and reload it for final decode.
+        hooks.before_phase("preprocess")
+        return super().generate(req, hooks)
+
+
 ADAPTERS = {
     "mflux.flux2_klein": Flux2KleinAdapter,
     "mflux.z_image": ZImageAdapter,
+    "mflux.qwen_image_21": QwenImage21Adapter,
+    "mflux.seedvr2": SeedVR2Adapter,
 }

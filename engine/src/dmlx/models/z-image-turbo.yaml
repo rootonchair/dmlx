@@ -6,6 +6,10 @@ quantization: 4
 license: apache-2.0
 tasks: [t2i]
 max_references: 0
+capabilities:
+  image.generate:
+    inputs: {}
+    prompt: { positive: true, negative: false }
 min_ram_gb: 16
 components:
   text_encoder: { phase: encode, share_key: qwen3-4b-q4, stream: [layers] }

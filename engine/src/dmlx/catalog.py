@@ -1,6 +1,6 @@
 """Adding models from Hugging Face: inspect a repo, build a model spec, suggest compatible repos.
 
-dMLX can run any repo of a model family it has an adapter for (FLUX.2 Klein, Z-Image), saved in
+dMLX can run any repo of a model family it has an adapter for (FLUX.2 Klein, Z-Image, Qwen Image 2.1), saved in
 mflux's format (pre-quantized packs such as those from mflux-community). Inspection reads only
 the repo's file list, each component's weight index and one shard header (a ranged request of a
 few kilobytes), so nothing is downloaded before the user confirms.
@@ -41,10 +41,28 @@ FAMILIES = {
         "decode_gb_per_mp": 6.7,
         "decode_tiled_gb_per_mp": 2.0,
     },
+    "qwen-image-2.1": {
+        "adapter": "mflux.qwen_image_21",
+        "tasks": ["t2i", "edit"],
+        "max_references": 10,
+        "stream": {
+            "text_encoder": [],
+            "transformer": [],
+        },
+        "decode_gb_per_mp": 8.0,
+        "decode_tiled_gb_per_mp": 1.3,
+        "reference_activation_factor": 2.2,
+        "min_ram_gb": 16,
+        "min_steps": 2,
+        "auto_select": False,
+        "experimental": True,
+        "negative_prompt": True,
+        "small_text_encoder": True,
+    },
 }
 
 
-_OTHER_MODEL = "dMLX can run FLUX.2 Klein and Z-Image image models; this repo is a different model."
+_OTHER_MODEL = "dMLX can run FLUX.2 Klein, Z-Image, and Qwen Image 2.1 Base models; this repo is a different model."
 
 
 class InspectError(Exception):
@@ -82,7 +100,7 @@ class Inspection:
 
     def to_spec_data(self) -> dict:
         family = FAMILIES[self.family]
-        return {
+        data = {
             "id": self.id,
             "name": self.name,
             "adapter": family["adapter"],
@@ -92,17 +110,34 @@ class Inspection:
             "license": self.license,
             "tasks": self.tasks,
             "max_references": family["max_references"],
-            "min_ram_gb": 16,
+            "min_ram_gb": family.get("min_ram_gb", 16),
+            "min_steps": family.get("min_steps", 1),
+            "auto_select": family.get("auto_select", True),
+            "experimental": family.get("experimental", False),
             "user_added": True,
             "components": {
-                "text_encoder": {"phase": "encode", "stream": family["stream"]["text_encoder"]},
+                "text_encoder": {
+                    "phase": "encode",
+                    "stream": family["stream"]["text_encoder"],
+                    **({"external": True, "size_gb": 2.4} if family.get("small_text_encoder") else {}),
+                },
                 "transformer": {"phase": "denoise", "stream": family["stream"]["transformer"]},
                 "vae": {"phase": "decode", "keep": True},
             },
             "defaults": self.defaults,
             "activation_gb_per_mp": self.activation_gb_per_mp,
+            "reference_activation_factor": family.get("reference_activation_factor", 0.75),
             **{k: family[k] for k in ("decode_gb_per_mp", "decode_tiled_gb_per_mp", "decode_banded_gb_per_mp") if k in family},
         }
+        if family.get("negative_prompt"):
+            data["capabilities"] = {
+                "image.generate": {"inputs": {}, "prompt": {"positive": True, "negative": True}},
+                "image.edit": {
+                    "inputs": {"image": {"min": 1, "max": family["max_references"], "ordered": True}},
+                    "prompt": {"positive": True, "negative": True},
+                },
+            }
+        return data
 
 
 # -- remote reads ---------------------------------------------------------------------------
@@ -159,12 +194,14 @@ def detect(repo: str, files: dict[str, int], card_license: str | None) -> Inspec
     lowered = repo.lower()
     if "controlnet" in lowered or "lora" in lowered:
         raise InspectError("ControlNet and LoRA repos are add-ons, not full models; dMLX does not support them yet.")
+    if "qwen-image-2.1" in lowered and "turbo" in lowered:
+        raise InspectError("Qwen Image 2.1 Turbo is not supported yet; use a Base MFLUX checkpoint.")
     folders = {f.split("/")[0] for f in files if "/" in f and f.endswith(".safetensors")}
     if "transformer" not in folders:
         raise InspectError(_OTHER_MODEL)
     missing = [c.replace("_", " ") for c in ("text_encoder", "vae") if c not in folders]
-    if not any(f.startswith("tokenizer/") for f in files):
-        missing.append("tokenizer")
+    if not any(f.startswith(("tokenizer/", "processor/")) for f in files):
+        missing.append("tokenizer or processor")
     if missing:
         raise InspectError(f"This repo is missing its {' and '.join(missing)}, so dMLX cannot run it on its own.")
     names, meta = _tensor_names(repo, files, "transformer")
@@ -176,7 +213,12 @@ def detect(repo: str, files: dict[str, int], card_license: str | None) -> Inspec
     level = meta.get("quantization_level")
     quantization = int(level) if level not in (None, "", "None", "null") else None
     double, single = _count(names, "transformer_blocks"), _count(names, "single_transformer_blocks")
-    if double and single:
+    if "qwen-image-2.1" in lowered and double and not single:
+        config, family = "qwen_image_21", "qwen-image-2.1"
+        name = "Qwen Image 2.1 Base"
+        defaults = {"steps": 40, "guidance": 4.0, "width": 1024, "height": 1024}
+        activation = 1.3
+    elif double and single:
         size_label = {5: "4B", 8: "9B"}.get(double)
         if size_label is None:
             raise InspectError("This looks like a FLUX.2 model, but not a Klein size dMLX knows (4B or 9B).")
@@ -267,6 +309,8 @@ def label(repo: str) -> str:
         title = f"FLUX.2 Klein {'Base ' if 'base' in tokens else ''}{size}{' KV' if 'kv' in tokens else ''}"
     elif "z" in tokens and "image" in tokens:
         title = "Z-Image Turbo" if "turbo" in tokens else "Z-Image Base"
+    elif "qwen" in tokens and "2" in tokens and "1" in tokens:
+        title = "Qwen Image 2.1 Base"
     else:
         title = repo.split("/")[-1]
     return f"{title} · {precision}" if precision else title
@@ -289,7 +333,7 @@ def suggestions() -> list[dict]:
         lowered = model.id.lower()
         if "controlnet" in lowered or "lora" in lowered:
             continue
-        if "klein" in lowered or "z-image" in lowered:
+        if "klein" in lowered or "z-image" in lowered or ("qwen-image-2.1" in lowered and "turbo" not in lowered):
             out.append({"repo": model.id, "label": label(model.id), "downloads": getattr(model, "downloads", None) or 0})
     _suggestions = (time.monotonic(), out)
     return out

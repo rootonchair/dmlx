@@ -16,6 +16,8 @@ class ResultStore:
     def __init__(self, root: Path | None = None):
         self.root = root or paths.results_dir()
         self.root.mkdir(parents=True, exist_ok=True)
+        self.workflow_root = self.root / "workflows"
+        self.workflow_root.mkdir(parents=True, exist_ok=True)
 
     @staticmethod
     def new_id(prefix: str = "img") -> str:
@@ -48,9 +50,11 @@ class ResultStore:
     def save_upload(self, data: bytes) -> str:
         """Store an uploaded source/reference image as a result so later turns can reference it."""
         import io
+        from PIL import ImageOps
 
         image = Image.open(io.BytesIO(data))
         image.load()
+        image = ImageOps.exif_transpose(image)
         if image.mode not in ("RGB", "RGBA"):
             image = image.convert("RGB")
         return self.save(image, {"kind": "upload"}, self.new_id("up"))
@@ -58,3 +62,31 @@ class ResultStore:
     def meta(self, result_id: str) -> dict:
         path = self.path(result_id).with_suffix(".json")
         return json.loads(path.read_text()) if path.exists() else {}
+
+    def save_workflow_job(self, value: dict) -> None:
+        """Atomically persist a multi-step job checkpoint for crash recovery."""
+        job_id = str(value.get("id", ""))
+        if not job_id.replace("_", "").isalnum():
+            raise ValueError("Invalid workflow job id.")
+        target = self.workflow_root / f"{job_id}.json"
+        temporary = target.with_suffix(".json.tmp")
+        temporary.write_text(json.dumps(value, indent=2))
+        temporary.replace(target)
+
+    def workflow_jobs(self) -> list[dict]:
+        jobs = []
+        for path in sorted(self.workflow_root.glob("job_*.json")):
+            try:
+                value = json.loads(path.read_text())
+                if isinstance(value, dict):
+                    jobs.append(value)
+            except (OSError, json.JSONDecodeError):
+                continue
+        return jobs
+
+    def delete_workflow_job(self, job_id: str) -> None:
+        if not job_id.replace("_", "").isalnum():
+            raise ValueError("Invalid workflow job id.")
+        path = self.workflow_root / f"{job_id}.json"
+        if path.exists():
+            path.unlink()

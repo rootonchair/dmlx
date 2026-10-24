@@ -117,6 +117,9 @@ class PressureMonitor:
     def start_window(self) -> None:
         with self._lock:
             self._window_max_pressure = self._last.pressure
+            # Swap-in is a per-job guard. Do not let the tail of the previous
+            # job's rolling window make a new job fail before it has done work.
+            self._history = [self._last]
 
     def window_max_pressure(self) -> int:
         with self._lock:
@@ -273,6 +276,23 @@ class MemoryManager:
             mx.set_memory_limit(max(int(plan.headroom + self.resident_bytes()), 2 * GB))
             return plan
 
+    def make_room(self, need: int) -> bool:
+        """Free idle components, least recently used first and never a pinned model's, until `need` fits."""
+        with self._lock:
+            if need <= self.headroom():
+                return True
+            victims = sorted(
+                (r for r in self._resident.values() if r.model_id not in self._pinned), key=lambda r: r.last_used)
+            for victim in victims:
+                self.free(victim.model_id, victim.name)
+                gc.collect()
+                mx.clear_cache()
+                time.sleep(0.05)
+                self.monitor._last = sysmem.snapshot()
+                if need <= self.headroom():
+                    return True
+            return False
+
     def degrade(self, seconds: float = 300.0) -> None:
         self.degraded_until = time.monotonic() + seconds
 
@@ -326,6 +346,13 @@ class JobGuard:
         adapter = self.m._adapters[self.spec.id]
         if hasattr(adapter, "stream_mode"):
             adapter.stream_mode = self.plan.strategy == "streamed"
+        if self.plan.strategy in ("sequential", "streamed"):
+            # Establish the low-memory invariant at the job boundary as well as
+            # at phase callbacks. A cached prompt can skip the encode callbacks,
+            # otherwise leaving eager components from the preceding job resident
+            # during reference-image preprocessing.
+            self.m.free(self.spec.id, "text_encoder")
+            self.m.free(self.spec.id, "transformer")
         for name, comp in self.spec.components.items():
             if comp.keep:
                 self._ensure(name)
@@ -342,6 +369,15 @@ class JobGuard:
             self._ensure("text_encoder")
             self.emit("encoding", {})
         elif phase == "denoise":
+            # Image-conditioned pipelines may use the VAE before denoising.
+            # In the low-memory strategies it must not overlap the transformer.
+            self.after_phase("preprocess")
+            if self.plan.strategy in ("sequential", "streamed"):
+                self.m.free(self.spec.id, "vae")
+            self._ensure("transformer")
+        elif phase == "layout":
+            # Some multimodal pipelines need transformer metadata before their
+            # normal denoise callback, while the VAE is still encoding references.
             self._ensure("transformer")
         elif phase == "decode":
             self._ensure("vae")

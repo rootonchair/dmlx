@@ -8,6 +8,8 @@ from pathlib import Path
 
 import yaml
 
+from dmlx.capabilities import CapabilitySpec, parse_capabilities
+
 GB = 1024**3
 
 
@@ -20,6 +22,7 @@ class ComponentSpec:
     size: int = 0  # bytes on disk; filled in once the model is downloaded
     stream: list[str] = field(default_factory=list)  # block stacks that can be streamed from disk
     stream_size: int = 0  # weights resident while streaming (non-block part + largest block)
+    external: bool = False  # loaded by the adapter from a smaller auxiliary checkpoint
 
 
 @dataclass
@@ -34,14 +37,28 @@ class ModelSpec:
     defaults: dict
     quantization: int | None = None
     max_references: int = 0
+    min_steps: int = 1
     min_ram_gb: int = 16
     activation_gb_per_mp: float = 1.5  # denoise working memory per megapixel
+    reference_activation_factor: float = 0.75  # additional activation multiplier per reference image
     decode_gb_per_mp: float = 9.0  # untiled VAE decode spike per megapixel
     decode_tiled_gb_per_mp: float = 2.5  # tiled VAE decode spike per megapixel
     decode_banded_gb_per_mp: float | None = None  # banded (exact, low-memory) decode, where the VAE supports it
     mflux_config: str | None = None  # mflux ModelConfig factory (e.g. flux2_klein_9b); adapter default if None
+    revision: str | None = None  # optional pinned Hugging Face revision for reproducible downloads
+    auto_select: bool = True  # false for restricted/experimental models that require explicit selection
+    experimental: bool = False  # integration is available but has not passed every release gate
+    license_url: str | None = None
+    license_acceptance_id: str | None = None
     user_added: bool = False  # added from the app; stored in the user's models folder and removable
     local_path: Path | None = field(default=None, repr=False)
+    capabilities: dict[str, CapabilitySpec] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        # Tests and third-party callers may still construct ModelSpec directly
+        # with the v0.1 task fields.
+        if not self.capabilities:
+            self.capabilities = parse_capabilities(None, self.tasks, self.max_references)
 
     def supports(self, task: str) -> bool:
         return task in self.tasks
@@ -56,7 +73,8 @@ class ModelSpec:
         megapixels = (width * height) / 1_000_000
         # Reference images add their tokens to the sequence. Measured with one reference at 1024x1024
         # (bf16 throughout): 1.45x the working memory of a plain generation; 0.75 per image keeps margin.
-        denoise = self.activation_gb_per_mp * megapixels * (1 + 0.75 * references)
+        denoise = self.activation_gb_per_mp * megapixels * (
+            1 + self.reference_activation_factor * references)
         return int(max(denoise, self.decode_bytes(width, height, self.low_memory_decode) / GB) * GB)
 
     def decode_bytes(self, width: int, height: int, mode: str) -> int:
@@ -76,13 +94,20 @@ class ModelSpec:
             "id": self.id,
             "name": self.name,
             "license": self.license,
+            "license_url": self.license_url,
+            "license_acceptance_id": self.license_acceptance_id,
+            "auto_select": self.auto_select,
+            "experimental": self.experimental,
             "tasks": self.tasks,
             "max_references": self.max_references,
+            "min_steps": self.min_steps,
             "min_ram_gb": self.min_ram_gb,
+            "reference_activation_factor": self.reference_activation_factor,
             "repo": self.repo,
             "user_added": self.user_added,
             "defaults": self.defaults,
             "size_gb": round(self.size / GB, 2) if self.size else None,
+            "capabilities": {name: capability.as_dict() for name, capability in self.capabilities.items()},
         }
 
 
@@ -94,27 +119,39 @@ def _parse(data: dict) -> ModelSpec:
             share_key=c.get("share_key"),
             keep=bool(c.get("keep", False)),
             stream=list(c.get("stream", [])),
+            size=int(float(c.get("size_gb", 0)) * GB),
+            external=bool(c.get("external", False)),
         )
         for name, c in data["components"].items()
     }
+    tasks = list(data["tasks"])
+    max_references = int(data.get("max_references", 0))
     return ModelSpec(
         id=data["id"],
         name=data["name"],
         adapter=data["adapter"],
         repo=data["repo"],
         license=data["license"],
-        tasks=list(data["tasks"]),
+        tasks=tasks,
         components=comps,
         defaults=dict(data.get("defaults", {})),
         quantization=data.get("quantization"),
-        max_references=int(data.get("max_references", 0)),
+        max_references=max_references,
+        min_steps=int(data.get("min_steps", 1)),
         min_ram_gb=int(data.get("min_ram_gb", 16)),
         activation_gb_per_mp=float(data.get("activation_gb_per_mp", 1.5)),
+        reference_activation_factor=float(data.get("reference_activation_factor", 0.75)),
         decode_gb_per_mp=float(data.get("decode_gb_per_mp", 9.0)),
         decode_tiled_gb_per_mp=float(data.get("decode_tiled_gb_per_mp", 2.5)),
         decode_banded_gb_per_mp=float(data["decode_banded_gb_per_mp"]) if "decode_banded_gb_per_mp" in data else None,
         mflux_config=data.get("mflux_config"),
+        revision=data.get("revision"),
+        auto_select=bool(data.get("auto_select", True)),
+        experimental=bool(data.get("experimental", False)),
+        license_url=data.get("license_url"),
+        license_acceptance_id=data.get("license_acceptance_id"),
         user_added=bool(data.get("user_added", False)),
+        capabilities=parse_capabilities(data.get("capabilities"), tasks, max_references),
     )
 
 
@@ -162,9 +199,20 @@ class Registry:
         preference = {"t2i": ["flux2-klein-4b", "z-image-turbo"], "edit": ["flux2-klein-4b"]}
         for model_id in preference.get(task, []):
             spec = self._specs.get(model_id)
-            if spec and spec.supports(task) and spec.min_ram_gb <= total_ram_gb + 0.5:
+            if spec and spec.auto_select and spec.supports(task) and spec.min_ram_gb <= total_ram_gb + 0.5:
                 return spec
         for spec in self._specs.values():
-            if spec.supports(task) and spec.min_ram_gb <= total_ram_gb + 0.5:
+            if spec.auto_select and spec.supports(task) and spec.min_ram_gb <= total_ram_gb + 0.5:
                 return spec
         return None
+
+    def default_for_operation(self, operation: str, total_ram_gb: float) -> ModelSpec | None:
+        legacy_task = {"image.generate": "t2i", "image.edit": "edit"}.get(operation)
+        if legacy_task:
+            preferred = self.default_for(legacy_task, total_ram_gb)
+            if preferred and operation in preferred.capabilities:
+                return preferred
+        return next((
+            spec for spec in self._specs.values()
+            if spec.auto_select and operation in spec.capabilities and spec.min_ram_gb <= total_ram_gb + 0.5
+        ), None)

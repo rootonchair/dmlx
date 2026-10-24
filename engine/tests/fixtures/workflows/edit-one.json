@@ -1,0 +1,10 @@
+{
+  "legacy": {
+    "task": "edit",
+    "prompt": "make it blue",
+    "model": "fake-a",
+    "input_ids": ["img_source"],
+    "parameters": {"width": 512, "height": 512, "seed": 8}
+  },
+  "expected": {"operation": "image.edit", "input_ids": ["img_source"]}
+}

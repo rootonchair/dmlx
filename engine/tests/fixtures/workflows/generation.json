@@ -1,0 +1,10 @@
+{
+  "legacy": {
+    "task": "t2i",
+    "prompt": "a lighthouse",
+    "model": "fake-a",
+    "input_ids": [],
+    "parameters": {"width": 512, "height": 512, "seed": 7}
+  },
+  "expected": {"operation": "image.generate", "input_ids": []}
+}

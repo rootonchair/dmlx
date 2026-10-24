@@ -1,0 +1,13 @@
+{
+  "legacy": {
+    "task": "edit",
+    "prompt": "combine them in order",
+    "model": "fake-a",
+    "input_ids": ["img_first", "img_second", "img_third"],
+    "parameters": {"width": 512, "height": 512, "seed": 9}
+  },
+  "expected": {
+    "operation": "image.edit",
+    "input_ids": ["img_first", "img_second", "img_third"]
+  }
+}

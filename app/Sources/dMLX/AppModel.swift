@@ -28,6 +28,12 @@ enum Aspect: String, CaseIterable, Identifiable {
 struct Attachment: Identifiable, Hashable {
     var id: String  // result id on the engine
     var label: String
+    var role: InputRole? = nil
+    var metadata: [String: String] = [:]
+
+    func mediaInput(order: Int) -> MediaInput {
+        MediaInput(id: id, role: role ?? (order == 0 ? .source : .reference), order: order, metadata: metadata)
+    }
 }
 
 @MainActor
@@ -37,6 +43,7 @@ final class AppModel {
     let engine = EngineProcess()
     var engineState: EngineProcess.State = .stopped
     var models: [EngineModel] = []
+    var capabilityCatalog: CapabilityCatalog?
     var memory: MemoryStatus?
 
     // History
@@ -47,9 +54,20 @@ final class AppModel {
 
     // Composer
     var draft = ""
-    var targetTurnId: String?
     var attachments: [Attachment] = []
     var aspect: Aspect = .square
+    var routeDecision: WorkflowDecision?
+    var isResolvingRoute = false
+    var promptEnhancementMode: PromptEnhancementMode = AppModel.savedPromptMode() {
+        didSet { UserDefaults.standard.set(promptEnhancementMode.rawValue, forKey: "promptEnhancementMode") }
+    }
+    var promptSuggestion: CompiledPromptResponse?
+    var promptSuggestionApplied = false
+    var isEnhancingPrompt = false
+    var editorDocument: EditorDocument?
+    var editorImage: NSImage?
+    var editorTurnNumber = 0
+    var isExportingEditor = false
     /// "auto" or a model id; chosen from the composer's model menu (and mirrored in Settings).
     var modelChoice: String = AppModel.savedModelChoice() {
         didSet { UserDefaults.standard.set(modelChoice, forKey: "modelChoice") }
@@ -62,6 +80,11 @@ final class AppModel {
         return "auto"
     }
 
+    private static func savedPromptMode() -> PromptEnhancementMode {
+        UserDefaults.standard.string(forKey: "promptEnhancementMode")
+            .flatMap(PromptEnhancementMode.init(rawValue:)) ?? .off
+    }
+
     // UI
     var toast: String?
     var showOnboarding = false
@@ -70,7 +93,26 @@ final class AppModel {
     private var streams: [String: _Concurrency.Task<Void, Never>] = [:]
     private var poller: _Concurrency.Task<Void, Never>?
     private var toastTask: _Concurrency.Task<Void, Never>?
+    private var routeTask: _Concurrency.Task<Void, Never>?
+    private var routeRequest: RouteRequestIdentity?
+    private var routeDecisionKey: String?
+    private var pendingRoute: PendingRoute?
+    /// The agent's question when it could not tell what a sent message means.
+    private(set) var pendingAsk: String?
+    /// The local prompt assistant is downloaded: sent messages are planned by it.
+    var promptAssistantInstalled = false
+    private let editorStore = EditorDocumentStore.default()
     let images = ImageCache()
+
+    private struct PendingRoute {
+        var message: String
+        var attachmentInputs: [MediaInput]
+        var latestResultId: String?
+        var latestTurnId: String?
+        var promptSpec: PromptSpec
+
+        var attachmentIds: [String] { attachmentInputs.map(\.id) }
+    }
 
     init() {
         do {
@@ -99,6 +141,7 @@ final class AppModel {
     // MARK: engine
 
     private func onEngineReady() {
+        scheduleRoutePreview()
         poller?.cancel()
         poller = _Concurrency.Task { [weak self] in
             var first = true
@@ -129,6 +172,8 @@ final class AppModel {
         guard let client else { return }
         if let list = try? await client.models() {
             models = list
+            capabilityCatalog = try? await client.capabilities()
+            promptAssistantInstalled = (try? await client.promptAssistant())?.installed ?? false
             if openOnboarding && defaultModel(for: .t2i) == nil {
                 showOnboarding = true
             }
@@ -209,9 +254,10 @@ final class AppModel {
 
     // MARK: model choice
 
-    /// Downloaded models that fit this Mac: what the composer's model menu offers.
+    /// Every downloaded model is visible for explicit selection. Auto still uses
+    /// only models that pass this Mac's safety tier.
     var choosableModels: [EngineModel] {
-        models.filter { $0.downloaded && $0.fits_this_mac }
+        models.filter(\.downloaded)
     }
 
     /// The model the menu's choice resolves to, or nil for Auto (or a choice that is no longer available).
@@ -220,8 +266,18 @@ final class AppModel {
     }
 
     func defaultModel(for task: GenTask) -> EngineModel? {
-        if let chosen = chosenModel, chosen.supports(task) { return chosen }
-        let downloaded = models.filter { $0.downloaded && $0.supports(task) && $0.fits_this_mac }
+        defaultModel(for: task == .edit ? "image.edit" : "image.generate")
+    }
+
+    func defaultModel(for operation: String) -> EngineModel? {
+        let capabilities = capabilityCatalog?.operations[operation, default: []] ?? []
+        if let chosen = chosenModel,
+           capabilities.contains(where: { $0.model == chosen.id && $0.downloaded }) {
+            return chosen
+        }
+        let capableIds = Set(capabilities
+            .filter { $0.downloaded && $0.fits_this_mac }.map(\.model))
+        let downloaded = models.filter { capableIds.contains($0.id) && $0.autoSelectable }
         // Auto: one model for both tasks keeps generate/edit turns warm.
         for id in ["flux2-klein-4b", "z-image-turbo"] {
             if let m = downloaded.first(where: { $0.id == id }) { return m }
@@ -232,7 +288,12 @@ final class AppModel {
     /// One line for the model menu: what the model does and its size.
     static func modelSummary(_ m: EngineModel) -> String {
         let does = m.supports(.edit) ? "New images and edits" : "New images only"
-        return m.size_gb.map { "\(does) · \(String(format: "%.1f", $0)) GB" } ?? does
+        let license = m.requiresLicenseAcceptance ? " · Research-only" : ""
+        let maturity = m.isExperimental ? " · Experimental" : ""
+        let compatibility = m.fits_this_mac ? "" : " · May not fit this Mac"
+        return m.size_gb.map {
+            "\(does) · \(String(format: "%.1f", $0)) GB\(license)\(maturity)\(compatibility)"
+        } ?? does + license + maturity + compatibility
     }
 
     /// Appended to the route preview when sending would swap another model out of memory.
@@ -266,10 +327,39 @@ final class AppModel {
         clearComposerContext()
     }
 
+    var currentSession: Session? {
+        guard let currentSessionId else { return nil }
+        return sessions.first { $0.id == currentSessionId }
+    }
+
     func delete(session id: String) {
-        try? store?.delete(session: id)
+        guard let index = sessions.firstIndex(where: { $0.id == id }) else { return }
+        let deletingCurrent = currentSessionId == id
+        let turnsToCancel = deletingCurrent ? turns : []
+
+        do {
+            try store?.delete(session: id)
+        } catch {
+            show("Couldn't delete this chat: \(error.localizedDescription)")
+            return
+        }
+
+        for turn in turnsToCancel where turn.current?.isActive == true {
+            cancel(turn.id)
+        }
+        do {
+            try editorStore.delete(sessionId: id)
+        } catch {
+            show("Chat deleted, but its editor drafts couldn't be removed.")
+        }
         sessions.removeAll { $0.id == id }
-        if currentSessionId == id { newSession() }
+        guard deletingCurrent else { return }
+
+        if sessions.isEmpty {
+            newSession()
+        } else {
+            select(sessions[min(index, sessions.count - 1)].id)
+        }
     }
 
     private func ensureSession(title: String) -> String {
@@ -296,73 +386,385 @@ final class AppModel {
         turns.last(where: { $0.kind == .image && $0.current?.resultId != nil })
     }
 
-    var targetTurn: Turn? {
-        targetTurnId.flatMap { id in turns.first(where: { $0.id == id }) }
+    var needsRouteChoice: Bool { pendingRoute != nil }
+
+    var pendingRouteChoices: [String] {
+        var choices = defaultModel(for: "image.generate") == nil ? [] : ["image.generate"]
+        if pendingRoute?.latestResultId != nil || !(pendingRoute?.attachmentInputs.isEmpty ?? true) {
+            for operation in ["image.edit", "image.upscale", "image.restore", "image.enhance"]
+                where defaultModel(for: operation) != nil {
+                choices.append(operation)
+            }
+        }
+        return choices
     }
 
-    var routingContext: RoutingContext {
-        RoutingContext(
-            targetResultId: targetTurn?.current?.resultId, targetTurnId: targetTurnId,
-            latestResultId: latestImageTurn?.current?.resultId, latestTurnId: latestImageTurn?.id,
-            attachmentIds: attachments.map(\.id))
-    }
-
-    var routePreview: String {
-        switch Router.route(draft, routingContext) {
-        case .none:
-            return chosenModel == nil ? "Model picked for you" : ""  // the model menu already names the choice
-        case .generate:
-            return defaultModel(for: .t2i).map { "Will generate · \($0.name)\(loadHint($0))" } ?? "No image model downloaded"
-        case .edit(_, let fromTurn):
-            guard let m = defaultModel(for: .edit) else { return "No model that can edit is downloaded" }
-            // The chosen model may not edit; say which one is used instead.
-            let fallback = chosenModel.map { $0.supports(.edit) ? "" : " (\($0.name) can't edit)" } ?? ""
-            let what = fromTurn.flatMap { id in turns.first(where: { $0.id == id }) }.map { "image \($0.number)" } ?? "the attached image"
-            return "Will edit \(what) · \(m.name)\(fallback)\(loadHint(m))"
-        case .video:
-            return "Video isn't in this beta yet"
+    static func operationLabel(_ operation: String) -> String {
+        switch operation {
+        case "image.generate": "Create new"
+        case "image.edit": "Edit current"
+        case "image.upscale": "Upscale 2×"
+        case "image.restore": "Restore"
+        case "image.enhance": "Enhance"
+        default: operation
         }
     }
 
+    var routePreview: String {
+        let message = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !message.isEmpty else {
+            return chosenModel == nil ? "Model picked for you" : ""  // the model menu already names the choice
+        }
+        guard routeDecisionKey == routingKey(message: message), let decision = routeDecision else {
+            return isResolvingRoute ? "Determining workflow…" : "Ready to route"
+        }
+        switch decision.intent {
+        case "image.generate":
+            return defaultModel(for: .t2i).map { "Will generate · \($0.name)\(loadHint($0))" } ?? "No image model downloaded"
+        case "image.edit":
+            guard let m = defaultModel(for: .edit) else { return "No model that can edit is downloaded" }
+            // The chosen model may not edit; say which one is used instead.
+            let fallback = chosenModel.map { $0.supports(.edit) ? "" : " (\($0.name) can't edit)" } ?? ""
+            let what = attachments.isEmpty ? latestImageTurn.map { "image \($0.number)" } ?? "the current image" : "the attached image\(attachments.count == 1 ? "" : "s")"
+            return "Will edit \(what) · \(m.name)\(fallback)\(loadHint(m))"
+        case "image.upscale", "image.restore", "image.enhance":
+            guard let m = defaultModel(for: decision.intent) else {
+                return "No installed executor for \(Self.operationLabel(decision.intent).lowercased())"
+            }
+            return "Will \(Self.operationLabel(decision.intent).lowercased()) · \(m.name)\(loadHint(m))"
+        default:
+            return "Choose whether to edit or create new"
+        }
+    }
+
+    /// Refreshes the non-binding route hint. Structural cases resolve locally; only
+    /// a continuation with a current image needs the configured decision provider.
+    func scheduleRoutePreview() {
+        routeTask?.cancel()
+        pendingRoute = nil
+        pendingAsk = nil
+        let message = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        if promptSuggestion?.user != message {
+            promptSuggestion = nil
+            promptSuggestionApplied = false
+        }
+        let key = routingKey(message: message)
+        guard !message.isEmpty else {
+            routeDecision = nil
+            routeDecisionKey = nil
+            routeRequest = nil
+            isResolvingRoute = false
+            return
+        }
+        if let decision = structuralDecision() {
+            routeDecision = decision
+            routeDecisionKey = key
+            routeRequest = nil
+            isResolvingRoute = false
+            return
+        }
+        routeDecision = nil
+        routeDecisionKey = nil
+        isResolvingRoute = true
+        let currentResultId = latestImageTurn?.current?.resultId
+        let currentPrompt = latestImageTurn?.current?.prompt
+        let attachmentIds = attachments.map(\.id)
+        let request = RouteRequestIdentity(context: routingContext(message: message))
+        routeRequest = request
+        routeTask = _Concurrency.Task { [weak self] in
+            do {
+                try await _Concurrency.Task.sleep(for: .milliseconds(300))
+                guard let self, !_Concurrency.Task.isCancelled,
+                      self.routeRequest?.accepts(
+                        context: self.routingContext(message: message), requestID: request.id) == true else { return }
+                guard let client = self.client else {
+                    self.routeDecision = Self.ambiguousDecision(provider: "unavailable")
+                    self.routeDecisionKey = key
+                    self.isResolvingRoute = false
+                    return
+                }
+                let decision = try await client.routeWorkflow(
+                    message: message, currentResultId: currentResultId,
+                    currentPrompt: currentPrompt, attachments: attachmentIds,
+                    history: self.routingHistory, selectedModel: self.chosenModel?.id)
+                guard !_Concurrency.Task.isCancelled,
+                      self.routeRequest?.accepts(
+                        context: self.routingContext(message: message), requestID: request.id) == true else { return }
+                self.routeDecision = decision
+                self.routeDecisionKey = key
+                self.isResolvingRoute = false
+            } catch is CancellationError {
+            } catch {
+                guard let self, self.routeRequest?.accepts(
+                    context: self.routingContext(message: message), requestID: request.id) == true else { return }
+                self.routeDecision = Self.ambiguousDecision(provider: "unavailable")
+                self.routeDecisionKey = key
+                self.isResolvingRoute = false
+            }
+        }
+    }
+
+    private func routingKey(message: String) -> String {
+        routingContext(message: message).key
+    }
+
+    private func routingContext(message: String) -> RoutingContext {
+        RoutingContext(
+            message: message, currentResultId: latestImageTurn?.current?.resultId,
+            attachmentIds: attachments.map(\.id), history: routingHistory,
+            selectedModel: chosenModel?.id)
+    }
+
+    /// Keep routing context useful and bounded. The first few turns preserve
+    /// references such as "the first image" while the recent suffix carries
+    /// the active conversational intent.
+    private var routingHistory: [RoutingHistoryItem] {
+        let history = turns.map { turn in
+            let version = turn.current
+            return RoutingHistoryItem(
+                sequence: turn.index, kind: turn.kind.rawValue, text: turn.text,
+                imageNumber: turn.kind == .image ? turn.number : nil,
+                operation: version?.operation, resultId: version?.resultId,
+                inputIds: version?.mediaInputs?.map(\.id)
+                    ?? turn.attachmentInputs?.map(\.id)
+                    ?? version?.sourceIds
+                    ?? turn.attachments)
+        }
+        guard history.count > 24 else { return history }
+        return Array(history.prefix(4)) + Array(history.suffix(20))
+    }
+
+    private func structuralDecision() -> WorkflowDecision? {
+        let count = attachments.count
+        let hasCurrent = latestImageTurn != nil
+        let operations = capabilityCatalog?.operations.compactMap { operation, capabilities -> String? in
+            let available = capabilities.contains { capability in
+                guard capability.downloaded else { return false }
+                if let chosen = chosenModel {
+                    guard capability.model == chosen.id else { return false }
+                } else {
+                    guard capability.fits_this_mac else { return false }
+                }
+                if let constraint = capability.inputs["image"] {
+                    let inputs = count > 0 ? count : (hasCurrent ? 1 : 0)
+                    return constraint.min <= inputs && inputs <= constraint.max
+                }
+                return count == 0
+            }
+            return available ? operation : nil
+        } ?? []
+        guard operations.count == 1, let operation = operations.first else { return nil }
+        return WorkflowDecision(
+            intent: operation, confidence: 1, probabilities: [operation: 1], provider: "deterministic")
+    }
+
+    private static func ambiguousDecision(provider: String) -> WorkflowDecision {
+        WorkflowDecision(intent: "ambiguous", confidence: 0, probabilities: [:], provider: provider)
+    }
+
     private func clearComposerContext() {
-        targetTurnId = nil
         attachments = []
+        routeTask?.cancel()
+        routeDecision = nil
+        routeDecisionKey = nil
+        routeRequest = nil
+        pendingRoute = nil
+        isResolvingRoute = false
+        promptSuggestion = nil
+        promptSuggestionApplied = false
     }
 
     // MARK: sending
 
     func send(_ text: String? = nil) {
         let message = (text ?? draft).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !message.isEmpty, !isResolvingRoute else { return }
+        let snapshot = PendingRoute(
+            message: message, attachmentInputs: attachments.enumerated().map { $0.element.mediaInput(order: $0.offset) },
+            latestResultId: latestImageTurn?.current?.resultId, latestTurnId: latestImageTurn?.id,
+            promptSpec: selectedPromptSpec(for: message))
+        let key = routingKey(message: message)
+        // With the agent, every sent message is planned by it; the rules only check its answer (in the engine).
+        let planned = promptAssistantInstalled
+        if !planned, let decision = structuralDecision() {
+            execute(snapshot, decision: decision)
+            return
+        }
+        if !planned, routeDecisionKey == key, let decision = routeDecision {
+            handle(snapshot, decision: decision)
+            return
+        }
+        guard let client else { return show("The engine is still starting.") }
+        isResolvingRoute = true
+        routeTask?.cancel()
+        let request = RouteRequestIdentity(context: routingContext(message: message))
+        routeRequest = request
+        routeTask = _Concurrency.Task { [weak self] in
+            do {
+                let decision = try await client.routeWorkflow(
+                    message: message, currentResultId: snapshot.latestResultId,
+                    currentPrompt: self?.latestImageTurn?.current?.prompt, attachments: snapshot.attachmentIds,
+                    history: self?.routingHistory ?? [], selectedModel: self?.chosenModel?.id, plan: planned)
+                guard let self, !_Concurrency.Task.isCancelled,
+                      self.routeRequest?.accepts(
+                        context: self.routingContext(message: message), requestID: request.id) == true else {
+                    self?.isResolvingRoute = false
+                    self?.scheduleRoutePreview()
+                    return
+                }
+                self.isResolvingRoute = false
+                self.routeDecision = decision
+                self.routeDecisionKey = key
+                self.handle(snapshot, decision: decision)
+            } catch is CancellationError {
+            } catch {
+                guard let self, self.routeRequest?.accepts(
+                    context: self.routingContext(message: message), requestID: request.id) == true else { return }
+                self.isResolvingRoute = false
+                self.pendingRoute = snapshot
+            }
+        }
+    }
+
+    private func handle(_ pending: PendingRoute, decision: WorkflowDecision) {
+        guard !decision.requiresConfirmation() else {
+            pendingRoute = pending
+            pendingAsk = decision.ask
+            return
+        }
+        execute(pending, decision: decision)
+    }
+
+    func choosePendingRoute(_ operation: String) {
+        guard let pending = pendingRoute else { return }
+        pendingRoute = nil
+        pendingAsk = nil
+        execute(pending, decision: WorkflowDecision(
+            intent: operation, confidence: 1, probabilities: [operation: 1], provider: "user"))
+    }
+
+    func cancelPendingRoute() {
+        pendingRoute = nil
+        pendingAsk = nil
+    }
+
+    func overrideRoute(_ operation: String) {
+        let message = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !message.isEmpty else { return }
-        let intent = Router.route(message, routingContext)
+        routeTask?.cancel()
+        routeRequest = nil
+        pendingRoute = nil
+        isResolvingRoute = false
+        routeDecision = WorkflowDecision(
+            intent: operation, confidence: 1, probabilities: [operation: 1], provider: "user")
+        routeDecisionKey = routingKey(message: message)
+    }
+
+    private func selectedPromptSpec(for message: String) -> PromptSpec {
+        if promptSuggestionApplied, let suggestion = promptSuggestion, suggestion.user == message {
+            return PromptSpec(
+                user: message, positive: suggestion.positive, negative: suggestion.negative,
+                enhancementMode: .ask, compiler: suggestion.compiler)
+        }
+        return PromptSpec(user: message, enhancementMode: promptEnhancementMode == .auto ? .auto : .off)
+    }
+
+    func enhanceDraft() {
+        let message = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !message.isEmpty, !isEnhancingPrompt, let client else { return }
+        let routedOperation = routeDecision?.intent
+        let operation = routedOperation != nil && routedOperation != "ambiguous"
+            ? routedOperation! : (!attachments.isEmpty ? "image.edit" : "image.generate")
+        // The images an edit would run on, so the prompt assistant can look at them.
+        let imageIds = operation == "image.edit"
+            ? (!attachments.isEmpty ? attachments.map(\.id)
+               : routeDecision?.input_result_ids?.isEmpty == false ? routeDecision!.input_result_ids!
+               : latestImageTurn?.current?.resultId.map { [$0] } ?? [])
+            : []
+        isEnhancingPrompt = true
+        _Concurrency.Task {
+            defer { isEnhancingPrompt = false }
+            do {
+                let suggestion = try await client.compilePrompt(
+                    prompt: message, operation: operation, model: defaultModel(for: operation)?.id, imageIds: imageIds)
+                guard draft.trimmingCharacters(in: .whitespacesAndNewlines) == message else { return }
+                promptSuggestion = suggestion
+                promptSuggestionApplied = false
+            } catch {
+                show("Prompt enhancement failed: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    func applyPromptSuggestion() {
+        guard promptSuggestion != nil else { return }
+        promptSuggestionApplied = true
+    }
+
+    func dismissPromptSuggestion() {
+        promptSuggestion = nil
+        promptSuggestionApplied = false
+    }
+
+    private func execute(_ pending: PendingRoute, decision: WorkflowDecision) {
+        var pending = pending
+        let message = pending.message
+        // The agent's prompt is used for edits, and for new images when Auto enhancement is on. It is
+        // marked with the agent's name so the job does not rewrite it again; an accepted ✨ suggestion wins.
+        if pending.promptSpec.compiler == "passthrough@1", let written = decision.prompt,
+           decision.intent != "image.generate" || promptEnhancementMode == .auto {
+            pending.promptSpec = PromptSpec(
+                user: message, positive: written, enhancementMode: pending.promptSpec.enhancement_mode,
+                compiler: decision.provider)
+        }
         let sessionId = ensureSession(title: message)
-        let attachedIds = attachments.map(\.id)
-        appendTurn(Turn(sessionId: sessionId, index: turns.count, kind: .user, text: message, attachments: attachedIds))
+        appendTurn(Turn(
+            sessionId: sessionId, index: turns.count, kind: .user, text: message,
+            attachments: pending.attachmentIds, attachmentInputs: pending.attachmentInputs))
         draft = ""
 
-        switch intent {
-        case .none:
-            return
-        case .video:
-            appendTurn(Turn(
-                sessionId: sessionId, index: turns.count, kind: .notice,
-                text: "Video generation isn't in this beta yet. Images and edits are; video is next on the roadmap."))
-        case .generate:
+        switch decision.intent {
+        case "image.generate":
             guard let model = defaultModel(for: .t2i) else { return noModel(sessionId) }
-            startImageTurn(sessionId: sessionId, prompt: message, model: model, task: .t2i, sources: [], route: "Generated",
-                           size: aspect.size)
-        case .edit(let sources, let fromTurn):
+            startImageTurn(sessionId: sessionId, prompt: message, model: model, task: .t2i, inputs: [], route: "Generated",
+                           size: aspect.size, decision: decision, promptSpec: pending.promptSpec, operation: decision.intent)
+        case "image.edit":
             guard let model = defaultModel(for: .edit) else { return noModel(sessionId) }
+            let inputs = routedInputs(pending, decision: decision)
+            guard !inputs.isEmpty else { return noModel(sessionId) }
             var route = "Edited from the attached image"
-            if let fromTurn, let t = turns.first(where: { $0.id == fromTurn }) {
+            if pending.attachmentIds.isEmpty, let source = inputs.first,
+               let t = turns.first(where: { $0.current?.resultId == source.id }) {
                 route = "Edited from image \(t.number) · v\(t.activeVersion + 1)"
             }
-            if sources.count > 1 { route += " + \(sources.count - 1) reference\(sources.count > 2 ? "s" : "")" }
-            startImageTurn(sessionId: sessionId, prompt: message, model: model, task: .edit, sources: sources, route: route,
-                           size: nil)
+            if inputs.count > 1 { route += " + \(inputs.count - 1) reference\(inputs.count > 2 ? "s" : "")" }
+            startImageTurn(sessionId: sessionId, prompt: message, model: model, task: .edit, inputs: inputs, route: route,
+                           size: nil, decision: decision, promptSpec: pending.promptSpec, operation: decision.intent)
+        default:
+            let operation = decision.intent
+            guard operation.hasPrefix("image."), let model = defaultModel(for: operation) else {
+                appendTurn(Turn(sessionId: sessionId, index: turns.count, kind: .notice,
+                                text: "That workflow isn't available yet."))
+                break
+            }
+            let inputs = routedInputs(pending, decision: decision)
+            guard !inputs.isEmpty else { return noModel(sessionId) }
+            startImageTurn(
+                sessionId: sessionId, prompt: message, model: model, task: .edit, inputs: inputs,
+                route: Self.operationLabel(operation), size: nil, decision: decision,
+                promptSpec: pending.promptSpec, operation: operation)
         }
         clearComposerContext()
         touchSession()
+    }
+
+    private func routedInputs(_ pending: PendingRoute, decision: WorkflowDecision) -> [MediaInput] {
+        if !pending.attachmentInputs.isEmpty { return pending.attachmentInputs }
+        let selected = decision.input_result_ids ?? []
+        let ids = selected.isEmpty ? pending.latestResultId.map { [$0] } ?? [] : selected
+        return ids.prefix(3).enumerated().map { index, id in
+            MediaInput(id: id, role: index == 0 ? .source : .reference, order: index)
+        }
     }
 
     private func noModel(_ sessionId: String) {
@@ -386,9 +788,18 @@ final class AppModel {
     }
 
     private func startImageTurn(
-        sessionId: String, prompt: String, model: EngineModel, task: GenTask, sources: [String], route: String, size: String?
+        sessionId: String, prompt: String, model: EngineModel, task: GenTask, inputs: [MediaInput], route: String, size: String?,
+        decision: WorkflowDecision, promptSpec: PromptSpec, operation: String? = nil
     ) {
-        let version = ImageVersion(prompt: prompt, model: model.id, task: task, size: size ?? "auto", sourceIds: sources)
+        let workflowRoute = WorkflowRoute(
+            intent: decision.intent, confidence: decision.confidence, router: decision.provider,
+            probabilities: decision.probabilities, modelVersion: decision.model_version,
+            latencyMS: decision.latency_ms, memoryMB: decision.memory_mb)
+        let version = ImageVersion(
+            prompt: prompt, model: model.id, task: task,
+            operation: operation ?? (task == .edit ? "image.edit" : "image.generate"),
+            size: size ?? "auto", sourceIds: inputs.map(\.id),
+            workflowRoute: workflowRoute, mediaInputs: inputs, workflowPrompt: promptSpec)
         let turn = Turn(sessionId: sessionId, index: turns.count, kind: .image, text: prompt, number: nextImageNumber,
                         route: route, versions: [version], activeVersion: 0)
         appendTurn(turn)
@@ -409,7 +820,9 @@ final class AppModel {
                 let stream = client.run(
                     task: version.task, prompt: version.prompt, model: version.model,
                     size: version.size == "auto" ? nil : version.size, seed: version.seed,
-                    sourceIds: version.sourceIds, force: force)
+                    sourceIds: version.sourceIds, mediaInputs: version.mediaInputs,
+                    force: force, route: version.workflowRoute, promptSpec: version.workflowPrompt,
+                    operation: version.operation)
                 for try await event in stream {
                     self?.apply(event, turnId: turnId, versionId: versionId)
                 }
@@ -454,6 +867,8 @@ final class AppModel {
                 v.status = .rendering
                 v.phase = "Loading \(Self.componentName(p.component))"
                 if let c = p.component, !v.loads.contains(c) { v.loads.append(c) }
+            case "rewriting":
+                v.phase = v.task == .edit ? "Planning the edit" : "Writing a detailed prompt"
             case "encoding":
                 v.phase = "Reading your prompt"
             case "step":
@@ -492,6 +907,7 @@ final class AppModel {
     static func componentName(_ c: String?) -> String {
         switch c {
         case "text_encoder": return "text encoder"
+        case "prompt_assistant": return "prompt assistant"
         case "transformer": return "image model"
         case "vae": return "decoder"
         default: return "model"
@@ -532,13 +948,47 @@ final class AppModel {
 
     func variation(_ turnId: String) {
         guard let t = turns.firstIndex(where: { $0.id == turnId }), let base = turns[t].current else { return }
-        var v = ImageVersion(prompt: base.prompt, model: base.model, task: base.task, size: base.size,
-                             sourceIds: base.sourceIds, label: "Variation")
+        var v = ImageVersion(prompt: base.prompt, model: base.model, task: base.task, operation: base.operation, size: base.size,
+                             sourceIds: base.sourceIds, label: "Variation", workflowRoute: base.workflowRoute,
+                             mediaInputs: base.mediaInputs, workflowPrompt: base.workflowPrompt)
         v.seed = nil
         turns[t].versions.append(v)
         turns[t].activeVersion = turns[t].versions.count - 1
         persist(t)
         run(turnId: turnId, versionId: v.id)
+    }
+
+    /// The image a message produced: the first image turn after it, before the next message.
+    func imageTurn(answering userTurnId: String) -> Turn? {
+        guard let i = turns.firstIndex(where: { $0.id == userTurnId }) else { return nil }
+        for turn in turns[(i + 1)...] {
+            if turn.kind == .user { return nil }
+            if turn.kind == .image { return turn }
+        }
+        return nil
+    }
+
+    /// Replaces the image a message produced with a run of the edited prompt; the old result and its
+    /// Variations are dropped. Model, inputs, size and seed stay the same, so only the prompt changes.
+    func editPrompt(_ userTurnId: String, to text: String) {
+        let prompt = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !prompt.isEmpty, let u = turns.firstIndex(where: { $0.id == userTurnId }),
+              let target = imageTurn(answering: userTurnId),
+              let t = turns.firstIndex(where: { $0.id == target.id }), let base = turns[t].current,
+              !base.isActive, prompt != base.prompt else { return }
+        // A prompt suggestion accepted for the old text does not describe the new one.
+        let spec = PromptSpec(user: prompt, enhancementMode: base.workflowPrompt?.enhancement_mode == .auto ? .auto : .off)
+        var v = ImageVersion(prompt: prompt, model: base.model, task: base.task, operation: base.operation, size: base.size,
+                             sourceIds: base.sourceIds, workflowRoute: base.workflowRoute,
+                             mediaInputs: base.mediaInputs, workflowPrompt: spec)
+        v.seed = base.seed
+        turns[u].text = prompt
+        turns[t].text = prompt
+        turns[t].versions = [v]
+        turns[t].activeVersion = 0
+        persist(u)
+        persist(t)
+        run(turnId: target.id, versionId: v.id)
     }
 
     func retry(_ turnId: String, force: Bool) {
@@ -556,14 +1006,67 @@ final class AppModel {
         }
     }
 
-    func edit(_ turnId: String) {
-        targetTurnId = turnId
-    }
-
-    func useAsReference(_ turnId: String) {
+    func attachResult(_ turnId: String) {
         guard let t = turns.first(where: { $0.id == turnId }), let rid = t.current?.resultId else { return }
+        guard attachments.count < 3 || attachments.contains(where: { $0.id == rid }) else {
+            return show("This model accepts up to 3 images.")
+        }
         if !attachments.contains(where: { $0.id == rid }) {
             attachments.append(Attachment(id: rid, label: "Image \(t.number)"))
+        }
+    }
+
+    func openEditor(_ turnId: String) {
+        guard let sessionId = currentSessionId,
+              let turn = turns.first(where: { $0.id == turnId }),
+              let resultId = turn.current?.resultId,
+              let image = images.image(resultId) else { return }
+        var rect = CGRect(origin: .zero, size: image.size)
+        guard let cgImage = image.cgImage(forProposedRect: &rect, context: nil, hints: nil) else {
+            return show("Couldn't open this image for editing.")
+        }
+        editorDocument = editorStore.load(sessionId: sessionId, resultId: resultId)
+            ?? EditorDocument(baseResultId: resultId, baseWidth: cgImage.width, baseHeight: cgImage.height)
+        editorImage = image
+        editorTurnNumber = turn.number
+    }
+
+    func closeEditor() {
+        guard !isExportingEditor else { return }
+        editorDocument = nil
+        editorImage = nil
+    }
+
+    func applyEditor(_ document: EditorDocument) {
+        guard !isExportingEditor, let sessionId = currentSessionId, let image = editorImage,
+              let client else { return }
+        guard attachments.count < 3 else {
+            return show("Remove an attachment before adding the prepared image.")
+        }
+        var rect = CGRect(origin: .zero, size: image.size)
+        guard let source = image.cgImage(forProposedRect: &rect, context: nil, hints: nil) else {
+            return show("Couldn't render this image.")
+        }
+        isExportingEditor = true
+        _Concurrency.Task {
+            let temporary = FileManager.default.temporaryDirectory
+                .appendingPathComponent("dmlx-composite-\(UUID().uuidString).png")
+            defer { try? FileManager.default.removeItem(at: temporary) }
+            do {
+                let png = try EditorRenderer.render(document, source: source)
+                try png.write(to: temporary, options: .atomic)
+                try editorStore.save(document, sessionId: sessionId)
+                let resultId = try await client.upload(file: temporary)
+                attachments.insert(Attachment(
+                    id: resultId, label: "Prepared image \(editorTurnNumber)", role: .composite,
+                    metadata: ["base_result_id": document.baseResultId, "editor_schema": String(document.schemaVersion)]), at: 0)
+                editorDocument = nil
+                editorImage = nil
+                show("Prepared image attached as image 1")
+            } catch {
+                show("Couldn't prepare the image: \(error.localizedDescription)")
+            }
+            isExportingEditor = false
         }
     }
 
@@ -571,10 +1074,21 @@ final class AppModel {
         attachments.removeAll { $0.id == id }
     }
 
+    func moveAttachment(_ id: String, before targetId: String) {
+        guard id != targetId,
+              let from = attachments.firstIndex(where: { $0.id == id }),
+              let target = attachments.firstIndex(where: { $0.id == targetId }) else { return }
+        let item = attachments.remove(at: from)
+        let destination = from < target ? target - 1 : target
+        attachments.insert(item, at: destination)
+    }
+
     func attach(files: [URL]) {
         guard let client else { return show("The engine is still starting.") }
         _Concurrency.Task {
-            for url in files.prefix(3) {
+            let available = max(0, 3 - attachments.count)
+            if available == 0 { return show("This model accepts up to 3 images.") }
+            for url in files.prefix(available) {
                 do {
                     let id = try await client.upload(file: url)
                     attachments.append(Attachment(id: id, label: url.lastPathComponent))

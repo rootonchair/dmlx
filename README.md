@@ -8,7 +8,7 @@ Create and edit images by chatting, fully on your Mac. dMLX is a native macOS ap
 
 - **Chat to create.** Describe an image; follow up in plain words ("make it night") to edit the latest result. No settings to pick first: the model menu in the message box starts on **Auto**, and you can pick a specific model there.
 - **Versions, not overwrites.** Variations stack as v1, v2, v3 on the same turn; edit any version.
-- **References.** Attach up to 3 images (or use a previous result) to guide an edit.
+- **References.** Attach ordered images (or reuse earlier results) to guide an edit: up to 3 with FLUX.2 Klein or 10 with Qwen Image 2.1.
 - **Stays responsive.** The engine checks free memory before every job, loads model parts one at a time when memory is tight, and in the tightest case streams the model from disk block by block (a new 1024×1024 image in about 1.5 GB). It stops a job if macOS memory pressure turns critical.
 - **Warm follow-ups.** Models stay loaded between turns and prompt embeddings are cached, so follow-up edits skip loading entirely.
 - **Local API.** The engine speaks an OpenAI-compatible images API, so other apps and agents can use it too.
@@ -32,10 +32,11 @@ Create and edit images by chatting, fully on your Mac. dMLX is a native macOS ap
 |---|---|---|---|---|
 | FLUX.2 Klein 4B (4-bit) | generate, edit, up to 3 references | Apache-2.0 | 4.6 GB | Default for everything |
 | Z-Image Turbo (4-bit) | generate | Apache-2.0 | 5.9 GB | Optional; finer detail, slower |
+| Qwen Image 2.1 Base (4-bit) | generate, edit, up to 10 ordered references, negative prompts | Qwen Research License | ~10.6 GB | Experimental; explicit selection only; live memory preflight; non-commercial research/evaluation |
 
 Weights are downloaded from Hugging Face into the standard cache (`~/.cache/huggingface`) and are never bundled.
 
-**Adding and removing models.** Settings → Models → **Add Model…** lists the community versions of the supported families (FLUX.2 Klein 4B/9B, base and distilled; Z-Image Turbo and base, 3- to 16-bit) and accepts any Hugging Face repo or link in mflux format. dMLX checks the repo before downloading anything (family, size, license) and warns when a license may not allow commercial use (FLUX.2 Klein 9B is non-commercial). **Remove…** deletes a model's files from the Hugging Face cache; built-in models stay listed and can be downloaded again.
+**Adding and removing models.** Settings → Models → **Add Model…** lists community versions of the supported families (FLUX.2 Klein 4B/9B, Z-Image Turbo/base, and Qwen Image 2.1 Base) and accepts a Hugging Face repo or link in mflux format. dMLX checks the repo before downloading anything (family, size, license) and requires confirmation for restricted licenses. Qwen Image 2.1 is never selected by **Auto**; it must be chosen explicitly after its research-only terms are acknowledged. **Remove…** deletes a model's files from the Hugging Face cache; built-in models stay listed and can be downloaded again.
 
 ## How memory is handled
 
@@ -78,14 +79,49 @@ curl -s localhost:8642/v1/images/generations -H 'content-type: application/json'
 |---|---|---|
 | POST | `/v1/images/generations` | OpenAI-compatible; `stream: true` returns server-sent events |
 | POST | `/v1/images/edits` | multipart (OpenAI style) or JSON with `source_id` / `reference_ids` |
+| POST | `/v1/workflows` | validated, capability-aware workflow plan; supports streaming |
+| POST | `/v1/workflows/route` | bounded semantic decision for the supplied chat state |
+| GET | `/v1/capabilities` | operations and input constraints exposed by each model |
+| POST | `/v1/prompts/compile` | model-aware prompt enhancement preview |
 | POST | `/v1/uploads` | store an image, get an id to reference later |
 | GET | `/v1/results/{id}` · `/meta` | PNG with prompt/seed embedded · its metadata |
 | GET/DELETE | `/v1/jobs/{id}` · `/events` | status · cancel · SSE |
+| POST | `/v1/jobs/{id}/retry` | retry a failed multi-step workflow from its failed or selected step |
 | GET | `/v1/models` | catalog with downloaded / resident state |
 | POST | `/admin/models/{id}/pull` · `load` · `unload` | download, pin, free |
 | GET | `/admin/memory` | memory budget, pressure, resident components |
 
 Events: `queued`, `plan`, `loading{component}`, `encoding`, `step{step,total}`, `decoding`, `image{result_id}`, `done{result_ids, report}`, `error{code,message}`, `cancelled`.
+
+Ambiguous follow-up chat can use any OpenAI-compatible `/v1/chat/completions`
+server. Routing includes a bounded chronological thread history so the provider
+can resolve follow-ups and return ordered earlier-image result IDs; image pixels
+are not sent. Explicit attachments remain authoritative. Configure the provider
+in **Settings → Intelligence**; API keys are kept in macOS Keychain. For
+engine-only use, set `DMLX_ROUTER_BASE_URL`,
+`DMLX_ROUTER_MODEL`, and optionally `DMLX_ROUTER_API_KEY` and
+`DMLX_ROUTER_TIMEOUT`. Remote URLs must use HTTPS; loopback HTTP is allowed.
+Prompt enhancement is configured independently in the same settings panel or
+with `DMLX_PROMPT_BASE_URL`, `DMLX_PROMPT_MODEL`, `DMLX_PROMPT_API_KEY`, and
+`DMLX_PROMPT_TIMEOUT`.
+
+For history-aware routing entirely on-device, select **Local Qwen MLX** in
+**Settings → Intelligence**. Engine-only configuration uses
+`DMLX_ROUTER_PROVIDER=local-llm`,
+`DMLX_LOCAL_LLM_MODEL_PATH=/absolute/local/checkpoint`, and
+`DMLX_LOCAL_LLM_REVISION=<pinned-commit-or-checksum>`. Install the runtime with
+`cd engine && uv sync --extra local-llm`. The model is loaded lazily, routing is
+serialized with MLX generation, and its weights are evicted before every image
+job. When the pinned recommended checkpoint is present in dMLX's Application
+Support checkpoint folder and no routing preference has been saved yet, the app
+selects Local Qwen automatically.
+
+```bash
+cd engine
+uv run python -m dmlx.routing.evaluate --baseline
+uv run --extra local-llm python -m dmlx.routing.evaluate \
+  --local-llm-model-path /absolute/local/checkpoint --local-llm-revision <pinned-revision>
+```
 
 ## Project layout
 
@@ -98,4 +134,4 @@ docs/     benchmarks and notes
 
 ## License
 
-Apache-2.0 for all code in this repository. Model weights have their own licenses (both defaults are Apache-2.0).
+Apache-2.0 for all code in this repository. Model weights have their own licenses. The automatic defaults are Apache-2.0; the optional Qwen Image 2.1 checkpoint uses the Qwen Research License.

@@ -16,6 +16,18 @@ struct TurnView: View {
 struct UserBubble: View {
     @Environment(AppModel.self) private var model
     let turn: Turn
+    @State private var editing = false
+    @State private var draft = ""
+    @State private var hovering = false
+    @FocusState private var focused: Bool
+
+    var answer: Turn? { model.imageTurn(answering: turn.id) }
+    var prompt: String { turn.text }
+    var canEdit: Bool { model.isEngineRunning && answer?.current.map { !$0.isActive } == true }
+    var canRun: Bool {
+        let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        return canEdit && !text.isEmpty && text != prompt
+    }
 
     var body: some View {
         HStack {
@@ -28,13 +40,69 @@ struct UserBubble: View {
                         }
                     }
                 }
-                Text(turn.text)
-                    .textSelection(.enabled)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 9)
-                    .background(.quaternary, in: RoundedRectangle(cornerRadius: 16))
+                if editing {
+                    editor
+                } else {
+                    Text(prompt)
+                        .textSelection(.enabled)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 9)
+                        .background(.quaternary, in: RoundedRectangle(cornerRadius: 16))
+                        .contextMenu {
+                            if canEdit { Button("Edit Prompt…") { startEditing() } }
+                        }
+                    if canEdit {
+                        // Under the bubble, inside the row's hover area, so the pointer can reach it.
+                        Button { startEditing() } label: { Label("Edit", systemImage: "pencil") }
+                            .buttonStyle(.borderless)
+                            .controlSize(.small)
+                            .foregroundStyle(.secondary)
+                            .opacity(hovering ? 1 : 0)
+                            .animation(.easeOut(duration: 0.12), value: hovering)
+                            .help("Edit this prompt and replace the image with a new run")
+                            .accessibilityLabel("Edit prompt")
+                    }
+                }
             }
         }
+        // The whole row, spacer included, counts as hovering the message.
+        .contentShape(Rectangle())
+        .onHover { hovering = $0 }
+    }
+
+    private var editor: some View {
+        VStack(alignment: .trailing, spacing: 8) {
+            TextField("Prompt", text: $draft, axis: .vertical)
+                .textFieldStyle(.plain)
+                .lineLimit(1...8)
+                .focused($focused)
+                .onSubmit { if canRun { run() } }
+                .onExitCommand { editing = false }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 9)
+                .background(.quaternary, in: RoundedRectangle(cornerRadius: 16))
+                .overlay(RoundedRectangle(cornerRadius: 16).strokeBorder(Theme.accent.opacity(0.7)))
+                .accessibilityLabel("Edit prompt")
+            HStack(spacing: 8) {
+                Button("Cancel") { editing = false }
+                Button("Run") { run() }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(!canRun)
+            }
+            .controlSize(.small)
+        }
+        .frame(maxWidth: 560)
+        .onAppear { focused = true }
+    }
+
+    private func startEditing() {
+        draft = prompt
+        editing = true
+    }
+
+    private func run() {
+        model.editPrompt(turn.id, to: draft)
+        editing = false
     }
 }
 
@@ -75,7 +143,6 @@ struct ImageTurnView: View {
     let turn: Turn
 
     var version: ImageVersion? { turn.current }
-    var isTarget: Bool { model.targetTurnId == turn.id }
     /// A version that stopped before producing an image: no empty frame, only the error and its actions.
     var hasNoImage: Bool { version.map { !$0.isActive && $0.resultId == nil } ?? false }
 
@@ -87,9 +154,7 @@ struct ImageTurnView: View {
             }
             if !hasNoImage {
                 ResultImage(turn: turn)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: Theme.corner)
-                            .strokeBorder(isTarget ? Theme.accent : Color.secondary.opacity(0.2), lineWidth: isTarget ? 2 : 1))
+                    .overlay(RoundedRectangle(cornerRadius: Theme.corner).strokeBorder(Color.secondary.opacity(0.2)))
             }
 
             if let v = version, v.status == .error || v.status == .cancelled {
@@ -110,11 +175,12 @@ struct ImageTurnView: View {
                 if version?.isActive == true {
                     Button("Cancel") { model.cancel(turn.id) }
                 } else if !hasNoImage {
-                    Button("Edit") { model.edit(turn.id) }
-                        .help("Make the next message change this image")
                     Button("Variations") { model.variation(turn.id) }
                         .help("Same prompt, new seed")
-                    Button("Use as reference") { model.useAsReference(turn.id) }
+                    Button("Attach") { model.attachResult(turn.id) }
+                        .help("Attach this image to the next message")
+                    Button("Crop / Draw") { model.openEditor(turn.id) }
+                        .help("Prepare a non-destructive crop or paint overlay, then attach it")
                     Button {
                         model.save(turn.id)
                     } label: {

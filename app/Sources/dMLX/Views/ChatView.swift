@@ -35,13 +35,31 @@ struct ChatView: View {
                     proxy.scrollTo("bottom", anchor: .bottom)
                 }
             }
+            // The transcript must absorb window-height changes. Without an
+            // explicit flexible height, an active 520-point image placeholder
+            // can take its ideal height and compress the composer to zero.
+            .frame(maxHeight: .infinity)
             ComposerView()
                 .frame(maxWidth: 780)
                 .padding(.horizontal, 24)
                 .padding(.bottom, 16)
                 .padding(.top, 8)
+                .frame(maxWidth: .infinity)
+                .background(.background)
+                .fixedSize(horizontal: false, vertical: true)
+                .layoutPriority(1)
         }
         .navigationTitle(model.sessions.first(where: { $0.id == model.currentSessionId })?.title ?? "New creation")
+        .sheet(isPresented: Binding(
+            get: { model.editorDocument != nil && model.editorImage != nil },
+            set: { if !$0 { model.closeEditor() } }
+        )) {
+            if let document = model.editorDocument, let image = model.editorImage {
+                EditorView(
+                    document: document, source: image, isExporting: model.isExportingEditor,
+                    onCancel: { model.closeEditor() }, onApply: { model.applyEditor($0) })
+            }
+        }
     }
 }
 
@@ -80,7 +98,7 @@ struct FlowLayout: Layout {
         let width = proposal.width ?? 600
         var x: CGFloat = 0, y: CGFloat = 0, rowHeight: CGFloat = 0, maxX: CGFloat = 0
         for view in subviews {
-            let size = view.sizeThatFits(.unspecified)
+            let size = view.sizeThatFits(ProposedViewSize(width: width, height: nil))
             if x > 0 && x + size.width > width {
                 x = 0
                 y += rowHeight + spacing
@@ -90,7 +108,7 @@ struct FlowLayout: Layout {
             maxX = max(maxX, x - spacing)
             rowHeight = max(rowHeight, size.height)
         }
-        return CGSize(width: maxX, height: y + rowHeight)
+        return CGSize(width: min(maxX, width), height: y + rowHeight)
     }
 
     func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
@@ -112,7 +130,7 @@ struct FlowLayout: Layout {
         var rows: [[(LayoutSubview, CGSize)]] = [[]]
         var x: CGFloat = 0
         for view in subviews {
-            let size = view.sizeThatFits(.unspecified)
+            let size = view.sizeThatFits(ProposedViewSize(width: width, height: nil))
             if x > 0 && x + size.width > width {
                 rows.append([])
                 x = 0

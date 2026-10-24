@@ -28,13 +28,13 @@ struct OnboardingView: View {
             }
 
             VStack(spacing: 10) {
-                ForEach(model.models.filter(\.fits_this_mac)) { m in
+                ForEach(model.models.filter { $0.fits_this_mac && $0.autoSelectable }) { m in
                     ModelRow(model: m)
                 }
             }
 
             HStack {
-                Text("Models are Apache-2.0 licensed and stored in your Hugging Face cache.")
+                Text("Downloaded models are stored in your Hugging Face cache. Each model's license is shown below.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Spacer()
@@ -58,6 +58,7 @@ struct ModelRow: View {
     let model: EngineModel
     var removable = false
     @State private var confirmRemove = false
+    @State private var showLicense = false
 
     var role: String {
         model.supports(.edit) ? "Creates and edits images" : "Creates images"
@@ -91,7 +92,13 @@ struct ModelRow: View {
             } else {
                 VStack(alignment: .trailing, spacing: 4) {
                     HStack(spacing: 6) {
-                        Button("Download") { app.download(model) }
+                        Button("Download") {
+                            if model.requiresLicenseAcceptance && !ModelLicenseAcceptance.hasAccepted(model) {
+                                showLicense = true
+                            } else {
+                                app.download(model)
+                            }
+                        }
                         if removable && model.isUserAdded {
                             Button("Remove") { app.remove(model) }.controlSize(.small)
                         }
@@ -109,6 +116,13 @@ struct ModelRow: View {
         } message: {
             Text(removeMessage)
         }
+        .sheet(isPresented: $showLicense) {
+            ModelLicenseView(model: model) {
+                ModelLicenseAcceptance.accept(model)
+                showLicense = false
+                app.download(model)
+            }
+        }
     }
 
     var removeTitle: String { model.isUserAdded ? "Remove \(model.name)?" : "Delete the files of \(model.name)?" }
@@ -122,5 +136,51 @@ struct ModelRow: View {
         if let gb = model.size_gb, gb > 0 { return String(format: "%.1f GB", gb) }
         if model.download.total_bytes > 0 { return String(format: "%.1f GB", Double(model.download.total_bytes) / 1e9) }
         return "about 5 GB"
+    }
+}
+
+private enum ModelLicenseAcceptance {
+    private static let key = "acceptedModelLicenses"
+
+    static func hasAccepted(_ model: EngineModel) -> Bool {
+        guard let id = model.license_acceptance_id else { return true }
+        return Set(UserDefaults.standard.stringArray(forKey: key) ?? []).contains(id)
+    }
+
+    static func accept(_ model: EngineModel) {
+        guard let id = model.license_acceptance_id else { return }
+        var accepted = Set(UserDefaults.standard.stringArray(forKey: key) ?? [])
+        accepted.insert(id)
+        UserDefaults.standard.set(Array(accepted).sorted(), forKey: key)
+    }
+}
+
+private struct ModelLicenseView: View {
+    @Environment(\.dismiss) private var dismiss
+    let model: EngineModel
+    let onAccept: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Label("Research-only model", systemImage: "exclamationmark.triangle.fill")
+                .font(.title2.weight(.semibold))
+                .foregroundStyle(.orange)
+            Text("\(model.name) uses the Qwen Research License. The model weights may only be used for non-commercial research or evaluation unless you obtain a separate commercial license from Qwen.")
+                .fixedSize(horizontal: false, vertical: true)
+            if let value = model.license_url, let url = URL(string: value) {
+                Link("Read the Qwen Research License", destination: url)
+            }
+            Text("By continuing, you confirm that you understand this restriction.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+            HStack {
+                Spacer()
+                Button("Cancel") { dismiss() }
+                Button("I Understand — Download") { onAccept() }
+                    .buttonStyle(.borderedProminent)
+            }
+        }
+        .padding(24)
+        .frame(width: 500)
     }
 }

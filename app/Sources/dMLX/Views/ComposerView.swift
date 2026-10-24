@@ -11,14 +11,14 @@ struct ComposerView: View {
     private let suggestions = ["Make it foggy", "Add warm evening light", "Make it black and white", "Variations"]
 
     var canSend: Bool {
-        model.isEngineRunning && !model.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        model.isEngineRunning && !model.isResolvingRoute && !model.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     var body: some View {
         @Bindable var model = model
         VStack(alignment: .leading, spacing: 10) {
-            if model.latestImageTurn != nil && model.draft.isEmpty && model.targetTurnId == nil && model.attachments.isEmpty {
-                HStack(spacing: 8) {
+            if model.latestImageTurn?.current?.isActive == false && model.draft.isEmpty && model.attachments.isEmpty {
+                FlowLayout(spacing: 8) {
                     ForEach(suggestions, id: \.self) { s in
                         Button(s) {
                             if s == "Variations", let t = model.latestImageTurn {
@@ -35,15 +35,72 @@ struct ComposerView: View {
             }
 
             VStack(alignment: .leading, spacing: 8) {
-                if model.targetTurn != nil || !model.attachments.isEmpty {
-                    HStack(spacing: 6) {
-                        if let t = model.targetTurn {
-                            ContextChip(title: "Editing image \(t.number) · v\(t.activeVersion + 1)") { model.targetTurnId = nil }
+                if let suggestion = model.promptSuggestion {
+                    VStack(alignment: .leading, spacing: 5) {
+                        HStack {
+                            Label(model.promptSuggestionApplied ? "Enhanced prompt selected" : "Prompt suggestion", systemImage: "sparkles")
+                                .font(.caption.weight(.semibold))
+                            Spacer()
+                            if !model.promptSuggestionApplied {
+                                Button("Use") { model.applyPromptSuggestion() }
+                                    .buttonStyle(.borderedProminent)
+                                    .controlSize(.small)
+                            }
+                            Button("Dismiss") { model.dismissPromptSuggestion() }
+                                .buttonStyle(.borderless)
+                                .controlSize(.small)
                         }
-                        ForEach(model.attachments) { a in
+                        TextField("Enhanced prompt", text: Binding(
+                            get: { model.promptSuggestion?.positive ?? "" },
+                            set: { model.promptSuggestion?.positive = $0 }
+                        ), axis: .vertical)
+                        .textFieldStyle(.roundedBorder)
+                        .font(.caption)
+                        if suggestion.negative_supported {
+                            TextField("Negative prompt (optional)", text: Binding(
+                                get: { model.promptSuggestion?.negative ?? "" },
+                                set: { model.promptSuggestion?.negative = $0.isEmpty ? nil : $0 }
+                            ), axis: .vertical)
+                            .textFieldStyle(.roundedBorder)
+                            .font(.caption)
+                        }
+                        if !suggestion.negative_supported {
+                            Text("The selected image model does not use a separate negative prompt.")
+                                .font(.caption2).foregroundStyle(.secondary)
+                        }
+                    }
+                    .padding(8)
+                    .background(Theme.accent.opacity(0.10), in: RoundedRectangle(cornerRadius: 9))
+                }
+
+                if model.needsRouteChoice {
+                    FlowLayout(spacing: 8) {
+                        Text(model.pendingAsk ?? "Choose the workflow")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        ForEach(model.pendingRouteChoices, id: \.self) { operation in
+                            Button(AppModel.operationLabel(operation)) { model.choosePendingRoute(operation) }
+                                .buttonStyle(.bordered)
+                                .controlSize(.small)
+                        }
+                        Button("Cancel") { model.cancelPendingRoute() }
+                            .buttonStyle(.borderless)
+                            .controlSize(.small)
+                    }
+                }
+
+                if !model.attachments.isEmpty {
+                    FlowLayout(spacing: 6) {
+                        ForEach(Array(model.attachments.enumerated()), id: \.element.id) { index, a in
                             HStack(spacing: 6) {
                                 Thumbnail(resultId: a.id, size: 22)
-                                ContextChip(title: a.label) { model.removeAttachment(a.id) }
+                                ContextChip(title: "\(index + 1) · \(a.label)") { model.removeAttachment(a.id) }
+                            }
+                            .draggable(a.id)
+                            .dropDestination(for: String.self) { ids, _ in
+                                guard let dragged = ids.first else { return false }
+                                model.moveAttachment(dragged, before: a.id)
+                                return true
                             }
                         }
                     }
@@ -61,36 +118,81 @@ struct ComposerView: View {
                 .accessibilityLabel("Describe an image or a change")
 
                 HStack(spacing: 8) {
-                    Button {
-                        pickFiles()
-                    } label: {
-                        Image(systemName: "paperclip")
-                    }
-                    .buttonStyle(.borderless)
-                    .help("Attach up to 3 reference images")
-                    .accessibilityLabel("Attach reference images")
+                    ScrollView(.horizontal) {
+                        HStack(spacing: 8) {
+                            Button {
+                                pickFiles()
+                            } label: {
+                                Image(systemName: "paperclip")
+                            }
+                            .buttonStyle(.borderless)
+                            .help("Attach up to 3 reference images")
+                            .accessibilityLabel("Attach reference images")
 
-                    Menu {
-                        ForEach(Aspect.allCases) { a in
-                            Button(a.label) { model.aspect = a }
+                            if model.promptEnhancementMode != .off {
+                                Button { model.enhanceDraft() } label: {
+                                    if model.isEnhancingPrompt {
+                                        ProgressView().controlSize(.small)
+                                    } else {
+                                        Image(systemName: "sparkles")
+                                    }
+                                }
+                                .buttonStyle(.borderless)
+                                .disabled(model.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || model.isEnhancingPrompt)
+                                .help("Preview an enhanced prompt before sending")
+                                .accessibilityLabel("Enhance prompt")
+                            }
+
+                            Menu {
+                                ForEach(Aspect.allCases) { a in
+                                    Button(a.label) { model.aspect = a }
+                                }
+                            } label: {
+                                Text(model.aspect.label).font(.caption)
+                            }
+                            .menuStyle(.borderlessButton)
+                            .fixedSize()
+                            .help("Size for new images (edits keep the source size)")
+
+                            if model.choosableModels.count > 1 {
+                                ModelMenu()
+                            }
+
+                            if model.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                                Text(model.routePreview)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            } else {
+                                Menu {
+                                    Button("Create a new image") { model.overrideRoute("image.generate") }
+                                    if model.latestImageTurn != nil || !model.attachments.isEmpty {
+                                        Button("Edit current or attached images") { model.overrideRoute("image.edit") }
+                                        if model.defaultModel(for: "image.upscale") != nil {
+                                            Button("Upscale current image 2×") { model.overrideRoute("image.upscale") }
+                                        }
+                                        if model.defaultModel(for: "image.restore") != nil {
+                                            Button("Restore current image") { model.overrideRoute("image.restore") }
+                                        }
+                                        if model.defaultModel(for: "image.enhance") != nil {
+                                            Button("Enhance current image") { model.overrideRoute("image.enhance") }
+                                        }
+                                    }
+                                } label: {
+                                    Text(model.routePreview)
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                        .lineLimit(1)
+                                }
+                                .menuStyle(.borderlessButton)
+                                .fixedSize()
+                                .help("Choose the workflow")
+                            }
                         }
-                    } label: {
-                        Text(model.aspect.label).font(.caption)
+                        .fixedSize(horizontal: true, vertical: false)
                     }
-                    .menuStyle(.borderlessButton)
-                    .fixedSize()
-                    .help("Size for new images (edits keep the source size)")
+                    .scrollIndicators(.hidden)
 
-                    if model.choosableModels.count > 1 {
-                        ModelMenu()
-                    }
-
-                    Text(model.routePreview)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-
-                    Spacer()
+                    Spacer(minLength: 0)
 
                     Button {
                         model.send()
@@ -116,7 +218,13 @@ struct ComposerView: View {
             }
         }
         .onAppear { focused = true }
-        .onChange(of: model.targetTurnId) { focused = true }
+        .onAppear { model.scheduleRoutePreview() }
+        .onChange(of: model.draft) { model.scheduleRoutePreview() }
+        .onChange(of: model.attachments) {
+            focused = true
+            model.scheduleRoutePreview()
+        }
+        .onChange(of: model.modelChoice) { model.scheduleRoutePreview() }
     }
 
     private func pickFiles() {
@@ -146,6 +254,8 @@ struct ContextChip: View {
         Button(action: onRemove) {
             HStack(spacing: 4) {
                 Text(title)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
                 Image(systemName: "xmark").font(.caption2.weight(.bold))
             }
             .font(.caption)
@@ -154,6 +264,7 @@ struct ContextChip: View {
             .background(Theme.accent.opacity(0.18), in: RoundedRectangle(cornerRadius: 7))
         }
         .buttonStyle(.plain)
+        .frame(maxWidth: 240)
         .accessibilityLabel("\(title). Remove")
     }
 }

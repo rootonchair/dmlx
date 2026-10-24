@@ -8,6 +8,10 @@ struct RootView: View {
         @Bindable var model = model
         NavigationSplitView {
             SidebarView()
+                // The sidebar column otherwise reports a minimum taller than short
+                // windows, and the split view is then clipped top and bottom (losing
+                // the composer and the status card).
+                .frame(minHeight: 0, maxHeight: .infinity)
                 .navigationSplitViewColumnWidth(min: 200, ideal: 240, max: 320)
         } detail: {
             ChatView()
@@ -35,6 +39,7 @@ struct RootView: View {
 
 struct SidebarView: View {
     @Environment(AppModel.self) private var model
+    @State private var sessionToDelete: Session?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -55,12 +60,11 @@ struct SidebarView: View {
             ) {
                 Section("Recent") {
                     ForEach(model.sessions) { session in
-                        Text(session.title)
-                            .lineLimit(1)
+                        SidebarChatRow(
+                            session: session,
+                            onDelete: { sessionToDelete = session }
+                        )
                             .tag(session.id)
-                            .contextMenu {
-                                Button("Delete", role: .destructive) { model.delete(session: session.id) }
-                            }
                     }
                 }
             }
@@ -68,6 +72,59 @@ struct SidebarView: View {
 
             StatusCard()
                 .padding(12)
+        }
+        .confirmationDialog(
+            "Delete “\(sessionToDelete?.title ?? "this chat")”?",
+            isPresented: Binding(
+                get: { sessionToDelete != nil },
+                set: { if !$0 { sessionToDelete = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            if let sessionToDelete {
+                Button("Delete Chat", role: .destructive) {
+                    model.delete(session: sessionToDelete.id)
+                    self.sessionToDelete = nil
+                }
+            }
+            Button("Cancel", role: .cancel) { sessionToDelete = nil }
+        } message: {
+            Text("This removes the conversation and its editor drafts from this Mac. Generated images are kept because other chats may reference them.")
+        }
+    }
+}
+
+private struct SidebarChatRow: View {
+    let session: Session
+    let onDelete: () -> Void
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Text(session.title)
+                .lineLimit(1)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            Menu {
+                Button("Delete Chat…", systemImage: "trash", role: .destructive) {
+                    onDelete()
+                }
+            } label: {
+                Image(systemName: "ellipsis")
+                    .font(.body.weight(.semibold))
+                    .frame(width: 24, height: 24)
+                    .contentShape(Rectangle())
+            }
+            .menuIndicator(.hidden)
+            .menuStyle(.borderlessButton)
+            .foregroundStyle(.secondary)
+            .help("Chat options")
+            .accessibilityLabel("Options for \(session.title)")
+        }
+        .contentShape(Rectangle())
+        .contextMenu {
+            Button("Delete Chat…", role: .destructive) {
+                onDelete()
+            }
         }
     }
 }

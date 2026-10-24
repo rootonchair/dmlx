@@ -2,45 +2,27 @@ import XCTest
 
 @testable import DMLXKit
 
-final class RoutingTests: XCTestCase {
-    func testEmptyIsNone() {
-        XCTAssertEqual(Router.route("   ", RoutingContext()), .none)
-    }
-
-    func testFirstMessageGenerates() {
-        XCTAssertEqual(Router.route("a boat on a lake", RoutingContext()), .generate)
-    }
-
-    func testFollowUpChangeEditsLatest() {
-        let ctx = RoutingContext(latestResultId: "img_1", latestTurnId: "t1")
-        XCTAssertEqual(Router.route("make it night", ctx), .edit(sourceIds: ["img_1"], fromTurn: "t1"))
-        XCTAssertEqual(Router.route("Add a lantern on the boat", ctx), .edit(sourceIds: ["img_1"], fromTurn: "t1"))
-    }
-
-    func testFreshDescriptionGeneratesEvenWithHistory() {
-        let ctx = RoutingContext(latestResultId: "img_1", latestTurnId: "t1")
-        XCTAssertEqual(Router.route("a fox logo, flat, two colors", ctx), .generate)
-        XCTAssertEqual(Router.route("new image of a red car", ctx), .generate)
-    }
-
-    func testExplicitTargetWins() {
-        let ctx = RoutingContext(targetResultId: "img_2", targetTurnId: "t2", latestResultId: "img_9", latestTurnId: "t9")
-        XCTAssertEqual(Router.route("a completely different scene", ctx), .edit(sourceIds: ["img_2"], fromTurn: "t2"))
-    }
-
-    func testAttachmentsAreReferences() {
-        let ctx = RoutingContext(targetResultId: "img_2", targetTurnId: "t2", attachmentIds: ["up_1", "img_2"])
-        XCTAssertEqual(Router.route("put this hat on her", ctx), .edit(sourceIds: ["img_2", "up_1"], fromTurn: "t2"))
-        let onlyAttach = RoutingContext(attachmentIds: ["up_1"])
-        XCTAssertEqual(Router.route("turn this into a watercolor", onlyAttach), .edit(sourceIds: ["up_1"], fromTurn: nil))
-    }
-
-    func testVideoIsRecognised() {
-        XCTAssertEqual(Router.route("animate it, 3 seconds", RoutingContext(latestResultId: "img_1")), .video)
-    }
-}
-
 final class StoreTests: XCTestCase {
+    func testLegacyTurnJSONDecodesWithoutWorkflowFields() throws {
+        let json = #"""
+        {
+          "id":"turn-old","sessionId":"session-old","index":0,"kind":"image",
+          "text":"boat","number":1,"route":"Generated","activeVersion":0,
+          "attachments":[],"created":0,
+          "versions":[{
+            "id":"version-old","status":"done","resultId":"img_old","prompt":"boat",
+            "model":"z-image-turbo","task":"t2i","size":"1024x1024","sourceIds":[],
+            "step":0,"totalSteps":0,"phase":"Done","loads":[]
+          }]
+        }
+        """#
+        let turn = try JSONDecoder().decode(Turn.self, from: Data(json.utf8))
+        XCTAssertEqual(turn.current?.resultId, "img_old")
+        XCTAssertNil(turn.attachmentInputs)
+        XCTAssertNil(turn.current?.workflowRoute)
+        XCTAssertNil(turn.current?.operation)
+    }
+
     func testRoundTrip() throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("dmlx-test-\(UUID()).sqlite")
         defer { try? FileManager.default.removeItem(at: url) }
@@ -64,6 +46,24 @@ final class StoreTests: XCTestCase {
         try reopened.delete(session: session.id)
         XCTAssertTrue(try reopened.sessions().isEmpty)
     }
+
+    func testDeletingOneSessionRemovesOnlyItsTurns() throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("dmlx-delete-\(UUID()).sqlite")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let store = try Store(path: url)
+        let first = Session(title: "First")
+        let second = Session(title: "Second")
+        try store.save(first)
+        try store.save(second)
+        try store.save(Turn(sessionId: first.id, index: 0, kind: .notice, text: "first"))
+        try store.save(Turn(sessionId: second.id, index: 0, kind: .notice, text: "second"))
+
+        try store.delete(session: first.id)
+
+        XCTAssertEqual(try store.sessions().map(\.id), [second.id])
+        XCTAssertTrue(try store.turns(session: first.id).isEmpty)
+        XCTAssertEqual(try store.turns(session: second.id).map(\.text), ["second"])
+    }
 }
 
 final class SSEParserTests: XCTestCase {
@@ -78,5 +78,249 @@ final class SSEParserTests: XCTestCase {
         let done = parser.feed(#"data: {"job_id":"job_1","result_ids":["img_1"],"report":{"strategy":"eager","loads":[]}}"#)
         XCTAssertEqual(done?.payload.result_ids, ["img_1"])
         XCTAssertEqual(done?.payload.report?.strategy, "eager")
+    }
+}
+
+final class EngineModelTests: XCTestCase {
+    func testResearchModelMetadataDecodes() throws {
+        let json = #"{"id":"qwen-image-2.1-q4","name":"Qwen Image 2.1 Base Q4","license":"qwen-research","tasks":["t2i","edit"],"max_references":10,"min_ram_gb":24,"downloaded":true,"resident":false,"pinned":false,"fits_this_mac":true,"download":{"status":"done","total_bytes":1,"done_bytes":1,"progress":1},"auto_select":false,"experimental":true,"license_url":"https://example.com/license","license_acceptance_id":"qwen-research-2026-09-20"}"#
+        let model = try JSONDecoder().decode(EngineModel.self, from: Data(json.utf8))
+        XCTAssertFalse(model.autoSelectable)
+        XCTAssertTrue(model.requiresLicenseAcceptance)
+        XCTAssertTrue(model.isExperimental)
+        XCTAssertEqual(model.max_references, 10)
+    }
+
+    func testLegacyModelDefaultsToAutoSelectable() throws {
+        let json = #"{"id":"legacy","name":"Legacy","license":"apache-2.0","tasks":["t2i"],"max_references":0,"min_ram_gb":8,"downloaded":true,"resident":false,"pinned":false,"fits_this_mac":true,"download":{"status":"done","total_bytes":1,"done_bytes":1,"progress":1}}"#
+        let model = try JSONDecoder().decode(EngineModel.self, from: Data(json.utf8))
+        XCTAssertTrue(model.autoSelectable)
+        XCTAssertFalse(model.requiresLicenseAcceptance)
+    }
+}
+
+final class WorkflowTests: XCTestCase {
+    func testRoutingContextKeyRejectsStaleTextCurrentImageAndAttachmentOrder() {
+        let history = [RoutingHistoryItem(
+            sequence: 0, kind: "image", text: "a blue car", imageNumber: 1,
+            operation: "image.generate", resultId: "img_1")]
+        let original = RoutingContext(
+            message: "combine", currentResultId: "img_current", attachmentIds: ["img_1", "img_2"],
+            history: history)
+        XCTAssertNotEqual(original.key, RoutingContext(
+            message: "combine these", currentResultId: "img_current", attachmentIds: ["img_1", "img_2"],
+            history: history).key)
+        XCTAssertNotEqual(original.key, RoutingContext(
+            message: "combine", currentResultId: "img_other", attachmentIds: ["img_1", "img_2"],
+            history: history).key)
+        XCTAssertNotEqual(original.key, RoutingContext(
+            message: "combine", currentResultId: "img_current", attachmentIds: ["img_2", "img_1"],
+            history: history).key)
+        XCTAssertNotEqual(original.key, RoutingContext(
+            message: "combine", currentResultId: "img_current", attachmentIds: ["img_1", "img_2"],
+            history: [RoutingHistoryItem(
+                sequence: 0, kind: "image", text: "a red car", imageNumber: 1,
+                operation: "image.generate", resultId: "img_1")]).key)
+        XCTAssertNotEqual(original.key, RoutingContext(
+            message: "combine", currentResultId: "img_current", attachmentIds: ["img_1", "img_2"],
+            history: history, selectedModel: "qwen-image-2.1-q4").key)
+        XCTAssertNotEqual(
+            RoutingContext(message: "a\u{1f}b", currentResultId: nil, attachmentIds: ["c"]).key,
+            RoutingContext(message: "a", currentResultId: "b", attachmentIds: ["c"]).key)
+    }
+
+    func testRoutingHistoryRoundTripPreservesChronologyAndReferences() throws {
+        let history = [
+            RoutingHistoryItem(
+                sequence: 0, kind: "image", text: "a blue car", imageNumber: 1,
+                operation: "image.generate", resultId: "img_1"),
+            RoutingHistoryItem(
+                sequence: 1, kind: "image", text: "make it red", imageNumber: 2,
+                operation: "image.edit", resultId: "img_2", inputIds: ["img_1"]),
+        ]
+        let decoded = try JSONDecoder().decode(
+            [RoutingHistoryItem].self, from: JSONEncoder().encode(history))
+        XCTAssertEqual(decoded, history)
+        XCTAssertEqual(decoded.map(\.result_id), ["img_1", "img_2"])
+    }
+
+    func testLowConfidenceAndAmbiguousDecisionsRequireConfirmation() {
+        XCTAssertTrue(WorkflowDecision(
+            intent: "image.edit", confidence: 0.74, probabilities: [:], provider: "test").requiresConfirmation())
+        XCTAssertTrue(WorkflowDecision(
+            intent: "ambiguous", confidence: 0.99, probabilities: [:], provider: "test").requiresConfirmation())
+        XCTAssertFalse(WorkflowDecision(
+            intent: "image.edit", confidence: 0.75, probabilities: [:], provider: "test").requiresConfirmation())
+    }
+
+    func testWorkflowDecisionPreservesOrderedHistoricalInputs() throws {
+        let decision = WorkflowDecision(
+            intent: "image.edit", confidence: 0.9,
+            probabilities: ["image.edit": 0.9, "image.generate": 0.1], provider: "test",
+            inputResultIds: ["img_1", "img_3"])
+        let decoded = try JSONDecoder().decode(
+            WorkflowDecision.self, from: JSONEncoder().encode(decision))
+        XCTAssertEqual(decoded.input_result_ids, ["img_1", "img_3"])
+    }
+
+    func testRouteRequestIdentityRejectsStaleAndReplacedRequests() {
+        let context = RoutingContext(message: "edit it", currentResultId: "img_1", attachmentIds: [])
+        let first = RouteRequestIdentity(context: context)
+        XCTAssertTrue(first.accepts(context: context, requestID: first.id))
+        XCTAssertFalse(first.accepts(
+            context: RoutingContext(message: "edit it", currentResultId: "img_1", attachmentIds: ["img_2"]),
+            requestID: first.id))
+
+        let replacement = RouteRequestIdentity(context: context)
+        XCTAssertFalse(replacement.accepts(context: context, requestID: first.id))
+        XCTAssertTrue(replacement.accepts(context: context, requestID: replacement.id))
+    }
+
+    func testWorkflowRoundTripPreservesInputOrder() throws {
+        let inputs = [
+            MediaInput(id: "img_1", role: .source, order: 0),
+            MediaInput(id: "img_2", role: .reference, order: 1),
+            MediaInput(id: "img_3", role: .reference, order: 2),
+        ]
+        let plan = WorkflowPlan(steps: [WorkflowStep(
+            operation: "image.edit", executor: "flux2-klein-4b", inputs: inputs,
+            prompt: PromptSpec(user: "combine them"), parameters: WorkflowParameters(size: "1024x1024"))])
+        let decoded = try JSONDecoder().decode(WorkflowPlan.self, from: JSONEncoder().encode(plan))
+        XCTAssertEqual(decoded, plan)
+        XCTAssertEqual(decoded.steps[0].inputs.map(\.id), ["img_1", "img_2", "img_3"])
+    }
+
+    func testRouterSettingsRequireTLSAwayFromLoopback() throws {
+        XCTAssertNoThrow(try RouterProviderSettings(baseURL: "http://localhost:1234/v1", model: "router").validate())
+        XCTAssertThrowsError(try RouterProviderSettings(baseURL: "http://example.com/v1", model: "router").validate())
+        XCTAssertNoThrow(try RouterProviderSettings(baseURL: "https://example.com/v1", model: "router").validate())
+        XCTAssertThrowsError(try RouterProviderSettings(baseURL: "https://example.com/v1", model: "").validate())
+        let local = FileManager.default.temporaryDirectory.appendingPathComponent("local-llm-test-\(UUID())")
+        try FileManager.default.createDirectory(at: local, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: local) }
+        XCTAssertNoThrow(try RouterProviderSettings(
+            kind: .localLLM, localModelPath: local.path, localRevision: "pinned-revision").validate())
+        XCTAssertThrowsError(try RouterProviderSettings(
+            kind: .localLLM, localModelPath: local.path, localRevision: "").validate())
+    }
+}
+
+final class EditorTests: XCTestCase {
+    func testEditorGeometryIsInvariantAcrossDisplayAndRetinaScales() {
+        let small = EditorGeometry.fittedRect(imageWidth: 400, imageHeight: 200, in: CGSize(width: 300, height: 300))
+        let large = EditorGeometry.fittedRect(imageWidth: 400, imageHeight: 200, in: CGSize(width: 600, height: 600))
+        XCTAssertEqual(small, CGRect(x: 0, y: 75, width: 300, height: 150))
+        XCTAssertEqual(large, CGRect(x: 0, y: 150, width: 600, height: 300))
+        let logical = EditorGeometry.normalize(CGPoint(x: 75, y: 112.5), in: small)
+        let retinaPixels = EditorGeometry.normalize(CGPoint(x: 150, y: 225), in: large)
+        XCTAssertEqual(logical, NormalizedPoint(x: 0.25, y: 0.25))
+        XCTAssertEqual(retinaPixels, logical)
+        XCTAssertNil(EditorGeometry.normalize(CGPoint(x: 10, y: 10), in: small))
+    }
+
+    func testCropAndStrokeCoordinatesStayAligned() {
+        let crop = NormalizedRect(x: 0.25, y: 0.25, width: 0.5, height: 0.5)
+        XCTAssertEqual(
+            EditorGeometry.pixelCrop(crop, sourceWidth: 400, sourceHeight: 200),
+            CGRect(x: 100, y: 50, width: 200, height: 100))
+        let display = CGRect(x: 20, y: 40, width: 800, height: 400)
+        let point = EditorGeometry.normalize(CGPoint(x: 420, y: 240), in: display)
+        XCTAssertEqual(point, NormalizedPoint(x: 0.5, y: 0.5))
+        XCTAssertEqual((point!.x - crop.x) / crop.width, 0.5, accuracy: 0.0001)
+        XCTAssertEqual((point!.y - crop.y) / crop.height, 0.5, accuracy: 0.0001)
+    }
+
+    func testNormalizedCropIsClamped() {
+        let crop = NormalizedRect(x: -0.2, y: 0.8, width: 2, height: 0.5)
+        XCTAssertEqual(crop.x, 0)
+        XCTAssertEqual(crop.y, 0.8)
+        XCTAssertEqual(crop.width, 1)
+        XCTAssertEqual(crop.height, 0.2, accuracy: 0.0001)
+    }
+
+    func testEditorDocumentPersistsWithoutChangingOriginal() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("dmlx-editor-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = EditorDocumentStore(root: root)
+        let original = EditorDocument(baseResultId: "img_1", baseWidth: 400, baseHeight: 200)
+        var edited = original
+        edited.crop = NormalizedRect(x: 0.25, y: 0, width: 0.5, height: 1)
+        try store.save(edited, sessionId: "session/one")
+        XCTAssertEqual(store.load(sessionId: "session/one", resultId: "img_1"), edited)
+        XCTAssertEqual(original.crop, .full)
+    }
+
+    func testRendererAppliesCropDimensions() throws {
+        let colorSpace = CGColorSpaceCreateDeviceRGB()
+        let context = CGContext(
+            data: nil, width: 100, height: 80, bitsPerComponent: 8, bytesPerRow: 0,
+            space: colorSpace, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+        context.setFillColor(CGColor(red: 1, green: 0, blue: 0, alpha: 1))
+        context.fill(CGRect(x: 0, y: 0, width: 100, height: 80))
+        let source = context.makeImage()!
+        let document = EditorDocument(
+            baseResultId: "img_1", baseWidth: 100, baseHeight: 80,
+            crop: NormalizedRect(x: 0.25, y: 0.25, width: 0.5, height: 0.5))
+        let data = try EditorRenderer.render(document, source: source)
+        let output = NSBitmapImageRep(data: data)
+        XCTAssertEqual(output?.pixelsWide, 50)
+        XCTAssertEqual(output?.pixelsHigh, 40)
+    }
+
+    func testRendererPreservesVerticalOrientation() throws {
+        let context = CGContext(
+            data: nil, width: 20, height: 30, bitsPerComponent: 8, bytesPerRow: 0,
+            space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+        context.setFillColor(CGColor(red: 1, green: 0, blue: 0, alpha: 1))
+        context.fill(CGRect(x: 0, y: 0, width: 20, height: 15))
+        context.setFillColor(CGColor(red: 0, green: 0, blue: 1, alpha: 1))
+        context.fill(CGRect(x: 0, y: 15, width: 20, height: 15))
+        let source = context.makeImage()!
+        let expected = NSBitmapImageRep(cgImage: source)
+        let document = EditorDocument(baseResultId: "asymmetric", baseWidth: 20, baseHeight: 30)
+        let rendered = NSBitmapImageRep(data: try EditorRenderer.render(document, source: source))!
+
+        for point in [(x: 10, y: 3), (x: 10, y: 26)] {
+            let before = expected.colorAt(x: point.x, y: point.y)!
+            let after = rendered.colorAt(x: point.x, y: point.y)!
+            XCTAssertEqual(after.redComponent, before.redComponent, accuracy: 0.01)
+            XCTAssertEqual(after.blueComponent, before.blueComponent, accuracy: 0.01)
+        }
+    }
+
+    func testRendererPaintAndEraserOnlyChangeOverlay() throws {
+        let context = CGContext(
+            data: nil, width: 100, height: 100, bitsPerComponent: 8, bytesPerRow: 0,
+            space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+        context.setFillColor(CGColor(gray: 1, alpha: 1))
+        context.fill(CGRect(x: 0, y: 0, width: 100, height: 100))
+        let source = context.makeImage()!
+        let points = [NormalizedPoint(x: 0.2, y: 0.5), NormalizedPoint(x: 0.8, y: 0.5)]
+        let paint = PaintStroke(points: points, width: 0.2, color: PaintColor(red: 0, green: 0, blue: 0))
+        var document = EditorDocument(baseResultId: "img", baseWidth: 100, baseHeight: 100, strokes: [paint])
+        let painted = NSBitmapImageRep(data: try EditorRenderer.render(document, source: source))!
+        XCTAssertLessThan(painted.colorAt(x: 50, y: 50)?.redComponent ?? 1, 0.2)
+
+        document.strokes.append(PaintStroke(points: points, width: 0.2, erases: true))
+        let erased = NSBitmapImageRep(data: try EditorRenderer.render(document, source: source))!
+        XCTAssertGreaterThan(erased.colorAt(x: 50, y: 50)?.redComponent ?? 0, 0.9)
+    }
+
+    func testRendererKeepsTopAlignedStrokeAtTop() throws {
+        let context = CGContext(
+            data: nil, width: 100, height: 100, bitsPerComponent: 8, bytesPerRow: 0,
+            space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+        context.setFillColor(CGColor(gray: 1, alpha: 1))
+        context.fill(CGRect(x: 0, y: 0, width: 100, height: 100))
+        let stroke = PaintStroke(
+            points: [NormalizedPoint(x: 0.2, y: 0.2), NormalizedPoint(x: 0.8, y: 0.2)],
+            width: 0.1, color: PaintColor(red: 0, green: 0, blue: 0))
+        let document = EditorDocument(
+            baseResultId: "top-stroke", baseWidth: 100, baseHeight: 100, strokes: [stroke])
+        let rendered = NSBitmapImageRep(data: try EditorRenderer.render(
+            document, source: context.makeImage()!))!
+
+        XCTAssertLessThan(rendered.colorAt(x: 50, y: 20)?.redComponent ?? 1, 0.2)
+        XCTAssertGreaterThan(rendered.colorAt(x: 50, y: 80)?.redComponent ?? 0, 0.9)
     }
 }

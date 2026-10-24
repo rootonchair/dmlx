@@ -1,0 +1,132 @@
+{
+  "machine": {
+    "uptime_s": 19.1,
+    "queue": 0,
+    "memory": {
+      "system": {
+        "total_gb": 24.0,
+        "available_gb": 5.28,
+        "wired_gb": 6.31,
+        "compressed_gb": 5.66,
+        "swap_used_gb": 12.79,
+        "pressure": "normal"
+      },
+      "reserve_gb": 1.92,
+      "headroom_gb": 3.8,
+      "mlx_active_gb": 1.26,
+      "mlx_cache_gb": 0.44,
+      "resident": [
+        {
+          "model": "qwen-image-2.1-q4",
+          "component": "vae",
+          "gb": 1.26,
+          "pinned": false
+        }
+      ],
+      "pinned": [],
+      "degraded": true
+    },
+    "ram_tier_gb": 24,
+    "emulated": false,
+    "real_total_gb": 24,
+    "intelligence": {
+      "router": {
+        "kind": "manual",
+        "name": "manual",
+        "resident": false
+      }
+    }
+  },
+  "cases": [
+    {
+      "model": "qwen-image-2.1-q4",
+      "task": "edit",
+      "strategy_requested": "sequential",
+      "run": 1,
+      "status": "done",
+      "error": null,
+      "wall_s": 9.76,
+      "report": {
+        "strategy": "sequential",
+        "need_gb": 5.87,
+        "headroom_gb": 5.93,
+        "evicted": [],
+        "forced": false,
+        "loads": [
+          "text_encoder",
+          "transformer",
+          "vae"
+        ],
+        "decode_mode": "tiled",
+        "timings": {
+          "load": 1.655,
+          "encode": 1.633,
+          "preprocess": 1.328,
+          "denoise": 5.054,
+          "decode": 1.577
+        },
+        "peak_mlx_gb": 6.72,
+        "max_pressure": "warn",
+        "swap_delta_gb": 0.37,
+        "max_swapin_mb_s": 3.9,
+        "total_seconds": 9.761,
+        "embed_cache": {
+          "entries": 0,
+          "hits": 0,
+          "misses": 0
+        },
+        "workflow": {
+          "schema_version": 1,
+          "steps": [
+            {
+              "id": "step_1",
+              "operation": "image.edit",
+              "executor": "qwen-image-2.1-q4",
+              "inputs": [
+                {
+                  "id": "img_20261024_cc66f7efbd54",
+                  "media_type": "image",
+                  "order": 0,
+                  "role": "source"
+                }
+              ],
+              "prompt": {
+                "user": "Make the teapot dark blue while preserving its shape",
+                "positive": "Make the teapot dark blue while preserving its shape",
+                "negative": null,
+                "enhancement_mode": "off",
+                "compiler": "passthrough@1"
+              },
+              "parameters": {
+                "width": 512,
+                "height": 512,
+                "steps": 2,
+                "seed": 42,
+                "n": 1
+              }
+            }
+          ]
+        }
+      },
+      "responsiveness": {
+        "samples": 205,
+        "timer_late_ms": {
+          "p50": 3.4,
+          "p99": 5.0,
+          "max": 5.0
+        },
+        "gpu_ms": {
+          "p50": 0.4,
+          "p95": 0.9,
+          "p99": 1.5,
+          "max": 34.7,
+          "mean": 0.7
+        }
+      },
+      "no_hang_pass": true,
+      "result_ids": [
+        "img_20261024_8d4383b068ea"
+      ]
+    }
+  ]
+}

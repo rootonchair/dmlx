@@ -11,12 +11,18 @@ license = "Apache-2.0"
 dependencies = [
     "fastapi>=0.146.0",
     "huggingface-hub>=1.33.0",
-    "mflux==0.23.0",
+    "mflux @ git+https://github.com/mflux-community/mflux.git@a3b21fcaa88726b2267bd42bfc2e2d722f7d5a47",
     "pillow>=12.3,<13",
     "python-multipart>=0.0.32",
     "pyyaml>=6.0.3",
     "sse-starlette>=3.5.0",
     "uvicorn[standard]>=0.54.0",
+]
+
+[project.optional-dependencies]
+local-llm = [
+    "mlx-lm==0.32.2",
+    "mlx-vlm==0.7.6",
 ]
 
 [project.scripts]

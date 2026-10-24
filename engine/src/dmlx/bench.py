@@ -23,6 +23,7 @@ def add_bench_parser(sub) -> None:
     bench.add_argument("--task", choices=["t2i", "edit"], default="t2i")
     bench.add_argument("--strategy", action="append", default=None, help="eager|phase_free|sequential (repeatable)")
     bench.add_argument("--size", default="1024x1024")
+    bench.add_argument("--steps", type=int, default=None, help="override the model's default step count")
     bench.add_argument("--runs", type=int, default=2, help="runs per case; run 2+ shows warm behaviour")
     bench.add_argument("--prompt", default="A small wooden rowboat on a still mountain lake at golden hour, 35mm film photo")
     bench.add_argument("--edit-prompt", default="make it night, keep the boat exactly the same")
@@ -70,7 +71,7 @@ def run_bench(args) -> None:
                 time.sleep(0.5)
                 started = time.monotonic()
                 job = engine.submit(task=task, prompt=prompt, model=model, size=args.size, seed=42 + run,
-                                    image_ids=image_ids, strategy=strategy, force=True)
+                                    steps=args.steps, image_ids=image_ids, strategy=strategy, force=True)
                 job.finished.wait()
                 wall = time.monotonic() - started
                 responsiveness = _stop_probe(probe) if probe else {}
@@ -101,7 +102,10 @@ def run_bench(args) -> None:
 
 
 def _first_image(engine, args, model) -> str:
-    job = engine.submit(task="t2i", prompt=args.prompt, model=model, size=args.size, seed=7, force=True)
+    job = engine.submit(
+        task="t2i", prompt=args.prompt, model=model, size=args.size,
+        steps=args.steps, seed=7, force=True,
+    )
     job.finished.wait()
     if job.status != "done":
         raise SystemExit(f"could not create a source image: {job.error}")

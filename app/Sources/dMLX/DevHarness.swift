@@ -10,6 +10,7 @@ import SwiftUI
 ///          {"snapshot": "name"}, {"variation": true}, {"edit": true}, {"draft": "text"}, {"sleep": 1},
 ///          {"onboarding": true|false}, {"settings": true}, {"selectSession": 0}, {"renderChat": "name"},
 ///          {"modelChoice": "auto"|"<model id>"}, {"logPreview": true},
+///          {"windowSize": [w, h]}, {"measure": true}, {"fakeSessions": n},
 ///          {"quit": true}]}
 @MainActor
 enum DevHarness {
@@ -91,7 +92,7 @@ enum DevHarness {
         if step["logPreview"] != nil { log("preview [\(model.modelChoice)] \(model.draft.isEmpty ? "(empty)" : model.draft): \(model.routePreview)") }
         if let text = step["send"] as? String { model.send(text) }
         if step["variation"] != nil, let t = model.latestImageTurn { model.variation(t.id) }
-        if step["edit"] != nil, let t = model.latestImageTurn { model.edit(t.id) }
+        if step["edit"] != nil, let t = model.latestImageTurn { model.attachResult(t.id) }
         if let show = step["onboarding"] as? Bool { model.showOnboarding = show }
         if step["settings"] != nil { NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil) }
         if let seconds = step["sleep"] as? Double { try? await _Concurrency.Task.sleep(for: .seconds(seconds)) }
@@ -106,6 +107,31 @@ enum DevHarness {
         }
         if let name = step["snapshot"] as? String { snapshot(name: name, out: out, all: step["allWindows"] != nil) }
         if step["dumpState"] != nil { dump(model, out: out) }
+        // In-memory only (never written to the store): fill or empty the sidebar list.
+        if let count = step["fakeSessions"] as? Int {
+            model.sessions = (0..<count).map { Session(title: "Harness chat \($0 + 1)") }
+        }
+        if let size = step["windowSize"] as? [Double], size.count == 2,
+           let window = hostWindow ?? NSApp.windows.first(where: { $0.isVisible && $0.frame.width > 300 }) {
+            window.setFrame(NSRect(origin: window.frame.origin, size: CGSize(width: size[0], height: size[1])), display: true)
+        }
+        if step["measure"] != nil, let window = hostWindow ?? NSApp.windows.first(where: { $0.isVisible && $0.frame.width > 300 }),
+           let content = window.contentView {
+            content.layoutSubtreeIfNeeded()
+            let root = content.subviews.first
+            log("measure window=\(window.frame.size) fitting=\(root?.fittingSize ?? .zero) rootFrame=\(root?.frame ?? .zero)")
+            func find(_ view: NSView, _ match: (NSView) -> Bool) -> NSView? {
+                if match(view) { return view }
+                for sub in view.subviews { if let hit = find(sub, match) { return hit } }
+                return nil
+            }
+            if let split = find(content, { $0 is NSSplitView }) as? NSSplitView {
+                for (i, column) in split.arrangedSubviews.enumerated() {
+                    let host = find(column, { String(describing: type(of: $0)).contains("NSHostingView") })
+                    log("measure column\(i) frame=\(column.frame.size) host=\(host?.frame.size ?? .zero) hostFitting=\(host?.fittingSize ?? .zero)")
+                }
+            }
+        }
         if step["killEngine"] != nil {
             let kill = Process()
             kill.executableURL = URL(fileURLWithPath: "/usr/bin/pkill")

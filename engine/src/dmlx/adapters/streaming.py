@@ -96,12 +96,14 @@ def as_weights(copied: dict[str, tuple[mx.array, str]]) -> dict[str, mx.array]:
 
 
 def block_prefixes(index: TensorIndex, lists: list[str]) -> list[str]:
-    """`transformer_blocks.0.`, `transformer_blocks.1.`, ... for every listed block stack."""
+    """Weight prefixes for every listed block stack, including nested module paths."""
     found = set()
-    for key in index.keys():
-        parts = key.split(".")
-        if len(parts) > 2 and parts[0] in lists and parts[1].isdigit():
-            found.add((parts[0], int(parts[1])))
+    for name in lists:
+        prefix = f"{name}."
+        for key in index.keys(prefix):
+            index_part = key[len(prefix):].split(".", 1)[0]
+            if index_part.isdigit():
+                found.add((name, int(index_part)))
     return [f"{name}.{i}." for name, i in sorted(found, key=lambda f: (lists.index(f[0]), f[1]))]
 
 
@@ -153,16 +155,27 @@ class _ReadAhead:
 class StreamedBlock(nn.Module):
     """Stand-in for one block: take its weights, run it, force the result, drop the weights."""
 
-    def __init__(self, block: nn.Module, index: TensorIndex, prefix: str, bits: int | None, reader: _ReadAhead):
+    def __init__(
+        self, block: nn.Module, index: TensorIndex, prefix: str, bits: int | None,
+        reader: _ReadAhead, check=None,
+    ):
         super().__init__()
         # Kept outside the module tree so the parent's parameters() never sees an unloaded block.
         object.__setattr__(self, "_block", block)
         object.__setattr__(self, "_prefix", prefix)
         object.__setattr__(self, "_bits", bits)
         object.__setattr__(self, "_reader", reader)
+        object.__setattr__(self, "_check", check)
         object.__setattr__(self, "_skeleton", None)
         object.__setattr__(self, "_keys", index.keys(prefix))
         object.__setattr__(self, "_next", None)  # (prefix, keys) of the block that runs after this one
+
+    def __getattr__(self, key):
+        """Expose block metadata used by model-level inference context managers."""
+        try:
+            return super().__getattr__(key)
+        except AttributeError:
+            return getattr(object.__getattribute__(self, "_block"), key)
 
     def __call__(self, *args, **kwargs):
         copied = self._reader.take(self._prefix, self._keys)
@@ -179,6 +192,8 @@ class StreamedBlock(nn.Module):
         try:
             out = self._block(*args, **kwargs)
             _evaluated(out)
+            if self._check is not None:
+                self._check()
             cache = kwargs.get("kv_cache")
             if cache is not None:
                 # The reference K/V a block stores during extraction would otherwise keep its weights alive.
@@ -195,7 +210,9 @@ class SkippedLayer(nn.Module):
         return hidden_states, None
 
 
-def make_streamed(module: nn.Module, directory: Path, lists: list[str], skip_from: dict[str, int] | None = None) -> int:
+def make_streamed(
+    module: nn.Module, directory: Path, lists: list[str], skip_from: dict[str, int] | None = None, check=None,
+) -> int:
     """Load `module`'s non-block weights and turn its block stacks into streamed stand-ins.
 
     Returns the bytes now resident (the non-block weights). `skip_from` maps a stack name to the
@@ -210,9 +227,18 @@ def make_streamed(module: nn.Module, directory: Path, lists: list[str], skip_fro
     resident = tree_unflatten(list(index.read(resident_keys).items()))
     bits = index.quantization
     # Quantize only the non-block part here; each block gets its structure on first use.
-    blocks = {name: getattr(module, name) for name in lists}
+    def parent_and_attribute(path: str):
+        parent = module
+        parts = path.split(".")
+        for part in parts[:-1]:
+            parent = getattr(parent, part)
+        return parent, parts[-1]
+
+    locations = {name: parent_and_attribute(name) for name in lists}
+    blocks = {name: getattr(parent, attribute) for name, (parent, attribute) in locations.items()}
     for name in lists:
-        setattr(module, name, [])
+        parent, attribute = locations[name]
+        setattr(parent, attribute, [])
     _quantize_like(module, resident, bits)
     module.update(resident, strict=False)
     mx.eval(module.parameters())
@@ -224,11 +250,12 @@ def make_streamed(module: nn.Module, directory: Path, lists: list[str], skip_fro
         replaced = []
         for i, block in enumerate(stack):
             if i < stop:
-                replaced.append(StreamedBlock(block, index, f"{name}.{i}.", bits, reader))
+                replaced.append(StreamedBlock(block, index, f"{name}.{i}.", bits, reader, check=check))
                 streamed.append(replaced[-1])
             else:
                 replaced.append(SkippedLayer())
-        setattr(module, name, replaced)
+        parent, attribute = locations[name]
+        setattr(parent, attribute, replaced)
     # Blocks run in stack order, and the next forward pass starts again from the first block.
     for current, following in zip(streamed, streamed[1:] + streamed[:1]):
         object.__setattr__(current, "_next", (following._prefix, following._keys))
