@@ -8,6 +8,7 @@ agent writes are saved for review but not scored. History entries:
     ["gen", name, prompt]              a message and the image generated from it
     ["edit", name, prompt, [sources]]  a message and the edit it produced
     ["upload", name, text]             a message with an uploaded image attached
+    ["ask", text, question]            a message the agent answered with a question (the NEW message answers it)
 """
 
 from __future__ import annotations
@@ -45,6 +46,12 @@ def state_for(case: dict) -> tuple[dict, dict[str, str]]:
     """The route state the app would send, and a name -> result id map."""
     ids, history, number = {}, [], 0
     for entry in case["history"]:
+        if entry[0] == "ask":
+            history.append({"sequence": len(history), "kind": "user", "text": entry[1], "image_number": None,
+                            "operation": None, "result_id": None, "input_ids": []})
+            history.append({"sequence": len(history), "kind": "notice", "text": entry[2], "image_number": None,
+                            "operation": None, "result_id": None, "input_ids": []})
+            continue
         kind, name = entry[0], entry[1]
         ids[name] = f"{'up' if kind == 'upload' else 'img'}_{name}"
         if kind == "upload":

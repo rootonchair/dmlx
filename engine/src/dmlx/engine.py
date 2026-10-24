@@ -326,7 +326,10 @@ class Engine:
             raise RequestError("invalid_route", "Routing candidates must be a list.", 422)
         candidates = [str(item) for item in requested] if requested else sorted(available)
         candidates = [item for item in candidates if item in available]
-        if state.get("plan") and self.prompt_assistant is not None and candidates:
+        # With no image and one possible workflow there is nothing to decide; the job's own rewrite
+        # (Auto mode) still writes the prompt, so planning would only load the model for nothing.
+        trivial = len(candidates) == 1 and not explicit_count and not has_current
+        if state.get("plan") and self.prompt_assistant is not None and candidates and not trivial:
             planned = self._plan(safe_state, candidates)
             if planned is not None:
                 return planned

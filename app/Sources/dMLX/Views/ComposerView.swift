@@ -107,7 +107,8 @@ struct ComposerView: View {
                 }
 
                 TextField(
-                    model.latestImageTurn == nil ? "Describe an image…" : "Describe a change, or something new…",
+                    model.pendingAsk != nil ? "Type your answer…"
+                        : model.latestImageTurn == nil ? "Describe an image…" : "Describe a change, or something new…",
                     text: $model.draft, axis: .vertical
                 )
                 .textFieldStyle(.plain)

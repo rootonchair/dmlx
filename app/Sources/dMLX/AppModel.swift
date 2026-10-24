@@ -110,6 +110,8 @@ final class AppModel {
         var latestResultId: String?
         var latestTurnId: String?
         var promptSpec: PromptSpec
+        /// False for an answer to the agent's question: the attachments are shown on the message it answers.
+        var showsAttachments = true
 
         var attachmentIds: [String] { attachmentInputs.map(\.id) }
     }
@@ -440,6 +442,8 @@ final class AppModel {
     /// Refreshes the non-binding route hint. Structural cases resolve locally; only
     /// a continuation with a current image needs the configured decision provider.
     func scheduleRoutePreview() {
+        // While the agent's question is open, what the user types is the answer, not a new message.
+        if pendingAsk != nil, pendingRoute != nil { return }
         routeTask?.cancel()
         pendingRoute = nil
         pendingAsk = nil
@@ -569,6 +573,7 @@ final class AppModel {
         routeDecisionKey = nil
         routeRequest = nil
         pendingRoute = nil
+        pendingAsk = nil
         isResolvingRoute = false
         promptSuggestion = nil
         promptSuggestionApplied = false
@@ -579,6 +584,9 @@ final class AppModel {
     func send(_ text: String? = nil) {
         let message = (text ?? draft).trimmingCharacters(in: .whitespacesAndNewlines)
         guard !message.isEmpty, !isResolvingRoute else { return }
+        if let pending = pendingRoute, let question = pendingAsk, promptAssistantInstalled {
+            return answer(pending, question: question, with: message)
+        }
         let snapshot = PendingRoute(
             message: message, attachmentInputs: attachments.enumerated().map { $0.element.mediaInput(order: $0.offset) },
             latestResultId: latestImageTurn?.current?.resultId, latestTurnId: latestImageTurn?.id,
@@ -630,9 +638,53 @@ final class AppModel {
         guard !decision.requiresConfirmation() else {
             pendingRoute = pending
             pendingAsk = decision.ask
+            // The message is held with the question; the composer is free for the answer.
+            if decision.ask != nil { draft = "" }
             return
         }
         execute(pending, decision: decision)
+    }
+
+    /// The user typed an answer to the agent's question. The agent plans it with the original message
+    /// and the question in the chat, and both are kept in the conversation like any other turn.
+    private func answer(_ pending: PendingRoute, question: String, with reply: String) {
+        guard let client else { return show("The engine is still starting.") }
+        let history = routingHistory + [
+            RoutingHistoryItem(sequence: turns.count, kind: TurnKind.user.rawValue, text: pending.message,
+                               inputIds: pending.attachmentIds),
+            RoutingHistoryItem(sequence: turns.count + 1, kind: TurnKind.notice.rawValue, text: question),
+        ]
+        isResolvingRoute = true
+        routeTask?.cancel()
+        routeRequest = nil
+        routeTask = _Concurrency.Task { [weak self] in
+            do {
+                let decision = try await client.routeWorkflow(
+                    message: reply, currentResultId: pending.latestResultId,
+                    currentPrompt: self?.latestImageTurn?.current?.prompt, attachments: pending.attachmentIds,
+                    history: history, selectedModel: self?.chosenModel?.id, plan: true)
+                guard let self else { return }
+                self.isResolvingRoute = false
+                guard !_Concurrency.Task.isCancelled, self.pendingAsk == question else { return }
+                let sessionId = self.ensureSession(title: pending.message)
+                self.appendTurn(Turn(
+                    sessionId: sessionId, index: self.turns.count, kind: .user, text: pending.message,
+                    attachments: pending.attachmentIds, attachmentInputs: pending.attachmentInputs))
+                self.appendTurn(Turn(sessionId: sessionId, index: self.turns.count, kind: .notice, text: question))
+                self.pendingRoute = nil
+                self.pendingAsk = nil
+                var answering = pending
+                answering.message = reply
+                answering.promptSpec = self.selectedPromptSpec(for: reply)
+                answering.showsAttachments = false
+                self.handle(answering, decision: decision)
+            } catch is CancellationError {
+                self?.isResolvingRoute = false
+            } catch {
+                self?.isResolvingRoute = false
+                self?.show("Could not plan the answer: \(error.localizedDescription)")
+            }
+        }
     }
 
     func choosePendingRoute(_ operation: String) {
@@ -644,6 +696,11 @@ final class AppModel {
     }
 
     func cancelPendingRoute() {
+        if pendingAsk != nil, let pending = pendingRoute, draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            draft = pending.message  // give the held message back
+        }
+        routeTask?.cancel()
+        isResolvingRoute = false
         pendingRoute = nil
         pendingAsk = nil
     }
@@ -720,7 +777,8 @@ final class AppModel {
         let sessionId = ensureSession(title: message)
         appendTurn(Turn(
             sessionId: sessionId, index: turns.count, kind: .user, text: message,
-            attachments: pending.attachmentIds, attachmentInputs: pending.attachmentInputs))
+            attachments: pending.showsAttachments ? pending.attachmentIds : [],
+            attachmentInputs: pending.showsAttachments ? pending.attachmentInputs : nil))
         draft = ""
 
         switch decision.intent {
@@ -759,8 +817,19 @@ final class AppModel {
     }
 
     private func routedInputs(_ pending: PendingRoute, decision: WorkflowDecision) -> [MediaInput] {
-        if !pending.attachmentInputs.isEmpty { return pending.attachmentInputs }
         let selected = decision.input_result_ids ?? []
+        // The agent may add chat images to the attachments ("redo the boat in the style of this painting");
+        // the engine has already checked that its list keeps every attachment.
+        if decision.provider.hasPrefix("agent:"), !selected.isEmpty {
+            return selected.prefix(3).enumerated().map { index, id in
+                var input = pending.attachmentInputs.first(where: { $0.id == id })
+                    ?? MediaInput(id: id, role: .reference, order: index)
+                input.role = index == 0 ? .source : .reference
+                input.order = index
+                return input
+            }
+        }
+        if !pending.attachmentInputs.isEmpty { return pending.attachmentInputs }
         let ids = selected.isEmpty ? pending.latestResultId.map { [$0] } ?? [] : selected
         return ids.prefix(3).enumerated().map { index, id in
             MediaInput(id: id, role: index == 0 ? .source : .reference, order: index)

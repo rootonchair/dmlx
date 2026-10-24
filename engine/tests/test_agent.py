@@ -85,6 +85,21 @@ def test_the_model_reads_the_chat_and_sees_attachments_then_the_current_image():
     assert body.endswith("NEW message: more")
 
 
+def test_words_the_user_typed_are_double_quoted_in_a_new_image():
+    state = {**STATE, "message": "A poster with the words MAKE IT COUNT"}
+    plan = check({"intent": "image.generate", "edit": None, "references": [],
+                  "prompt": "A poster reading 'MAKE IT COUNT', the artist's own 'style'."}, state)
+    assert plan.prompt == "A poster reading \"MAKE IT COUNT\", the artist's own 'style'."
+
+
+def test_the_question_the_app_asked_is_part_of_the_chat():
+    state = {**STATE, "message": "the first one", "history": [*STATE["history"],
+             {"kind": "user", "text": "make it red", "input_ids": []},
+             {"kind": "notice", "text": "Which image do you mean?"}]}
+    lines = agent.chat_lines(state)
+    assert lines[-2:] == ["user: make it red", "app: Which image do you mean?"]
+
+
 # -- through the engine's routing ---------------------------------------------------------
 class _Model:
     """Replies in turn (the last one repeats): the plan, then the description of an edit."""
@@ -159,6 +174,18 @@ def test_the_typing_preview_never_runs_the_agent(make_engine, client_for, tmp_pa
     decision = _route(client, source, plan=False)
 
     assert model.calls == [] and "prompt" not in decision
+
+
+def test_nothing_to_decide_is_not_planned(make_engine, client_for, tmp_path):
+    engine = make_engine()
+    client = client_for(engine)
+    model = _Model("{}")
+    model.install(engine, tmp_path)
+
+    body = {"message": "a ceramic teapot", "attachments": [], "history": [], "plan": True}
+    decision = client.post("/v1/workflows/route", json=body).json()
+
+    assert decision["intent"] == "image.generate" and model.calls == [] and not engine.prompt_assistant.resident
 
 
 def test_a_bad_or_failed_answer_falls_back_to_the_router(make_engine, client_for, tmp_path):
