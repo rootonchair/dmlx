@@ -289,10 +289,10 @@ class Engine:
                 "input_ids": [value[:256] for value in input_ids],
             })
         history.sort(key=lambda item: item["sequence"])
-        current_prompt = str(state.get("current_prompt", ""))[:8_000]
+        current_prompt = str(state.get("current_prompt") or "")[:8_000]
         safe_state = {
             "message": message,
-            "current_result_id": str(state.get("current_result_id", ""))[:256] or None,
+            "current_result_id": str(state.get("current_result_id") or "")[:256] or None,
             "current_prompt": current_prompt or None,
             "attachments": attachments,
             "history": history,
@@ -1102,9 +1102,9 @@ class Engine:
             return None  # the cheap path answers now
         started = time.monotonic()
         try:
+            # Frees idle models first, but never skips the agent: planning runs even when memory is tight.
             if not self.memory.make_room(self.prompt_assistant.need_bytes):
-                log.warning("agent planning skipped: not enough free memory")
-                return None
+                log.warning("agent planning with less free memory than it needs")
             workflows = {name: DEFAULT_DESCRIPTIONS.get(name, name) for name in candidates}
             result = agent.plan(self.prompt_assistant, state, workflows, image_path=self.results.path)
         except (IntelligenceError, KeyError, OSError) as exc:
@@ -1134,9 +1134,7 @@ class Engine:
             raise RequestError("engine_busy", "An image is being made; try the prompt assistant again when it is done.", 409)
         try:
             if not self.memory.make_room(assistant.need_bytes):
-                raise RequestError(
-                    "insufficient_memory",
-                    f"The prompt assistant needs about {assistant.need_bytes / GB:.1f} GB; close some apps and try again.", 409)
+                log.warning("prompt assistant running with less free memory than it needs")
             if emit:
                 emit("loading", {"component": "prompt_assistant"})
                 emit("rewriting", {})

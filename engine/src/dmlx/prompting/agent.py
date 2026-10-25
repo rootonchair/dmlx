@@ -126,6 +126,16 @@ def _resolve_id(value: str, allowed: set[str], state: dict, shown: list[str]) ->
     return None
 
 
+def _new_message(state: dict) -> str:
+    """The message, or for an answer to the app's question, the request and the answer together: the
+    model otherwise follows the image in view over a short answer such as 'the boat'."""
+    history = state.get("history") or []
+    if len(history) >= 2 and history[-1].get("kind") == "notice" and history[-2].get("kind") == "user":
+        request, question = history[-2].get("text", "")[:300], history[-1].get("text", "")[:300]
+        return f'{request} (asked "{question}", the user answered: {state["message"]})'
+    return state["message"]
+
+
 def messages(state: dict, workflows: dict[str, str], shown: list[str]) -> list[dict]:
     listed = "\n".join(f"- {name}: {text}" for name, text in workflows.items())
     view = "; ".join(f"<image{i + 1}> is {rid}" for i, rid in enumerate(shown)) or "none"
@@ -133,7 +143,7 @@ def messages(state: dict, workflows: dict[str, str], shown: list[str]) -> list[d
     body = "\n".join([
         "Chat so far:", *(chat_lines(state) or ["(empty)"]),
         f"Attached to the new message: {attached}", f"Images shown to you: {view}", "",
-        f"NEW message: {state['message']}",
+        f"NEW message: {_new_message(state)}",
     ])
     return [{"role": "system", "content": INSTRUCTIONS.format(workflows=listed)}, {"role": "user", "content": body}]
 

@@ -687,6 +687,15 @@ final class AppModel {
         }
     }
 
+    /// Dev harness only: the state right after the agent asked `question` about `message`.
+    func harnessAsk(message: String, question: String) {
+        pendingRoute = PendingRoute(
+            message: message, attachmentInputs: [], latestResultId: latestImageTurn?.current?.resultId,
+            latestTurnId: latestImageTurn?.id, promptSpec: selectedPromptSpec(for: message))
+        pendingAsk = question
+        draft = ""
+    }
+
     func choosePendingRoute(_ operation: String) {
         guard let pending = pendingRoute else { return }
         pendingRoute = nil

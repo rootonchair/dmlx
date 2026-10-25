@@ -1,6 +1,6 @@
 # 04 · The agent's question works as a conversation
 
-**Status:** Done in the working tree, not committed. Not yet clicked through in the app.
+**Status:** Done; checked in the app on 2026-10-25.
 
 ## Problem
 - When the agent asks something like "Which image do you mean?", the app showed it above the workflow
@@ -17,6 +17,14 @@
   app's last question.
 - Eval cases `ask-answer-new` and `ask-answer-image` in `engine/evals/agent-routing.jsonl` (both pass).
 
+## Checked in the app (dev harness `ask` step, 2026-10-25)
+Boat, then teapot, then "make it red", then the question "the boat or the teapot?", then the answer
+"the boat": the chat shows the message, the question, the answer and the image.
+- First run: the agent edited the teapot. With the real photo of the teapot in view, a short answer lost
+  to the image (the eval passed only because its images are placeholders).
+- Fix: `agent._new_message` writes the answer next to the request it answers ("make it red (asked …,
+  the user answered: the boat)"). With real images: 5/5 on boat/teapot answers, naming, "the first
+  one" and "it"; full eval still 36/36.
+
 ## Remaining
-- [ ] Drive it once in the app (dev harness): ask, answer, check the chat and the job's inputs.
 - [ ] An answer sent during an image job falls back to the router without the original message (task 03).

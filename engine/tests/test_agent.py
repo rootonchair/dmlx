@@ -98,6 +98,8 @@ def test_the_question_the_app_asked_is_part_of_the_chat():
              {"kind": "notice", "text": "Which image do you mean?"}]}
     lines = agent.chat_lines(state)
     assert lines[-2:] == ["user: make it red", "app: Which image do you mean?"]
+    body = agent.messages(state, {"image.edit": "edit"}, ["img_2"])[1]["content"]
+    assert body.endswith('NEW message: make it red (asked "Which image do you mean?", the user answered: the first one)')
 
 
 # -- through the engine's routing ---------------------------------------------------------
@@ -164,6 +166,20 @@ def test_a_failed_description_keeps_the_agents_instruction(make_engine, client_f
     assert decision["provider"].startswith("agent:") and decision["prompt"] == "Make the card bluer."
 
 
+def test_tight_memory_never_skips_the_agent(make_engine, client_for, tmp_path):
+    engine = make_engine()
+    client = client_for(engine)
+    source = _source(client)
+    model = _Model(json.dumps({"intent": "image.edit", "edit": source, "prompt": "Make the card bluer.", "ask": None}),
+                   json.dumps({"positive": "The same card, deep blue.", "negative": None}))
+    model.install(engine, tmp_path)
+    engine.memory.make_room = lambda _need: False
+
+    decision = _route(client, source)
+
+    assert decision["provider"].startswith("agent:") and decision["prompt"] == "The same card, deep blue."
+
+
 def test_the_typing_preview_never_runs_the_agent(make_engine, client_for, tmp_path):
     engine = make_engine()
     client = client_for(engine)
@@ -182,10 +198,11 @@ def test_nothing_to_decide_is_not_planned(make_engine, client_for, tmp_path):
     model = _Model("{}")
     model.install(engine, tmp_path)
 
-    body = {"message": "a ceramic teapot", "attachments": [], "history": [], "plan": True}
-    decision = client.post("/v1/workflows/route", json=body).json()
+    for body in ({"message": "a ceramic teapot", "attachments": [], "history": [], "plan": True},
+                 {"message": "a ceramic teapot", "current_result_id": None, "current_prompt": None, "plan": True}):
+        decision = client.post("/v1/workflows/route", json=body).json()
 
-    assert decision["intent"] == "image.generate" and model.calls == [] and not engine.prompt_assistant.resident
+        assert decision["intent"] == "image.generate" and model.calls == [] and not engine.prompt_assistant.resident
 
 
 def test_a_bad_or_failed_answer_falls_back_to_the_router(make_engine, client_for, tmp_path):

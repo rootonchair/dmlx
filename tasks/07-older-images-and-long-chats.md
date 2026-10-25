@@ -10,6 +10,10 @@
   history the app sends (up to 24 items). In a long chat the agent can pick an image it cannot see in
   the chat.
 
+Seen in the app: after "make it red", a question, and the answer "the boat", the agent edited the teapot
+it could see rather than the boat it could only read about (worked around for answers in task 04; a
+message that names an older image still relies on the prompt text).
+
 ## Options
 - Show small thumbnails of the images the message may refer to (the chat images it names, or the last
   few), within a token budget; measure the latency cost.

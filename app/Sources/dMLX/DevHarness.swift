@@ -11,6 +11,7 @@ import SwiftUI
 ///          {"onboarding": true|false}, {"settings": true}, {"selectSession": 0}, {"renderChat": "name"},
 ///          {"modelChoice": "auto"|"<model id>"}, {"logPreview": true},
 ///          {"windowSize": [w, h]}, {"measure": true}, {"fakeSessions": n},
+///          {"ask": {"message": "…", "question": "…"}} (as if the agent asked), {"waitRouted": 60},
 ///          {"quit": true}]}
 @MainActor
 enum DevHarness {
@@ -90,6 +91,17 @@ enum DevHarness {
             addModelWindow = window
         }
         if step["logPreview"] != nil { log("preview [\(model.modelChoice)] \(model.draft.isEmpty ? "(empty)" : model.draft): \(model.routePreview)") }
+        if let ask = step["ask"] as? [String: String], let message = ask["message"], let question = ask["question"] {
+            model.harnessAsk(message: message, question: question)
+        }
+        if let timeout = step["waitRouted"] as? Double {
+            let deadline = Date().addingTimeInterval(timeout)
+            try? await _Concurrency.Task.sleep(for: .milliseconds(300))
+            while Date() < deadline && model.isResolvingRoute {
+                try? await _Concurrency.Task.sleep(for: .milliseconds(300))
+            }
+            log("routed: pendingAsk=\(model.pendingAsk ?? "-") draft=\(model.draft)")
+        }
         if let text = step["send"] as? String { model.send(text) }
         if step["variation"] != nil, let t = model.latestImageTurn { model.variation(t.id) }
         if step["edit"] != nil, let t = model.latestImageTurn { model.attachResult(t.id) }
@@ -255,7 +267,7 @@ enum DevHarness {
     static func dump(_ model: AppModel, out: URL) {
         let lines = model.turns.map { t -> String in
             let v = t.current
-            return "\(t.kind.rawValue) #\(t.number) route=\(t.route) status=\(v?.status.rawValue ?? "-") result=\(v?.resultId ?? "-") loads=\(v?.loads ?? []) strategy=\(v?.strategy ?? "-") err=\(v?.errorMessage ?? "-") text=\(t.text.prefix(60))"
+            return "\(t.kind.rawValue) #\(t.number) route=\(t.route) status=\(v?.status.rawValue ?? "-") result=\(v?.resultId ?? "-") loads=\(v?.loads ?? []) strategy=\(v?.strategy ?? "-") err=\(v?.errorMessage ?? "-") inputs=\(v?.mediaInputs?.map(\.id) ?? []) text=\(t.text.prefix(60))"
         }
         let header = "onboarding=\(model.showOnboarding) engine=\(model.engineStatusText) models=\(model.models.map { "\($0.id):\($0.downloaded)" })"
         try? ([header] + lines).joined(separator: "\n").write(to: out.appendingPathComponent("state.txt"), atomically: true, encoding: .utf8)
