@@ -107,23 +107,46 @@ def shown_images(state: dict) -> list[str]:
     return list(dict.fromkeys(ids))[:_SHOWN_IMAGES]
 
 
+def _image_numbers(state: dict) -> dict[str, int]:
+    return {item["result_id"]: item["image_number"] for item in state.get("history") or []
+            if item.get("kind") == "image" and item.get("result_id") and isinstance(item.get("image_number"), int)}
+
+
 def _resolve_id(value: str, allowed: set[str], state: dict, shown: list[str]) -> str | None:
-    """An id as written, or one the model wrote as '<image2>' (shown images) or 'image 2' / '2' (chat)."""
-    value = value.strip()
+    """An id as written, or a label the model wrote for it. 'image2', '<image2>', 'image 2' and '2' all
+    mean the chat's image 2; only when the chat has no image 2 do they mean the second image shown.
+    'attachment 2' is the second image attached to the new message."""
+    value = value.strip().strip("<>\"'` ").strip()
     if value in allowed:
         return value
-    tag = re.fullmatch(r"<?image(\d+)>?", value, re.IGNORECASE)
-    if tag and "<" in value or re.fullmatch(r"image\d+", value, re.IGNORECASE):
-        index = int(re.search(r"\d+", value).group()) - 1
-        return shown[index] if 0 <= index < len(shown) else None
-    number = re.fullmatch(r"(?:image\s*)?(\d+)", value, re.IGNORECASE)
+    attachment = re.fullmatch(r"attach(?:ment|ed)?[\s_#-]*(\d+)", value, re.IGNORECASE)
+    if attachment:
+        attachments = list(state.get("attachments") or [])
+        n = int(attachment.group(1))
+        return attachments[n - 1] if 0 < n <= len(attachments) else None
+    number = re.fullmatch(r"(?:image|img|picture)?[\s_#-]*(\d+)", value, re.IGNORECASE)
     if number:
         n = int(number.group(1))
-        for item in state.get("history") or []:
-            if item.get("kind") == "image" and item.get("image_number") == n:
-                return item.get("result_id")
+        by_number = {number: rid for rid, number in _image_numbers(state).items()}
+        if n in by_number:
+            return by_number[n]
         return shown[n - 1] if 0 < n <= len(shown) else None
     return None
+
+
+def _view(state: dict, shown: list[str]) -> str:
+    """The images in view, named as the chat names them, so the model sees one numbering only."""
+    numbers = _image_numbers(state)
+    attachments = list(state.get("attachments") or [])
+    names = []
+    for rid in shown:
+        if rid in attachments:
+            names.append(f"attachment {attachments.index(rid) + 1} id={rid}")
+        elif rid in numbers:
+            names.append(f"image {numbers[rid]} id={rid}")
+        else:
+            names.append(f"id={rid}")
+    return "; ".join(names) or "none"
 
 
 def _new_message(state: dict) -> str:
@@ -138,11 +161,10 @@ def _new_message(state: dict) -> str:
 
 def messages(state: dict, workflows: dict[str, str], shown: list[str]) -> list[dict]:
     listed = "\n".join(f"- {name}: {text}" for name, text in workflows.items())
-    view = "; ".join(f"<image{i + 1}> is {rid}" for i, rid in enumerate(shown)) or "none"
     attached = ", ".join(state.get("attachments") or []) or "none"
     body = "\n".join([
         "Chat so far:", *(chat_lines(state) or ["(empty)"]),
-        f"Attached to the new message: {attached}", f"Images shown to you: {view}", "",
+        f"Attached to the new message: {attached}", f"Images shown to you, in order: {_view(state, shown)}", "",
         f"NEW message: {_new_message(state)}",
     ])
     return [{"role": "system", "content": INSTRUCTIONS.format(workflows=listed)}, {"role": "user", "content": body}]

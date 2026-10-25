@@ -65,11 +65,45 @@ def test_a_clarifying_question_is_passed_on():
     assert plan.as_decision()["intent"] == "ambiguous"
 
 
-def test_image_labels_are_resolved_to_ids_and_inventions_rejected():
-    assert check({"intent": "image.edit", "edit": "<image1>", "prompt": "x"}).inputs == ("img_2",)
-    assert check({"intent": "image.edit", "edit": "image 1", "prompt": "x"}).inputs == ("img_1",)
+def test_every_label_form_means_the_same_chat_image():
+    # One image shown (image 2, the current one): no form may read "2" as "the second image shown".
+    for label in ("image2", "<image2>", "image 2", "2", "Image 2", "img_2", "<img_2>"):
+        assert check({"intent": "image.edit", "edit": label, "prompt": "x"}).inputs == ("img_2",), label
+    for label in ("image1", "<image1>", "image 1", "1", "#1"):
+        assert check({"intent": "image.edit", "edit": label, "prompt": "x"}).inputs == ("img_1",), label
     assert check({"intent": "image.edit", "edit": "2", "references": ["1"], "prompt": "x"}).inputs == ("img_2", "img_1")
     assert check({"intent": "image.edit", "edit": "image 7", "prompt": "x"}) is None
+
+
+def test_labels_with_several_images_shown_follow_the_chat_numbers():
+    state = {**STATE, "attachments": ["up_1", "up_2"]}
+    allowed = ALLOWED | {"up_1", "up_2"}
+
+    def inputs(reply):
+        plan = agent.validate(json.dumps(reply), state=state, candidates=CANDIDATES, allowed_ids=allowed,
+                              provider="agent:test")
+        return plan.inputs if plan else None
+
+    # Two attachments shown; "image 1" is still the chat's image 1, never "the first image shown".
+    assert inputs({"intent": "image.edit", "edit": "<image1>", "prompt": "x"}) == ("up_1", "up_2", "img_1")
+    assert inputs({"intent": "image.edit", "edit": "attachment 2", "prompt": "x"}) == ("up_2", "up_1")
+    assert inputs({"intent": "image.edit", "edit": "attached1", "prompt": "x"}) == ("up_1", "up_2")
+    assert inputs({"intent": "image.edit", "edit": "attachment 3", "prompt": "x"}) is None
+
+
+def test_a_number_the_chat_lacks_falls_back_to_the_images_shown():
+    state = {"message": "make it red", "current_result_id": None, "history": [], "attachments": ["up_1", "up_2"]}
+    plan = agent.validate(json.dumps({"intent": "image.edit", "edit": "<image2>", "prompt": "x"}), state=state,
+                          candidates=CANDIDATES, allowed_ids={"up_1", "up_2"}, provider="agent:test")
+    assert plan.inputs == ("up_2", "up_1")
+
+
+def test_the_model_sees_one_numbering_for_the_images_in_view():
+    body = agent.messages(STATE, {"image.edit": "edit"}, agent.shown_images(STATE))[1]["content"]
+    assert "Images shown to you, in order: image 2 id=img_2" in body and "<image" not in body
+    state = {**STATE, "attachments": ["up_1"]}
+    body = agent.messages(state, {"image.edit": "edit"}, agent.shown_images(state))[1]["content"]
+    assert "Images shown to you, in order: attachment 1 id=up_1" in body
 
 
 def test_attachments_replace_the_current_image_in_view():
