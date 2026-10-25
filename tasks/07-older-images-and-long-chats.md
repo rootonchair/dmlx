@@ -14,6 +14,9 @@ Seen in the app: after "make it red", a question, and the answer "the boat", the
 it could see rather than the boat it could only read about (worked around for answers in task 04; a
 message that names an older image still relies on the prompt text).
 
+Every agent model under 8B misses these cases on real images (`docs/benchmarks/agent-models.md`),
+so this decides whether the 16 GB default is good enough.
+
 ## Options
 - Show small thumbnails of the images the message may refer to (the chat images it names, or the last
   few), within a token budget; measure the latency cost.

@@ -1,4 +1,4 @@
-"""Image-aware prompt rewriting on this Mac with Qwen3-VL-8B (mlx-vlm).
+"""Image-aware prompt rewriting on this Mac with a vision-language model the user picks (mlx-vlm).
 
 Edits are rewritten by default: instruction-based editors follow a description of the
 edited image far better than a terse command, and the rewriter has to see the image to
@@ -13,6 +13,7 @@ import json
 import logging
 import threading
 from collections import OrderedDict
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
@@ -21,9 +22,46 @@ from dmlx.prompting.compiler import CompiledPrompt
 
 log = logging.getLogger("dmlx.prompting")
 
-REPO = "mlx-community/Qwen3-VL-8B-Instruct-4bit"
-REVISION = "defcdea7cc7a4b0858fea563cbbce171d328e457"
-LICENSE = "apache-2.0"
+
+
+@dataclass(frozen=True)
+class AgentModel:
+    """A vision-language model the planning agent can run on, pinned to one revision."""
+
+    id: str
+    name: str
+    repo: str
+    revision: str
+    license: str
+    size_gb: float  # weights on disk
+    note: str = ""
+
+    def as_dict(self) -> dict:
+        return {"id": self.id, "name": self.name, "repo": self.repo, "revision": self.revision,
+                "license": self.license, "size_gb": self.size_gb, "note": self.note}
+
+
+# Measured 2026-10-25 on the 36-case routing eval and 8 real-image cases (docs/benchmarks/agent-models.md).
+MODELS: dict[str, AgentModel] = {m.id: m for m in (
+    AgentModel("qwen3-vl-8b-instruct-4bit", "Qwen3-VL 8B", "mlx-community/Qwen3-VL-8B-Instruct-4bit",
+               "defcdea7cc7a4b0858fea563cbbce171d328e457", "apache-2.0", 5.76,
+               "Recommended for 24 GB and up · about 8 s per message"),
+    AgentModel("qwen3.5-9b-mlx-4bit", "Qwen3.5 9B", "mlx-community/Qwen3.5-9B-MLX-4bit",
+               "938d8919941c6e7efd3c7150eff7fe9d12afa631", "apache-2.0", 5.95,
+               "Best at finding older images · about 10 s per message"),
+    AgentModel("ministral-3-3b-instruct-2512-4bit", "Ministral 3 3B", "mlx-community/Ministral-3-3B-Instruct-2512-4bit",
+               "a962dcb09eee4169c890e544c9eb938f1113fdee", "apache-2.0", 2.75,
+               "Recommended for 16 GB · can miss which older image you mean"),
+    AgentModel("qwen3-vl-4b-instruct-4bit", "Qwen3-VL 4B", "mlx-community/Qwen3-VL-4B-Instruct-4bit",
+               "2fd8dacbdb8f1e54b8c005f081ec5bf79c56376b", "apache-2.0", 3.09,
+               "Least memory · can miss which older image you mean"),
+)}
+DEFAULT_MODEL = "qwen3-vl-8b-instruct-4bit"
+SMALL_MAC_MODEL = "ministral-3-3b-instruct-2512-4bit"  # the default under 24 GB: 4.2 GB peak instead of 6.2 GB
+
+
+def default_model(total_bytes: int) -> str:
+    return DEFAULT_MODEL if total_bytes >= 24 * 1024**3 else SMALL_MAC_MODEL
 # Measured on the card edit: 1.0 GB beyond the weights for a 768 px image and a ~120-token reply.
 ACTIVATION_BYTES = int(1.5 * 1024**3)
 _MAX_SIDE = 768  # what the rewriter needs to read layout and text; larger only costs prefill
@@ -54,15 +92,18 @@ GENERATE_INSTRUCTIONS = (
 )
 
 
-def locate() -> Path | None:
-    """The pinned snapshot if it is fully downloaded; never downloads."""
+def locate(model_id: str = DEFAULT_MODEL) -> Path | None:
+    """The model's pinned snapshot if it is fully downloaded; never downloads."""
+    model = MODELS.get(model_id)
+    if model is None:
+        return None
     try:
         from huggingface_hub import snapshot_download
 
-        path = Path(snapshot_download(REPO, revision=REVISION, local_files_only=True))
+        path = Path(snapshot_download(model.repo, revision=model.revision, local_files_only=True))
     except Exception:  # noqa: BLE001 - absent, partial or offline all mean "not available"
         return None
-    # The pinned repo's model.safetensors.index.json names four shards but ships two, so check the
+    # Qwen3-VL-8B's model.safetensors.index.json names four shards but ships two, so check the
     # weight files themselves: each header states how many bytes of tensor data must follow it.
     shards = sorted(path.glob("*.safetensors"))
     if not (path / "config.json").exists() or not shards:
@@ -134,9 +175,11 @@ class LocalVLMPromptProvider:
         self, model_path: Path,
         loader: Callable[[Path], tuple[object, object]] | None = None,
         generator: Callable[[object, object, list[dict], list], str] | None = None,
+        model: AgentModel | None = None,
     ):
         self.model_path = Path(model_path)
-        self.name = f"local-vlm:qwen3-vl-8b-instruct-4bit@{REVISION[:7]}"
+        self.model = model or MODELS[DEFAULT_MODEL]
+        self.name = f"local-vlm:{self.model.id}@{self.model.revision[:7]}"
         self.weights_bytes = weights_bytes(self.model_path)
         self._loader = loader or self._default_loader
         self._generator = generator or self._default_generator
@@ -208,7 +251,7 @@ class LocalVLMPromptProvider:
         mx.clear_cache()
 
     def status(self) -> dict:
-        return {"kind": "local-vlm", "name": self.name, "resident": self.resident,
+        return {"kind": "local-vlm", "name": self.name, "model": self.model.id, "resident": self.resident,
                 "weights_gb": round(self.weights_bytes / 1024**3, 2)}
 
     @staticmethod

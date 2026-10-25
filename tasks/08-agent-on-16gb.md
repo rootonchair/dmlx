@@ -12,7 +12,9 @@ busy 16 GB Mac that means critical pressure and heavy swap on edits (measured, s
   critical pressure and 327 MB/s swap-in, and the next image job was refused (benchmark doc).
 
 ## Options
-- A smaller planner for the 16 GB tier (e.g. Qwen3-VL-4B 4-bit, about 2.5 GB); needs the eval re-run.
+- [x] A smaller planner for the 16 GB tier: the user now picks the agent model (Settings › Intelligence ›
+      Agent), and Macs under 24 GB default to Ministral 3 3B (4.2 GB peak, 35/36 eval, 6/8 real images;
+      `docs/benchmarks/agent-models.md`). Not yet re-measured on the busy 16 GB setup.
 - Lower the planner's image size and token budget on 16 GB to cut its working memory.
 
 ## Done when

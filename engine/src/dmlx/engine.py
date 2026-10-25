@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import queue
@@ -89,11 +90,29 @@ def _prompt_provider_from_environment():
         return None
 
 
-def _prompt_assistant_from_disk():
+def selected_assistant_model() -> str:
+    """The agent model the user picked (saved by the app), or the default."""
+    chosen = os.environ.get("DMLX_PROMPT_ASSISTANT_MODEL", "").strip()
+    if not chosen:
+        try:
+            chosen = json.loads((paths.home() / "prompt-assistant.json").read_text()).get("model", "")
+        except (OSError, ValueError, AttributeError):
+            chosen = ""
+    if chosen in local_vlm.MODELS:
+        return chosen
+    # Nothing picked yet: the default for this Mac, unless only another model is already downloaded.
+    default = local_vlm.default_model(sysmem.total_memory())
+    if local_vlm.locate(default) is None:
+        return next((m for m in local_vlm.MODELS if local_vlm.locate(m) is not None), default)
+    return default
+
+
+def _prompt_assistant_from_disk(model_id: str | None = None):
     """The local image-aware prompt assistant, when its pinned weights and runtime are installed."""
     if os.environ.get("DMLX_PROMPT_ASSISTANT", "").strip().lower() in {"off", "0", "false", "disabled"}:
         return None
-    path = local_vlm.locate()
+    model = local_vlm.MODELS[model_id or selected_assistant_model()]
+    path = local_vlm.locate(model.id)
     if path is None:
         return None
     import importlib.util
@@ -101,14 +120,15 @@ def _prompt_assistant_from_disk():
     if importlib.util.find_spec("mlx_vlm") is None:
         log.warning("The prompt assistant is downloaded but mlx-vlm is not installed")
         return None
-    return local_vlm.LocalVLMPromptProvider(path)
+    return local_vlm.LocalVLMPromptProvider(path, model=model)
 
 
-def prompt_assistant_spec() -> ModelSpec:
-    """Download descriptor for the prompt assistant; it is not an image model and never joins the registry."""
+def prompt_assistant_spec(model_id: str | None = None) -> ModelSpec:
+    """Download descriptor for an agent model; it is not an image model and never joins the registry."""
+    model = local_vlm.MODELS[model_id or selected_assistant_model()]
     return ModelSpec(
-        id="prompt-assistant", name="Prompt assistant (Qwen3-VL-8B)", adapter="none", repo=local_vlm.REPO,
-        license=local_vlm.LICENSE, tasks=[], components={}, defaults={}, revision=local_vlm.REVISION,
+        id=f"prompt-assistant:{model.id}", name=f"Prompt assistant ({model.name})", adapter="none", repo=model.repo,
+        license=model.license, tasks=[], components={}, defaults={}, revision=model.revision,
     )
 
 
@@ -1189,20 +1209,42 @@ class Engine:
         return rewritten, {"rewrite": {"provider": compiled.compiler, "seconds": round(time.monotonic() - started, 3)}}
 
     def prompt_assistant_status(self) -> dict:
-        state = self.downloader.state("prompt-assistant").as_dict()
-        installed = self.prompt_assistant is not None
+        selected = selected_assistant_model()
+        assistant = self.prompt_assistant
+        models = []
+        for model in local_vlm.MODELS.values():
+            state = self.downloader.state(prompt_assistant_spec(model.id).id).as_dict()
+            models.append({**model.as_dict(), "installed": local_vlm.locate(model.id) is not None, "download": state})
+        current = next(m for m in models if m["id"] == selected)
         return {
-            "repo": local_vlm.REPO, "revision": local_vlm.REVISION, "license": local_vlm.LICENSE,
-            "installed": installed, "size_gb": 5.38,
-            "resident": installed and self.prompt_assistant.resident,
-            "download": state,
+            # The selected model, in the shape the app has always read.
+            "repo": current["repo"], "revision": current["revision"], "license": current["license"],
+            "installed": assistant is not None, "size_gb": current["size_gb"],
+            "resident": assistant is not None and assistant.resident, "download": current["download"],
+            "selected": selected, "models": models,
         }
 
-    def pull_prompt_assistant(self) -> dict:
-        def done(_spec=None, *_args) -> None:
-            self.prompt_assistant = _prompt_assistant_from_disk()
+    def pull_prompt_assistant(self, model_id: str | None = None) -> dict:
+        if model_id is not None and model_id not in local_vlm.MODELS:
+            raise RequestError("unknown_model", f"No prompt assistant model '{model_id}'.", 404)
+        model_id = model_id or selected_assistant_model()
 
-        self.downloader.start(prompt_assistant_spec(), on_done=done)
+        def done(_spec=None, *_args) -> None:
+            if model_id == selected_assistant_model():
+                self.prompt_assistant = _prompt_assistant_from_disk(model_id)
+
+        self.downloader.start(prompt_assistant_spec(model_id), on_done=done)
+        return self.prompt_assistant_status()
+
+    def select_prompt_assistant(self, model_id: str) -> dict:
+        """Switch the agent to another model; it is used from the next message once downloaded."""
+        if model_id not in local_vlm.MODELS:
+            raise RequestError("unknown_model", f"No prompt assistant model '{model_id}'.", 404)
+        with self._accelerator_lock:
+            if self.prompt_assistant is not None:
+                self.prompt_assistant.unload()
+            (paths.home() / "prompt-assistant.json").write_text(json.dumps({"model": model_id}))
+            self.prompt_assistant = _prompt_assistant_from_disk(model_id)
         return self.prompt_assistant_status()
 
     def status(self) -> dict:

@@ -179,8 +179,16 @@ public final class EngineClient: @unchecked Sendable {
         try await send(try request("admin/prompt-assistant"), as: PromptAssistantStatus.self)
     }
 
-    public func pullPromptAssistant() async throws -> PromptAssistantStatus {
-        try await send(try request("admin/prompt-assistant/pull", method: "POST", json: [:]), as: PromptAssistantStatus.self)
+    /// Downloads an agent model; without one, the selected model.
+    public func pullPromptAssistant(model: String? = nil) async throws -> PromptAssistantStatus {
+        let body: [String: Any] = model.map { ["model": $0] } ?? [:]
+        return try await send(try request("admin/prompt-assistant/pull", method: "POST", json: body), as: PromptAssistantStatus.self)
+    }
+
+    /// Makes the agent run on another model from the next message.
+    public func selectPromptAssistant(model: String) async throws -> PromptAssistantStatus {
+        try await send(try request("admin/prompt-assistant/select", method: "POST", json: ["model": model]),
+                       as: PromptAssistantStatus.self)
     }
 
     public func pull(model: String) async throws {

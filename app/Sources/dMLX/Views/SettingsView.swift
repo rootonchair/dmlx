@@ -14,43 +14,81 @@ struct SettingsView: View {
     }
 }
 
-/// Status of the local prompt assistant, with its download.
+/// The models the agent can run on: pick one, download it, see which is ready.
 struct PromptAssistantRow: View {
     @Environment(AppModel.self) private var app
     @State private var status: PromptAssistantStatus?
     @State private var error: String?
 
     var body: some View {
-        HStack(alignment: .firstTextBaseline) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Qwen3-VL-8B")
-                Text(detail).font(.caption).foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: 6) {
+            if let models = status?.models, !models.isEmpty {
+                ForEach(models) { model in row(model) }
+            } else {
+                Text(error ?? (app.isEngineRunning ? "Checking…" : "Engine is not running"))
+                    .font(.caption).foregroundStyle(.secondary)
             }
-            Spacer()
-            if let status, status.isDownloading {
-                ProgressView(value: status.download.progress).frame(width: 120)
-            } else if let status, !status.installed {
-                Button("Download \(String(format: "%.1f", status.size_gb)) GB") { pull() }
-                    .disabled(!app.isEngineRunning)
+            if let error, status?.models != nil {
+                Text(error).font(.caption).foregroundStyle(.red)
             }
         }
         .task(id: app.isEngineRunning) { await poll() }
     }
 
-    private var detail: String {
-        if let error { return error }
-        guard let status else { return app.isEngineRunning ? "Checking…" : "Engine is not running" }
-        if status.installed { return "Ready · Apache-2.0 · loaded only while it writes, then freed" }
-        if status.isDownloading { return "Downloading… \(Int(status.download.progress * 100))%" }
-        if status.download.status == "error" { return "Download failed: \(status.download.error ?? "unknown error")" }
-        return "Not downloaded · \(String(format: "%.1f", status.size_gb)) GB · Apache-2.0"
+    private func row(_ model: PromptAssistantStatus.Model) -> some View {
+        let selected = model.id == status?.selected
+        return HStack(alignment: .firstTextBaseline) {
+            Image(systemName: selected ? "largecircle.fill.circle" : "circle")
+                .foregroundStyle(selected ? Color.accentColor : .secondary)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(model.name)
+                Text(detail(model, selected: selected)).font(.caption).foregroundStyle(.secondary)
+            }
+            Spacer()
+            if model.isDownloading {
+                ProgressView(value: model.download.progress).frame(width: 120)
+            } else if !model.installed {
+                Button("Download \(String(format: "%.1f", model.size_gb)) GB") { pull(model.id) }
+                    .disabled(!app.isEngineRunning)
+            }
+        }
+        .contentShape(Rectangle())
+        .onTapGesture { if !selected { select(model.id) } }
     }
 
-    private func pull() {
+    private func detail(_ model: PromptAssistantStatus.Model, selected: Bool) -> String {
+        var parts = [String(format: "%.1f GB", model.size_gb), model.license == "apache-2.0" ? "Apache-2.0" : model.license]
+        if !model.note.isEmpty { parts.append(model.note) }
+        if model.isDownloading { parts.insert("Downloading… \(Int(model.download.progress * 100))%", at: 0) }
+        else if model.download.status == "error" { parts.insert("Download failed: \(model.download.error ?? "unknown error")", at: 0) }
+        else if model.installed { parts.insert(selected ? "In use" : "Ready", at: 0) }
+        else if selected { parts.insert("Selected · not downloaded", at: 0) }
+        return parts.joined(separator: " · ")
+    }
+
+    private func pull(_ id: String) {
         _Concurrency.Task {
             do {
                 guard let client = app.client else { return }
-                status = try await client.pullPromptAssistant()
+                status = try await client.pullPromptAssistant(model: id)
+                error = nil
+            } catch {
+                self.error = error.localizedDescription
+            }
+        }
+    }
+
+    /// Picking a model that is not downloaded yet also starts its download.
+    private func select(_ id: String) {
+        _Concurrency.Task {
+            do {
+                guard let client = app.client else { return }
+                var next = try await client.selectPromptAssistant(model: id)
+                if next.models?.first(where: { $0.id == id })?.installed == false {
+                    next = try await client.pullPromptAssistant(model: id)
+                }
+                status = next
+                app.promptAssistantInstalled = next.installed
                 error = nil
             } catch {
                 self.error = error.localizedDescription
@@ -65,7 +103,8 @@ struct PromptAssistantRow: View {
                 status = try? await client.promptAssistant()
                 if let status { app.promptAssistantInstalled = status.installed }
             }
-            try? await _Concurrency.Task.sleep(for: .seconds(status?.isDownloading == true ? 1 : 5))
+            let downloading = status?.models?.contains(where: \.isDownloading) ?? status?.isDownloading ?? false
+            try? await _Concurrency.Task.sleep(for: .seconds(downloading ? 1 : 5))
         }
     }
 }
@@ -130,9 +169,9 @@ struct IntelligenceSettings: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
-            Section("Prompt assistant") {
+            Section("Agent") {
                 PromptAssistantRow()
-                Text("Runs on this Mac and looks at your images. Every edit is rewritten into a detailed description first, which instruction-based editors follow far better than a short command. Without it, edits run as written.")
+                Text("Runs on this Mac and looks at your images. It decides what each message asks for and rewrites every edit into a detailed description, which instruction-based editors follow far better than a short command. Larger models plan better but need more memory; it is loaded only while it works. Without it, edits run as written.")
                     .font(.caption).foregroundStyle(.secondary)
             }
             Section("Prompt enhancement") {

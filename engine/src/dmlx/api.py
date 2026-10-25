@@ -215,8 +215,17 @@ def create_app(engine: Engine | None = None, token: str | None = None) -> FastAP
         return engine.prompt_assistant_status()
 
     @app.post("/admin/prompt-assistant/pull", dependencies=[Depends(auth)])
-    def pull_prompt_assistant():
-        return engine.pull_prompt_assistant()
+    async def pull_prompt_assistant(request: Request):
+        body = await request.json() if await request.body() else {}
+        return engine.pull_prompt_assistant(body.get("model") if isinstance(body, dict) else None)
+
+    @app.post("/admin/prompt-assistant/select", dependencies=[Depends(auth)])
+    async def select_prompt_assistant(request: Request):
+        body = await request.json()
+        model = body.get("model") if isinstance(body, dict) else None
+        if not isinstance(model, str):
+            raise RequestError("invalid_request", "Send {\"model\": \"<id>\"}.", 422)
+        return await asyncio.to_thread(engine.select_prompt_assistant, model)
 
     @app.get("/admin/memory", dependencies=[Depends(auth)])
     async def memory():

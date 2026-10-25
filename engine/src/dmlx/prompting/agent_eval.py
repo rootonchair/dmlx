@@ -1,7 +1,7 @@
 """Score the planning agent (and optionally the router it replaces) on chats from a JSONL dataset.
 
     uv run --extra local-llm python -m dmlx.prompting.agent_eval \\
-        [--router-model-path PATH --router-revision REV] [--out report.json]
+        [--model ID] [--router-model-path PATH --router-revision REV] [--out report.json]
 
 Images are synthetic placeholders, so this scores routing (workflow and input images); the prompts the
 agent writes are saved for review but not scored. History entries:
@@ -104,19 +104,20 @@ def summarize(rows: list[dict], key: str) -> dict:
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--dataset", type=Path, default=Path("evals/agent-routing.jsonl"))
+    parser.add_argument("--model", default=local_vlm.DEFAULT_MODEL, choices=sorted(local_vlm.MODELS))
     parser.add_argument("--router-model-path", type=Path)
     parser.add_argument("--router-revision")
     parser.add_argument("--out", type=Path)
     args = parser.parse_args(argv)
-    path = local_vlm.locate()
+    path = local_vlm.locate(args.model)
     if path is None:
-        parser.error("the prompt assistant is not downloaded")
+        parser.error(f"{args.model} is not downloaded")
     cases = load(args.dataset)
     workflows = {name: DEFAULT_DESCRIPTIONS[name] for name in CANDIDATES}
     rows = []
     with tempfile.TemporaryDirectory() as tmp:
         images = Path(tmp)
-        assistant = local_vlm.LocalVLMPromptProvider(path)
+        assistant = local_vlm.LocalVLMPromptProvider(path, model=local_vlm.MODELS[args.model])
         for case in cases:
             state, ids = state_for(case)
             by_id = {rid: name for name, rid in ids.items()}
@@ -152,7 +153,7 @@ def main(argv: list[str] | None = None) -> None:
                 row["router"] = {"intent": intent, "inputs": inputs, "seconds": seconds, "ok_intent": ok_intent, "ok": ok}
                 print(f"{case['id']:24} router {intent:15} {'ok' if ok else 'MISS'} {seconds:5.1f}s", flush=True)
             router.unload()
-    report = {"agent": summarize(rows, "agent")}
+    report = {"model": args.model, "agent": summarize(rows, "agent")}
     if any("router" in r for r in rows):
         report["router"] = summarize(rows, "router")
     report["rows"] = rows

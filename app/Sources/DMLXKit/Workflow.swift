@@ -295,8 +295,24 @@ public struct PromptAssistantStatus: Codable, Hashable, Sendable {
     public var size_gb: Double
     public var resident: Bool
     public var download: EngineModel.Download
+    /// The model the agent runs on, and every model it can run on.
+    public var selected: String?
+    public var models: [Model]?
 
     public var isDownloading: Bool { download.status == "downloading" }
+
+    public struct Model: Codable, Hashable, Sendable, Identifiable {
+        public var id: String
+        public var name: String
+        public var repo: String
+        public var license: String
+        public var size_gb: Double
+        public var note: String
+        public var installed: Bool
+        public var download: EngineModel.Download
+
+        public var isDownloading: Bool { download.status == "downloading" }
+    }
 }
 
 public struct CompiledPromptResponse: Codable, Hashable, Sendable {

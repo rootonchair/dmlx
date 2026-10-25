@@ -275,3 +275,39 @@ def test_a_loaded_assistant_only_needs_room_for_its_working_memory(tmp_path):
     assert assistant.need_bytes == ACTIVATION_BYTES + 4096
     assistant.chat([], [])
     assert assistant.need_bytes == ACTIVATION_BYTES
+
+
+def test_the_user_picks_the_agent_model(make_engine, client_for, tmp_path, monkeypatch):
+    from dmlx.prompting import local_vlm
+
+    engine = make_engine()
+    client = client_for(engine)
+    status = client.get("/admin/prompt-assistant").json()
+    from dmlx import sysmem
+
+    assert status["selected"] == local_vlm.default_model(sysmem.total_memory())
+    assert {m["id"] for m in status["models"]} == set(local_vlm.MODELS)
+    assert client.post("/admin/prompt-assistant/select", json={"model": "no-such-model"}).status_code == 404
+
+    small = "qwen3-vl-4b-instruct-4bit"
+    (tmp_path / "vlm4").mkdir()
+    (tmp_path / "vlm4" / "model.safetensors").write_bytes(b"x")
+    monkeypatch.setattr(local_vlm, "locate", lambda model_id=local_vlm.DEFAULT_MODEL:
+                        tmp_path / "vlm4" if model_id == small else None)
+    monkeypatch.setenv("DMLX_PROMPT_ASSISTANT", "on")
+    monkeypatch.setattr("importlib.util.find_spec", lambda name, *a: object())
+    status = client.post("/admin/prompt-assistant/select", json={"model": small}).json()
+
+    assert status["selected"] == small and status["installed"]
+    assert engine.prompt_assistant.name.startswith(f"local-vlm:{small}@")
+    assert json.loads((tmp_path / "prompt-assistant.json").read_text()) == {"model": small}
+    from dmlx.engine import selected_assistant_model
+    assert selected_assistant_model() == small  # kept for the next launch
+
+
+def test_smaller_macs_default_to_a_smaller_agent():
+    from dmlx.prompting import local_vlm
+
+    assert local_vlm.default_model(16 * 1024**3) == local_vlm.SMALL_MAC_MODEL
+    assert local_vlm.default_model(24 * 1024**3) == local_vlm.DEFAULT_MODEL
+    assert all(model.note for model in local_vlm.MODELS.values())
