@@ -95,6 +95,7 @@ def summarize(rows: list[dict], key: str) -> dict:
         "workflow_accuracy": round(sum(r[key]["ok_intent"] for r in scored) / max(len(scored), 1), 3),
         "workflow_and_images_accuracy": round(sum(r[key]["ok"] for r in scored) / max(len(scored), 1), 3),
         "fell_back": sum(r[key].get("fell_back", False) for r in scored),
+        "looked": sum(bool(r[key].get("looked")) for r in scored),
         "per_tag": {tag: round(sum(v) / len(v), 3) for tag, v in sorted(by_tag.items())},
         "median_seconds": seconds[len(seconds) // 2] if seconds else None,
         "max_seconds": seconds[-1] if seconds else None,
@@ -129,7 +130,8 @@ def main(argv: list[str] | None = None) -> None:
             row = {"id": case["id"], "tags": case["tags"], "message": case["message"], "agent": {
                 "intent": intent, "inputs": inputs, "prompt": result.prompt if result else None,
                 "instruction": result.instruction if result else None,
-                "ask": result.ask if result else None, "seconds": seconds, "fell_back": result is None,
+                "ask": result.ask if result else None, "looked": list(result.looked) if result else [],
+                "seconds": seconds, "fell_back": result is None,
                 "ok_intent": ok_intent, "ok": ok}}
             rows.append(row)
             print(f"{case['id']:24} agent  {intent:15} {'ok' if ok else 'MISS'} {seconds:5.1f}s", flush=True)

@@ -175,6 +175,10 @@ public struct WorkflowDecision: Codable, Hashable, Sendable {
     /// From the agent: the prompt it wrote for the image model, or the question it asks instead of guessing.
     public var prompt: String?
     public var ask: String?
+    /// From the agent, when the user left the model on Auto: the image model it picked for this message.
+    public var model: String?
+    /// Chat images the agent looked at before deciding.
+    public var looked: [String]?
 
     public init(
         intent: String, confidence: Double, probabilities: [String: Double], provider: String,

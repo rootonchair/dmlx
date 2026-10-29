@@ -278,6 +278,16 @@ final class AppModel {
         defaultModel(for: task == .edit ? "image.edit" : "image.generate")
     }
 
+    /// On Auto, the model the agent picked for this message when it can run it; otherwise the usual choice.
+    private func model(for operation: String, decision: WorkflowDecision) -> EngineModel? {
+        if chosenModel == nil, let picked = decision.model,
+           let model = models.first(where: { $0.id == picked && $0.downloaded }),
+           capabilityCatalog?.operations[operation]?.contains(where: { $0.model == picked }) == true {
+            return model
+        }
+        return defaultModel(for: operation)
+    }
+
     func defaultModel(for operation: String) -> EngineModel? {
         let capabilities = capabilityCatalog?.operations[operation, default: []] ?? []
         if let chosen = chosenModel,
@@ -815,10 +825,10 @@ final class AppModel {
     private func execute(_ pending: PendingRoute, decision: WorkflowDecision) {
         var pending = pending
         let message = pending.message
-        // The agent's prompt is used for edits, and for new images when Auto enhancement is on. It is
-        // marked with the agent's name so the job does not rewrite it again; an accepted ✨ suggestion wins.
-        if pending.promptSpec.compiler == "passthrough@1", let written = decision.prompt,
-           decision.intent != "image.generate" || promptEnhancementMode == .auto {
+        // The agent's prompt is used as written: it decides how much to expand the message (a detailed
+        // prompt is kept as it is). It is marked with the agent's name so the job does not rewrite it again;
+        // an accepted ✨ suggestion wins.
+        if pending.promptSpec.compiler == "passthrough@1", let written = decision.prompt {
             pending.promptSpec = PromptSpec(
                 user: message, positive: written, enhancementMode: pending.promptSpec.enhancement_mode,
                 compiler: decision.provider)
@@ -832,11 +842,11 @@ final class AppModel {
 
         switch decision.intent {
         case "image.generate":
-            guard let model = defaultModel(for: .t2i) else { return noModel(sessionId) }
+            guard let model = model(for: "image.generate", decision: decision) else { return noModel(sessionId) }
             startImageTurn(sessionId: sessionId, prompt: message, model: model, task: .t2i, inputs: [], route: "Generated",
                            size: aspect.size, decision: decision, promptSpec: pending.promptSpec, operation: decision.intent)
         case "image.edit":
-            guard let model = defaultModel(for: .edit) else { return noModel(sessionId) }
+            guard let model = model(for: "image.edit", decision: decision) else { return noModel(sessionId) }
             let inputs = routedInputs(pending, decision: decision)
             guard !inputs.isEmpty else { return noModel(sessionId) }
             var route = "Edited from the attached image"
@@ -849,7 +859,7 @@ final class AppModel {
                            size: nil, decision: decision, promptSpec: pending.promptSpec, operation: decision.intent)
         default:
             let operation = decision.intent
-            guard operation.hasPrefix("image."), let model = defaultModel(for: operation) else {
+            guard operation.hasPrefix("image."), let model = model(for: operation, decision: decision) else {
                 appendTurn(Turn(sessionId: sessionId, index: turns.count, kind: .notice,
                                 text: "That workflow isn't available yet."))
                 break

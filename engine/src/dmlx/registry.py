@@ -50,6 +50,7 @@ class ModelSpec:
     experimental: bool = False  # integration is available but has not passed every release gate
     license_url: str | None = None
     license_acceptance_id: str | None = None
+    agent_note: str = ""  # what the planning agent should know when it picks a model for a message
     user_added: bool = False  # added from the app; stored in the user's models folder and removable
     local_path: Path | None = field(default=None, repr=False)
     capabilities: dict[str, CapabilitySpec] = field(default_factory=dict)
@@ -150,6 +151,7 @@ def _parse(data: dict) -> ModelSpec:
         experimental=bool(data.get("experimental", False)),
         license_url=data.get("license_url"),
         license_acceptance_id=data.get("license_acceptance_id"),
+        agent_note=str(data.get("agent_note", "")),
         user_added=bool(data.get("user_added", False)),
         capabilities=parse_capabilities(data.get("capabilities"), tasks, max_references),
     )

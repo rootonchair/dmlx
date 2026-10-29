@@ -51,10 +51,10 @@ MODELS: dict[str, AgentModel] = {m.id: m for m in (
                "Best at finding older images · about 10 s per message"),
     AgentModel("ministral-3-3b-instruct-2512-4bit", "Ministral 3 3B", "mlx-community/Ministral-3-3B-Instruct-2512-4bit",
                "a962dcb09eee4169c890e544c9eb938f1113fdee", "apache-2.0", 2.75,
-               "Recommended for 16 GB · can miss which older image you mean"),
+               "Recommended for 16 GB · looks back through the chat when it needs to"),
     AgentModel("qwen3-vl-4b-instruct-4bit", "Qwen3-VL 4B", "mlx-community/Qwen3-VL-4B-Instruct-4bit",
                "2fd8dacbdb8f1e54b8c005f081ec5bf79c56376b", "apache-2.0", 3.09,
-               "Least memory · can miss which older image you mean"),
+               "Least memory · does not look back, so it can edit the wrong older image"),
 )}
 DEFAULT_MODEL = "qwen3-vl-8b-instruct-4bit"
 SMALL_MAC_MODEL = "ministral-3-3b-instruct-2512-4bit"  # the default under 24 GB: 4.2 GB peak instead of 6.2 GB
@@ -227,7 +227,7 @@ class LocalVLMPromptProvider:
                 self._cache.popitem(last=False)
             return compiled
 
-    def chat(self, messages: list[dict], images: list[Path]) -> str:
+    def chat(self, messages: list[dict], images: list) -> str:
         """One reply from the model, loading it if needed; it stays loaded until `unload`."""
         with self._lock:
             if self._model is None:
@@ -259,12 +259,14 @@ class LocalVLMPromptProvider:
         return (operation, text, supports_negative, tuple(_digest(Path(p)) for p in images))
 
     @staticmethod
-    def _feed(path: Path):
+    def _feed(item):
+        """A path, or (path, longest side) for an image that only needs to be recognised."""
         from PIL import Image, ImageOps
 
+        path, side = item if isinstance(item, tuple) else (item, _MAX_SIDE)
         with Image.open(path) as image:
             image = ImageOps.exif_transpose(image).convert("RGB")
-            image.thumbnail((_MAX_SIDE, _MAX_SIDE), Image.Resampling.LANCZOS)
+            image.thumbnail((side, side), Image.Resampling.LANCZOS)
             return image.copy()
 
     @staticmethod

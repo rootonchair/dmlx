@@ -1,6 +1,6 @@
 # 07 · The agent can't see older images, and long chats are cut
 
-**Status:** Open
+**Status:** Done 2026-10-30, except an image whose prompt disagrees with its pixels
 
 ## Problem
 - `agent.shown_images` shows the attachments, or else only the current image (at most 3). For "the first
@@ -27,3 +27,31 @@ so this decides whether the 16 GB default is good enough.
 ## Done when
 - Eval cases with long chats and with an image whose prompt disagrees with its pixels pass.
 - Planning latency stays within about 12 s.
+
+## What changed
+- **The 'look' tool** (`agent.plan`, `agent.look_request`): the agent starts with only the image 'this'
+  means (the attachments, or the latest image) and a list of every chat image. To see others it answers
+  `{"look": ["image 1", ...]}` (at most 3, twice per message); they are shown as 384 px previews and it
+  is asked again. Asking for nothing new ends the looking. Its instructions say when to look, with an
+  example. The decision lists `looked`.
+- **Long chats:** "Images in this chat" lists every image (number, id, prompt) even when older chat lines
+  are cut, so any "image N" the agent names is one it was told about.
+- A first version showed up to 4 previews chosen by a fixed rule (named, then recent). It helped the small
+  models but made the 8B add images it could see as references; replaced by the tool, so the model decides.
+- Eval: `long-image-n` and `long-the-cat-one` (10 images in the chat). Real-image checks: a
+  `pixels-over-prompt` case (image 1's prompt says "a vintage car", its pixels are the rowboat).
+
+## Results (real images 9 cases, eval 38 cases)
+| Model | Real | Eval | Before (real 8 / eval 36) |
+|---|---|---|---|
+| Qwen3-VL 8B | 8/9 | 38/38 | 8/8, 36/36 |
+| Qwen3.5 9B | 8/9 | 37/38 | 8/8, 35/36 |
+| Ministral 3 3B | 8/9 | 36/38 | 6/8, 35/36 |
+| Qwen3-VL 4B | 6/9 | 36/38 | 5/8, 33/36 (never uses the tool) |
+
+Ministral and the 8B look for "the boat" and "make the boat red" and get them right; each look adds about
+5 s. No model passes `pixels-over-prompt`: they look, then still edit the latest image (the 9B asks which
+one is meant).
+
+## Remaining
+- [ ] The prompt-vs-pixels case.

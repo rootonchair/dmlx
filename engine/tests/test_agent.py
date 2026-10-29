@@ -37,20 +37,27 @@ def test_a_new_image_takes_no_inputs():
     assert plan.intent == "image.generate" and plan.inputs == ()
 
 
-def test_an_edit_without_inputs_edits_the_current_image():
-    assert check({"intent": "image.edit", "inputs": [], "prompt": "x"}).inputs == ("img_2",)
+def test_an_edit_that_names_no_image_is_sent_back_with_the_reason():
+    assert check({"intent": "image.edit", "inputs": [], "prompt": "x"}) is None
+    problem = agent.check(json.dumps({"intent": "image.edit", "edit": None, "prompt": "x"}), state=STATE,
+                          candidates=CANDIDATES, allowed_ids=ALLOWED, provider="agent:test")
+    assert problem == 'image.edit needs the image to change in "edit"'
+    model = _Replies('{"intent": "image.edit", "edit": null, "references": [], "prompt": "Bluer."}',
+                     '{"intent": "image.edit", "edit": "image 2", "references": [], "prompt": "Bluer."}')
+    result = agent.plan(model, STATE, {"image.edit": "e", "image.generate": "g"}, image_path=lambda rid: f"/{rid}.png")
+    assert result.inputs == ("img_2",) and len(model.calls) == 2
+    assert "Your last answer could not be used: image.edit needs the image" in model.calls[1][0][1]["content"]
 
 
-def test_explicit_attachments_are_always_used_first():
+def test_the_agents_choice_of_images_is_kept():
     state = {**STATE, "attachments": ["up_1"]}
     allowed = ALLOWED | {"up_1"}
-    plan = agent.validate(json.dumps({"intent": "image.edit", "inputs": ["img_1"], "prompt": "x"}),
+    plan = agent.validate(json.dumps({"intent": "image.edit", "edit": "img_1", "references": ["up_1"], "prompt": "x"}),
                           state=state, candidates=CANDIDATES, allowed_ids=allowed, provider="agent:test")
-    assert plan.inputs == ("up_1", "img_1")
-    # A new image with attachments uses them: "a dragon in the style of this".
-    styled = agent.validate(json.dumps({"intent": "image.generate", "inputs": [], "prompt": "x"}),
-                            state=state, candidates=CANDIDATES, allowed_ids=allowed, provider="agent:test")
-    assert styled.intent == "image.edit" and styled.inputs == ("up_1",)
+    assert plan.inputs == ("img_1", "up_1")  # not reordered: it chose what to edit
+    new = agent.validate(json.dumps({"intent": "image.generate", "inputs": [], "prompt": "x"}),
+                         state=state, candidates=CANDIDATES, allowed_ids=allowed, provider="agent:test")
+    assert new.intent == "image.generate"  # not turned into an edit because something is attached
 
 
 def test_edit_and_references_fields_give_the_edited_image_first():
@@ -85,9 +92,9 @@ def test_labels_with_several_images_shown_follow_the_chat_numbers():
         return plan.inputs if plan else None
 
     # Two attachments shown; "image 1" is still the chat's image 1, never "the first image shown".
-    assert inputs({"intent": "image.edit", "edit": "<image1>", "prompt": "x"}) == ("up_1", "up_2", "img_1")
-    assert inputs({"intent": "image.edit", "edit": "attachment 2", "prompt": "x"}) == ("up_2", "up_1")
-    assert inputs({"intent": "image.edit", "edit": "attached1", "prompt": "x"}) == ("up_1", "up_2")
+    assert inputs({"intent": "image.edit", "edit": "<image1>", "prompt": "x"}) == ("img_1",)
+    assert inputs({"intent": "image.edit", "edit": "attachment 2", "prompt": "x"}) == ("up_2",)
+    assert inputs({"intent": "image.edit", "edit": "attached1", "prompt": "x"}) == ("up_1",)
     assert inputs({"intent": "image.edit", "edit": "attachment 3", "prompt": "x"}) is None
 
 
@@ -95,7 +102,7 @@ def test_a_number_the_chat_lacks_falls_back_to_the_images_shown():
     state = {"message": "make it red", "current_result_id": None, "history": [], "attachments": ["up_1", "up_2"]}
     plan = agent.validate(json.dumps({"intent": "image.edit", "edit": "<image2>", "prompt": "x"}), state=state,
                           candidates=CANDIDATES, allowed_ids={"up_1", "up_2"}, provider="agent:test")
-    assert plan.inputs == ("up_2", "up_1")
+    assert plan.inputs == ("up_2",)
 
 
 def test_the_model_sees_one_numbering_for_the_images_in_view():
@@ -106,9 +113,73 @@ def test_the_model_sees_one_numbering_for_the_images_in_view():
     assert "Images shown to you, in order: attachment 1 id=up_1" in body
 
 
-def test_attachments_replace_the_current_image_in_view():
-    assert agent.shown_images({**STATE, "attachments": ["up_1"]}) == ["up_1"]
+def test_the_agent_starts_with_the_image_this_and_it_mean():
     assert agent.shown_images(STATE) == ["img_2"]
+    assert agent.shown_images({**STATE, "attachments": ["up_1"]}) == ["up_1"]
+
+
+class _Replies:
+    """A stand-in model: replies in turn, recording what it was shown."""
+
+    name = "test"
+
+    def __init__(self, *replies):
+        self.replies, self.calls = list(replies), []
+
+    def chat(self, messages, images):
+        self.calls.append((messages, images))
+        return self.replies[min(len(self.calls), len(self.replies)) - 1]
+
+    def enhance(self, text, **_):
+        from dmlx.prompting.compiler import CompiledPrompt
+        return CompiledPrompt(f"described: {text}", None, "test")
+
+
+def test_the_agent_looks_at_an_older_image_before_deciding():
+    model = _Replies('{"look": ["image 1"]}',
+                     '{"intent": "image.edit", "edit": "image 1", "references": [], "prompt": "Make the teapot red."}')
+    result = agent.plan(model, {**STATE, "message": "make the first one red"}, {"image.edit": "e", "image.generate": "g"},
+                        image_path=lambda rid: f"/{rid}.png")
+
+    assert result.inputs == ("img_1",) and result.looked == ("img_1",)
+    assert result.as_decision()["looked"] == ["img_1"]
+    assert model.calls[0][1] == ["/img_2.png"]  # first only the latest image
+    assert model.calls[1][1] == ["/img_2.png", ("/img_1.png", 384)]  # then the one it asked for, smaller
+    assert "You asked to look at image 1 id=img_1" in model.calls[1][0][1]["content"]
+
+
+def test_the_agent_answers_without_looking_when_the_latest_image_is_enough():
+    model = _Replies('{"intent": "image.edit", "edit": "image 2", "references": [], "prompt": "More blue."}')
+    result = agent.plan(model, STATE, {"image.edit": "e", "image.generate": "g"}, image_path=lambda rid: f"/{rid}.png")
+    assert result.inputs == ("img_2",) and result.looked == () and len(model.calls) == 1
+
+
+def test_looking_is_limited_and_then_the_agent_must_answer():
+    model = _Replies('{"look": ["image 1"]}', '{"look": ["image 1"]}',
+                     '{"intent": "image.edit", "edit": "image 1", "references": [], "prompt": "Red."}')
+    result = agent.plan(model, STATE, {"image.edit": "e", "image.generate": "g"}, image_path=lambda rid: f"/{rid}.png")
+    # Asking again for an image already shown ends the looking: the next turn must answer.
+    assert len(model.calls) == 3 and result.inputs == ("img_1",)
+    assert "You cannot look at more images now" in model.calls[2][0][1]["content"]
+    model = _Replies('{"look": ["image 1"]}', '{"look": ["image 3"]}', '{"look": ["image 4"]}')
+    state = {**STATE, "history": STATE["history"] + [
+        {"kind": "image", "text": f"p{n}", "image_number": n, "operation": "image.generate", "result_id": f"img_{n}",
+         "input_ids": []} for n in (3, 4)]}
+    assert agent.plan(model, state, {"image.edit": "e", "image.generate": "g"}, image_path=lambda rid: f"/{rid}.png") is None
+    assert len(model.calls) == 4  # two looks, then it must answer; a look then gets one retry, then gives up
+    assert "You cannot look at more images now" in model.calls[2][0][1]["content"]
+
+
+def test_a_long_chat_still_lists_every_image():
+    history = []
+    for n in range(1, 13):  # 24 chat lines, cut to the last 16
+        history += [{"kind": "user", "text": f"picture {n}", "input_ids": []},
+                    {"kind": "image", "text": f"picture {n}", "image_number": n, "operation": "image.generate",
+                     "result_id": f"img_{n}", "input_ids": []}]
+    state = {"message": "make image 1 red", "current_result_id": "img_12", "attachments": [], "history": history}
+    body = agent.messages(state, {"image.edit": "edit"}, agent.shown_images(state))[1]["content"]
+    assert "image 1 id=img_1: picture 1" in body and "from prompt: picture 1\n" not in body
+    assert "Images shown to you, in order: image 12 id=img_12 (latest)\n" in body
 
 
 def test_the_model_reads_the_chat_and_sees_attachments_then_the_current_image():
@@ -117,13 +188,6 @@ def test_the_model_reads_the_chat_and_sees_attachments_then_the_current_image():
     assert "image 1 id=img_1 (generated) from prompt: a teapot" in body
     assert "image 2 id=img_2 (image.edit of img_1)" in body
     assert body.endswith("NEW message: more")
-
-
-def test_words_the_user_typed_are_double_quoted_in_a_new_image():
-    state = {**STATE, "message": "A poster with the words MAKE IT COUNT"}
-    plan = check({"intent": "image.generate", "edit": None, "references": [],
-                  "prompt": "A poster reading 'MAKE IT COUNT', the artist's own 'style'."}, state)
-    assert plan.prompt == "A poster reading \"MAKE IT COUNT\", the artist's own 'style'."
 
 
 def test_the_question_the_app_asked_is_part_of_the_chat():
@@ -226,17 +290,20 @@ def test_the_typing_preview_never_runs_the_agent(make_engine, client_for, tmp_pa
     assert model.calls == [] and "prompt" not in decision
 
 
-def test_nothing_to_decide_is_not_planned(make_engine, client_for, tmp_path):
+def test_the_first_message_is_planned_too(make_engine, client_for, tmp_path):
     engine = make_engine()
     client = client_for(engine)
-    model = _Model("{}")
+    model = _Model(json.dumps({"intent": "image.generate", "edit": None, "references": [],
+                               "prompt": "A glazed ceramic teapot on a wooden table, soft window light."}))
     model.install(engine, tmp_path)
 
     for body in ({"message": "a ceramic teapot", "attachments": [], "history": [], "plan": True},
                  {"message": "a ceramic teapot", "current_result_id": None, "current_prompt": None, "plan": True}):
         decision = client.post("/v1/workflows/route", json=body).json()
 
-        assert decision["intent"] == "image.generate" and model.calls == [] and not engine.prompt_assistant.resident
+        assert decision["intent"] == "image.generate" and decision["provider"].startswith("agent:")
+        assert decision["prompt"].startswith("A glazed ceramic teapot")
+    assert len(model.calls) == 2 and model.calls[0][1] == []  # no image to show yet
 
 
 def test_a_bad_or_failed_answer_falls_back_to_the_router(make_engine, client_for, tmp_path):
@@ -398,3 +465,57 @@ def test_a_big_mac_plans_beside_the_image_job_without_freeing_its_memory(make_en
 
     assert decision["provider"].startswith("agent:") and decision["planning"] == "beside_job"
     assert freed == []
+
+
+def test_the_agent_picks_an_offered_image_model_and_nothing_else():
+    models = {"image.edit": [("fast-model", "Fast"), ("text-model", "Best at words")]}
+    pick = lambda name: agent.validate(  # noqa: E731
+        json.dumps({"intent": "image.edit", "edit": "img_2", "prompt": "x", "model": name}), state=STATE,
+        candidates=CANDIDATES, allowed_ids=ALLOWED, provider="agent:test", models=models)
+    assert pick("text-model").model == "text-model" and pick("text-model").as_decision()["model"] == "text-model"
+    assert pick("made-up").model is None and pick(None).model is None  # the app's choice stands
+    body = agent.messages(STATE, {"image.edit": "e"}, ["img_2"], models=models, free_gb=7.5)[1]["content"]
+    assert "- image.edit: text-model (Best at words)" in body and "about 7.5 GB" in body
+
+
+def test_auto_offers_the_agent_the_models_that_can_run_the_message(make_engine, client_for, tmp_path):
+    engine = make_engine()
+    client = client_for(engine)
+    _source(client)
+    model = _Model(json.dumps({"intent": "image.generate", "edit": None, "references": [],
+                               "prompt": "A red fox in the snow.", "model": "fake-b"}))
+    model.install(engine, tmp_path)
+
+    # fake-a and fake-b can both make a new image; there is an image in the chat, so the agent plans.
+    body = {"message": "a fox", "attachments": [], "history": [], "plan": True, "candidates": ["image.generate"]}
+    decision = client.post("/v1/workflows/route", json={**body, "current_result_id": _source(client)}).json()
+    assert decision.get("model") == "fake-b"
+    assert "fake-a (" in model.calls[-1][0][1]["content"] and "fake-b (" in model.calls[-1][0][1]["content"]
+    chosen = client.post("/v1/workflows/route", json={**body, "current_result_id": _source(client),
+                                                       "selected_model": "fake-a"}).json()
+    assert "model" not in chosen  # a model the user picked is never overridden
+
+
+def test_the_agent_decides_whether_an_edit_is_described():
+    reply = '{"intent": "image.edit", "edit": "image 2", "references": [], "prompt": "Make it black and white.", '
+    plain = agent.plan(_Replies(reply + '"describe": false}'), STATE, {"image.edit": "e", "image.generate": "g"},
+                       image_path=lambda rid: f"/{rid}.png")
+    described = agent.plan(_Replies(reply + '"describe": true}'), STATE, {"image.edit": "e", "image.generate": "g"},
+                           image_path=lambda rid: f"/{rid}.png")
+    assert plain.prompt == "Make it black and white." and plain.instruction is None
+    assert described.prompt == "described: Make it black and white."
+
+
+def test_the_agent_can_read_the_whole_chat():
+    history = []
+    for n in range(1, 13):
+        history += [{"kind": "user", "text": f"note {n}", "input_ids": []},
+                    {"kind": "image", "text": f"picture {n}", "image_number": n, "operation": "image.generate",
+                     "result_id": f"img_{n}", "input_ids": []}]
+    state = {"message": "like my first note said", "current_result_id": "img_12", "attachments": [], "history": history}
+    model = _Replies('{"read_chat": true}',
+                     '{"intent": "image.edit", "edit": "image 12", "references": [], "prompt": "x", "describe": false}')
+    result = agent.plan(model, state, {"image.edit": "e", "image.generate": "g"}, image_path=lambda rid: f"/{rid}.png")
+    assert "user: note 1\n" not in model.calls[0][0][1]["content"]  # cut at first
+    assert "Whole chat:" in model.calls[1][0][1]["content"] and "user: note 1\n" in model.calls[1][0][1]["content"]
+    assert result.inputs == ("img_12",)

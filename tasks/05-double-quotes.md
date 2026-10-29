@@ -27,3 +27,5 @@ rewrite prompt (`mflux/models/qwen21/.../grounding.py`) says text to draw goes "
 - [ ] 2026-10-25: tried 3 seeds × {single, double, none} on NIGHT BLADE and a boat name ("SEA WIND"),
       but all 18 edits were refused (Qwen Image 2.1 needs about 9.5 GB; about 5 GB was usable with
       everyday apps open). Re-run `quote_ab.py` with apps closed.
+      2026-10-30: refused again (7.9 GB usable). The agent's quote rewrite (`_double_quote_user_text`) was
+      removed meanwhile (task 09); the instructions still ask for double quotes.

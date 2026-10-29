@@ -346,12 +346,13 @@ class Engine:
             raise RequestError("invalid_route", "Routing candidates must be a list.", 422)
         candidates = [str(item) for item in requested] if requested else sorted(available)
         candidates = [item for item in candidates if item in available]
-        # With no image and one possible workflow there is nothing to decide; the job's own rewrite
-        # (Auto mode) still writes the prompt, so planning would only load the model for nothing.
-        trivial = len(candidates) == 1 and not explicit_count and not has_current
+        # Every sent message is planned, the first one too: the agent writes the prompt, may pick the
+        # image model, and may ask instead of guessing when the message is not a request for a picture.
         note = None
-        if state.get("plan") and self.prompt_assistant is not None and candidates and not trivial:
-            planned, note = self._plan(safe_state, candidates, wait=bool(state.get("wait")))
+        if state.get("plan") and self.prompt_assistant is not None and candidates:
+            # With Auto (no model chosen), the agent may pick the image model per message.
+            models = None if selected_model else self._model_choices(candidates, explicit_count, has_current)
+            planned, note = self._plan(safe_state, candidates, wait=bool(state.get("wait")), models=models)
             if planned is not None:
                 return planned
         decision = self._route_without_agent(safe_state, candidates)
@@ -1122,7 +1123,23 @@ class Engine:
         """The local, image-aware assistant when installed; otherwise a configured text-only provider."""
         return self.prompt_assistant or self.prompt_provider
 
-    def _plan(self, state: dict, candidates: list[str], wait: bool = False) -> tuple[dict | None, str | None]:
+    def _model_choices(self, candidates: list[str], attached: int, has_current: bool) -> dict[str, list[tuple[str, str]]]:
+        """For each workflow, the downloaded image models that can run it here: (id, what the agent should
+        know about it). Experimental models are offered too; the user accepted their license on download."""
+        choices: dict[str, list[tuple[str, str]]] = {}
+        for spec in self.registry.all():
+            if not self.is_downloaded(spec) or spec.min_ram_gb > self.memory.total / GB + 0.5:
+                continue
+            for operation in candidates:
+                capability = spec.capabilities.get(operation)
+                constraint = capability.inputs.get("image") if capability else None
+                count = attached if attached else (1 if has_current and constraint else 0)
+                if capability and (constraint.minimum <= count <= constraint.maximum if constraint else count == 0):
+                    choices.setdefault(operation, []).append((spec.id, f"{spec.name}: {spec.agent_note}".rstrip(": ")))
+        return {op: models for op, models in choices.items() if len(models) > 1}
+
+    def _plan(self, state: dict, candidates: list[str], wait: bool = False,
+              models: dict[str, list[tuple[str, str]]] | None = None) -> tuple[dict | None, str | None]:
         """The agent's decision for a sent message, or None to fall back to rules and the router, with a
         note when it did not plan. While an image is being made it plans beside the job when both fit in
         memory, waits for the job when `wait` is set, and otherwise is skipped."""
@@ -1145,7 +1162,9 @@ class Engine:
                 # Frees idle models first, but never skips the agent: planning runs even when memory is tight.
                 log.warning("agent planning with less free memory than it needs")
             workflows = {name: DEFAULT_DESCRIPTIONS.get(name, name) for name in candidates}
-            result = agent.plan(self.prompt_assistant, state, workflows, image_path=self.results.path)
+            free_gb = round(max(self.memory.headroom(), 0) / GB, 1)
+            result = agent.plan(self.prompt_assistant, state, workflows, image_path=self.results.path,
+                                models=models or None, free_gb=free_gb)
         except (IntelligenceError, KeyError, OSError) as exc:
             log.warning("agent planning failed, using the router: %s", exc)
             return None, "failed"
