@@ -345,3 +345,56 @@ def test_smaller_macs_default_to_a_smaller_agent():
     assert local_vlm.default_model(16 * 1024**3) == local_vlm.SMALL_MAC_MODEL
     assert local_vlm.default_model(24 * 1024**3) == local_vlm.DEFAULT_MODEL
     assert all(model.note for model in local_vlm.MODELS.values())
+
+
+def _edit_model(source):
+    return _Model(json.dumps({"intent": "image.edit", "edit": source, "prompt": "Make the card bluer.", "ask": None}),
+                  json.dumps({"positive": "The same card, deep blue.", "negative": None}))
+
+
+def test_a_message_sent_during_an_image_job_says_it_was_not_planned(make_engine, client_for, tmp_path):
+    engine = make_engine()
+    client = client_for(engine)
+    source = _source(client)
+    model = _edit_model(source)
+    model.install(engine, tmp_path)
+    engine.memory.total = 16 * 1024**3
+
+    with engine._accelerator_lock:  # an image is being made
+        decision = _route(client, source)
+
+    assert decision["planning"] == "skipped_busy" and not decision["provider"].startswith("agent:")
+    assert model.calls == []
+
+
+def test_a_message_from_another_chat_waits_for_the_image_job(make_engine, client_for, tmp_path):
+    import threading
+
+    engine = make_engine()
+    client = client_for(engine)
+    source = _source(client)
+    _edit_model(source).install(engine, tmp_path)
+    engine.memory.total = 16 * 1024**3
+
+    engine._accelerator_lock.acquire()
+    threading.Timer(0.3, engine._accelerator_lock.release).start()  # the job finishes
+    decision = _route(client, source, wait=True)
+
+    assert decision["provider"].startswith("agent:") and decision["planning"] == "waited"
+    assert decision["prompt"] == "The same card, deep blue."
+
+
+def test_a_big_mac_plans_beside_the_image_job_without_freeing_its_memory(make_engine, client_for, tmp_path):
+    engine = make_engine()
+    client = client_for(engine)
+    source = _source(client)
+    _edit_model(source).install(engine, tmp_path)
+    engine.memory.total = 64 * 1024**3
+    freed = []
+    engine.memory.make_room = lambda need: freed.append(need) or True
+
+    with engine._accelerator_lock:  # still running when the plan is done
+        decision = _route(client, source)
+
+    assert decision["provider"].startswith("agent:") and decision["planning"] == "beside_job"
+    assert freed == []

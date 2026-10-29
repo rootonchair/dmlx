@@ -27,4 +27,4 @@ Boat, then teapot, then "make it red", then the question "the boat or the teapot
   one" and "it"; full eval still 36/36.
 
 ## Remaining
-- [ ] An answer sent during an image job falls back to the router without the original message (task 03).
+- [x] An answer sent during an image job: blocked in that chat; from another chat it waits for the job (task 03).

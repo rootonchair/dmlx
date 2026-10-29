@@ -5,7 +5,7 @@ One file per task; update its **Status** line as work lands.
 
 | # | Task | Status |
 |---|------|--------|
-| 03 | [Messages sent during an image job skip the agent](03-planning-during-image-job.md) | Open |
+| 03 | [Messages sent during an image job skip the agent](03-planning-during-image-job.md) | Done, checked in the app |
 | 04 | [The agent's question works as a conversation](04-question-flow.md) | Done, checked in the app |
 | 05 | [Text to draw in double quotes](05-double-quotes.md) | Open: needs an A/B over seeds |
 | 06 | [Image labels are misread](06-image-label-resolution.md) | Done |

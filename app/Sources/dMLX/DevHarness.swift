@@ -12,6 +12,7 @@ import SwiftUI
 ///          {"modelChoice": "auto"|"<model id>"}, {"logPreview": true},
 ///          {"windowSize": [w, h]}, {"measure": true}, {"fakeSessions": n},
 ///          {"ask": {"message": "…", "question": "…"}} (as if the agent asked), {"waitRouted": 60},
+///          {"flags": "label"} (logs whether this or another chat is making an image, and a waiting message),
 ///          {"quit": true}]}
 @MainActor
 enum DevHarness {
@@ -110,8 +111,10 @@ enum DevHarness {
         if let seconds = step["sleep"] as? Double { try? await _Concurrency.Task.sleep(for: .seconds(seconds)) }
         if let timeout = step["waitIdle"] as? Double {
             let deadline = Date().addingTimeInterval(timeout)
+            try? await _Concurrency.Task.sleep(for: .milliseconds(500))  // a send plans before its turn exists
             while Date() < deadline {
                 let busy = model.turns.contains { $0.versions.contains { $0.isActive } }
+                    || model.isResolvingRoute || !model.activeRuns.isEmpty
                 if !busy { break }
                 try? await _Concurrency.Task.sleep(for: .milliseconds(300))
             }
@@ -119,6 +122,12 @@ enum DevHarness {
         }
         if let name = step["snapshot"] as? String { snapshot(name: name, out: out, all: step["allWindows"] != nil) }
         if step["dumpState"] != nil { dump(model, out: out) }
+        if let label = step["flags"] as? String {
+            let last = model.turns.last.map { "\($0.kind.rawValue)#\($0.number) \($0.current?.status.rawValue ?? "-") planner=\($0.current?.workflowPrompt?.compiler ?? "-")" } ?? "-"
+            log("flags[\(label)] chat=\(model.currentSession?.title ?? "new") generatingHere=\(model.isGeneratingHere) "
+                + "elsewhere=\(model.generatingElsewhere?.title ?? "-") waiting=\(model.isWaitingForImage) "
+                + "resolving=\(model.isResolvingRoute) turns=\(model.turns.count) last=\(last) draft=\(model.draft)")
+        }
         // In-memory only (never written to the store): fill or empty the sidebar list.
         if let count = step["fakeSessions"] as? Int {
             model.sessions = (0..<count).map { Session(title: "Harness chat \($0 + 1)") }

@@ -29,3 +29,10 @@ The app offers the first four. Peak = MLX peak over load plus the 8 real-image c
 in view for at least one of "the boat" (answering the question), "make the boat red", "the first one"
 and "the one with the cat", because the agent sees only the current image and reads about older ones
 (task 07). Ministral 3 3B also once asked a second question and once made a new image instead.
+
+## Planning beside an image job
+
+Qwen3-VL 8B planned "make the boat red" (real images) in one thread while Klein made a 1024 image in
+another, in the same process (`docs/benchmarks/raw/concurrency.py`): 4/4 replies identical to planning
+alone, no crash. The plan took about 28 s instead of 9 s, the image 34 s instead of about 20 s. The engine
+does this only on Macs with 32 GB or more when both fit (`Engine._fits_beside_job`).

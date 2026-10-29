@@ -91,6 +91,12 @@ final class AppModel {
     var storeError: String?
 
     private var streams: [String: _Concurrency.Task<Void, Never>] = [:]
+    /// Image jobs in flight, by version id: the chat each one belongs to. The engine makes one image at a time.
+    private(set) var activeRuns: [String: String] = [:]
+    /// Turns with a job in flight whose chat is not on screen: their progress and result still land and are saved.
+    private var offscreenTurns: [String: Turn] = [:]
+    /// A message from another chat is waiting for the running image before the agent plans it.
+    private(set) var isWaitingForImage = false
     private var poller: _Concurrency.Task<Void, Never>?
     private var toastTask: _Concurrency.Task<Void, Never>?
     private var routeTask: _Concurrency.Task<Void, Never>?
@@ -168,6 +174,7 @@ final class AppModel {
             persist(t)
         }
         streams = [:]
+        activeRuns = [:]
     }
 
     func refreshModels(openOnboarding: Bool = false) async {
@@ -311,14 +318,20 @@ final class AppModel {
     // MARK: sessions
 
     func newSession() {
+        keepActiveTurnsOffscreen()
         currentSessionId = nil
         turns = []
         clearComposerContext()
     }
 
     func select(_ id: String) {
+        keepActiveTurnsOffscreen()
         currentSessionId = id
         turns = (try? store?.turns(session: id)) ?? []
+        // Jobs still running from this chat come back with their live state.
+        for i in turns.indices {
+            if let live = offscreenTurns.removeValue(forKey: turns[i].id) { turns[i] = live }
+        }
         // Jobs that were running when the app quit cannot be resumed; mark them.
         for i in turns.indices {
             for v in turns[i].versions.indices where turns[i].versions[v].isActive && streams[turns[i].versions[v].id] == nil {
@@ -332,6 +345,26 @@ final class AppModel {
     var currentSession: Session? {
         guard let currentSessionId else { return nil }
         return sessions.first { $0.id == currentSessionId }
+    }
+
+    /// An image is being made in this chat: its next message may refer to it, so sending waits for it.
+    var isGeneratingHere: Bool {
+        guard let currentSessionId else { return false }
+        return activeRuns.values.contains(currentSessionId)
+    }
+
+    /// The other chat whose image is being made, if any; a message sent here is planned when it is done.
+    var generatingElsewhere: Session? {
+        guard let id = activeRuns.values.first(where: { $0 != currentSessionId }) else { return nil }
+        return sessions.first { $0.id == id }
+    }
+
+    /// Stops the image being made in this chat (the send button turns into Stop).
+    func stopGeneratingHere() {
+        guard let currentSessionId else { return }
+        for (versionId, sessionId) in activeRuns where sessionId == currentSessionId {
+            if let turn = turns.first(where: { $0.versions.contains { $0.id == versionId } }) { cancel(turn.id) }
+        }
     }
 
     func delete(session id: String) {
@@ -583,7 +616,7 @@ final class AppModel {
 
     func send(_ text: String? = nil) {
         let message = (text ?? draft).trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !message.isEmpty, !isResolvingRoute else { return }
+        guard !message.isEmpty, !isResolvingRoute, !isGeneratingHere else { return }
         if let pending = pendingRoute, let question = pendingAsk, promptAssistantInstalled {
             return answer(pending, question: question, with: message)
         }
@@ -604,15 +637,19 @@ final class AppModel {
         }
         guard let client else { return show("The engine is still starting.") }
         isResolvingRoute = true
+        let waits = planned && generatingElsewhere != nil
+        isWaitingForImage = waits
         routeTask?.cancel()
         let request = RouteRequestIdentity(context: routingContext(message: message))
         routeRequest = request
         routeTask = _Concurrency.Task { [weak self] in
+            defer { self?.isWaitingForImage = false }
             do {
                 let decision = try await client.routeWorkflow(
                     message: message, currentResultId: snapshot.latestResultId,
                     currentPrompt: self?.latestImageTurn?.current?.prompt, attachments: snapshot.attachmentIds,
-                    history: self?.routingHistory ?? [], selectedModel: self?.chosenModel?.id, plan: planned)
+                    history: self?.routingHistory ?? [], selectedModel: self?.chosenModel?.id, plan: planned,
+                    wait: waits)
                 guard let self, !_Concurrency.Task.isCancelled,
                       self.routeRequest?.accepts(
                         context: self.routingContext(message: message), requestID: request.id) == true else {
@@ -655,14 +692,17 @@ final class AppModel {
             RoutingHistoryItem(sequence: turns.count + 1, kind: TurnKind.notice.rawValue, text: question),
         ]
         isResolvingRoute = true
+        let waits = generatingElsewhere != nil
+        isWaitingForImage = waits
         routeTask?.cancel()
         routeRequest = nil
         routeTask = _Concurrency.Task { [weak self] in
+            defer { self?.isWaitingForImage = false }
             do {
                 let decision = try await client.routeWorkflow(
                     message: reply, currentResultId: pending.latestResultId,
                     currentPrompt: self?.latestImageTurn?.current?.prompt, attachments: pending.attachmentIds,
-                    history: history, selectedModel: self?.chosenModel?.id, plan: true)
+                    history: history, selectedModel: self?.chosenModel?.id, plan: true, wait: waits)
                 guard let self else { return }
                 self.isResolvingRoute = false
                 guard !_Concurrency.Task.isCancelled, self.pendingAsk == question else { return }
@@ -922,9 +962,11 @@ final class AppModel {
                 }
             }
             self?.streams[versionId] = nil
+            self?.activeRuns[versionId] = nil
             self?.persistTurn(turnId)
         }
         streams[versionId] = task
+        if let currentSessionId { activeRuns[versionId] = currentSessionId }
     }
 
     private func apply(_ event: EngineEvent, turnId: String, versionId: String) {
@@ -1007,13 +1049,32 @@ final class AppModel {
     }
 
     private func update(_ turnId: String, _ versionId: String, _ change: (inout ImageVersion) -> Void) {
-        guard let t = turns.firstIndex(where: { $0.id == turnId }),
-              let v = turns[t].versions.firstIndex(where: { $0.id == versionId }) else { return }
-        change(&turns[t].versions[v])
+        if let t = turns.firstIndex(where: { $0.id == turnId }),
+           let v = turns[t].versions.firstIndex(where: { $0.id == versionId }) {
+            change(&turns[t].versions[v])
+        } else if var turn = offscreenTurns[turnId], let v = turn.versions.firstIndex(where: { $0.id == versionId }) {
+            let wasActive = turn.versions[v].isActive
+            change(&turn.versions[v])
+            offscreenTurns[turnId] = turn
+            if wasActive != turn.versions[v].isActive { try? store?.save(turn) }
+        }
     }
 
     private func persistTurn(_ turnId: String) {
-        if let i = turns.firstIndex(where: { $0.id == turnId }) { persist(i) }
+        if let i = turns.firstIndex(where: { $0.id == turnId }) {
+            persist(i)
+        } else if let turn = offscreenTurns[turnId] {
+            try? store?.save(turn)
+            if !turn.versions.contains(where: \.isActive) { offscreenTurns[turnId] = nil }
+        }
+    }
+
+    /// Before another chat is shown, turns with a job in flight move aside so their updates are not lost.
+    private func keepActiveTurnsOffscreen() {
+        let running = Set(streams.keys)
+        for turn in turns where turn.versions.contains(where: { running.contains($0.id) }) {
+            offscreenTurns[turn.id] = turn
+        }
     }
 
     // MARK: result actions

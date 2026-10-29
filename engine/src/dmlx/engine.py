@@ -349,10 +349,17 @@ class Engine:
         # With no image and one possible workflow there is nothing to decide; the job's own rewrite
         # (Auto mode) still writes the prompt, so planning would only load the model for nothing.
         trivial = len(candidates) == 1 and not explicit_count and not has_current
+        note = None
         if state.get("plan") and self.prompt_assistant is not None and candidates and not trivial:
-            planned = self._plan(safe_state, candidates)
+            planned, note = self._plan(safe_state, candidates, wait=bool(state.get("wait")))
             if planned is not None:
                 return planned
+        decision = self._route_without_agent(safe_state, candidates)
+        if note:
+            decision["planning"] = note  # e.g. "skipped_busy": the client can tell the agent did not plan this
+        return decision
+
+    def _route_without_agent(self, safe_state: dict, candidates: list[str]) -> dict:
         deterministic = self.router.deterministic_decision(safe_state, candidates)
         if deterministic is not None:
             return deterministic.as_dict()
@@ -1115,28 +1122,49 @@ class Engine:
         """The local, image-aware assistant when installed; otherwise a configured text-only provider."""
         return self.prompt_assistant or self.prompt_provider
 
-    def _plan(self, state: dict, candidates: list[str]) -> dict | None:
-        """The agent's decision for a sent message, or None to fall back to rules and the router."""
-        if not self._accelerator_lock.acquire(blocking=False):
-            log.warning("agent planning skipped: an image is being made")
-            return None  # the cheap path answers now
+    def _plan(self, state: dict, candidates: list[str], wait: bool = False) -> tuple[dict | None, str | None]:
+        """The agent's decision for a sent message, or None to fall back to rules and the router, with a
+        note when it did not plan. While an image is being made it plans beside the job when both fit in
+        memory, waits for the job when `wait` is set, and otherwise is skipped."""
         started = time.monotonic()
+        acquired = self._accelerator_lock.acquire(blocking=False)
+        beside = waited = False
+        if not acquired:
+            if self._fits_beside_job():
+                beside = True
+                log.info("agent planning beside the running image job")
+            elif wait:
+                self._accelerator_lock.acquire()
+                acquired = waited = True
+            else:
+                log.warning("agent planning skipped: an image is being made")
+                return None, "skipped_busy"  # the cheap path answers now
         try:
-            # Frees idle models first, but never skips the agent: planning runs even when memory is tight.
-            if not self.memory.make_room(self.prompt_assistant.need_bytes):
+            # Beside a job, never free memory: the components to free would be the running job's.
+            if not beside and not self.memory.make_room(self.prompt_assistant.need_bytes):
+                # Frees idle models first, but never skips the agent: planning runs even when memory is tight.
                 log.warning("agent planning with less free memory than it needs")
             workflows = {name: DEFAULT_DESCRIPTIONS.get(name, name) for name in candidates}
             result = agent.plan(self.prompt_assistant, state, workflows, image_path=self.results.path)
         except (IntelligenceError, KeyError, OSError) as exc:
             log.warning("agent planning failed, using the router: %s", exc)
-            return None
+            return None, "failed"
         finally:
-            self._release_assistant()
-            self._accelerator_lock.release()
+            if not beside:
+                self._release_assistant()
+            if acquired:
+                self._accelerator_lock.release()
         if result is None:
             log.warning("agent answer failed the checks; using the router")
-            return None
-        return {**result.as_decision(), "latency_ms": round((time.monotonic() - started) * 1_000, 1)}
+            return None, "rejected"
+        mode = "beside_job" if beside else "waited" if waited else None
+        decision = {**result.as_decision(), "latency_ms": round((time.monotonic() - started) * 1_000, 1)}
+        return (decision | {"planning": mode} if mode else decision), None
+
+    def _fits_beside_job(self) -> bool:
+        """Big Macs: the agent and the running image job fit in memory together, with the reserve kept.
+        Measured beside Klein: replies identical, the plan ~3x slower and the image ~1.7x (docs/benchmarks/agent-models.md)."""
+        return self.memory.total >= 32 * GB and self.prompt_assistant.need_bytes <= self.memory.headroom()
 
     def _release_assistant(self) -> None:
         """Between messages the assistant stays loaded where it leaves clear room (24 GB and up), so the

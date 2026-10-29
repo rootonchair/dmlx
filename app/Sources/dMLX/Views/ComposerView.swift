@@ -11,7 +11,8 @@ struct ComposerView: View {
     private let suggestions = ["Make it foggy", "Add warm evening light", "Make it black and white", "Variations"]
 
     var canSend: Bool {
-        model.isEngineRunning && !model.isResolvingRoute && !model.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        model.isEngineRunning && !model.isResolvingRoute && !model.isGeneratingHere
+            && !model.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     var body: some View {
@@ -106,8 +107,17 @@ struct ComposerView: View {
                     }
                 }
 
+                if model.isWaitingForImage {
+                    HStack(spacing: 6) {
+                        ProgressView().controlSize(.small)
+                        Text("Waiting for the image in “\(model.generatingElsewhere?.title ?? "another chat")” to finish, then planning this.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+
                 TextField(
-                    model.pendingAsk != nil ? "Type your answer…"
+                    model.isGeneratingHere ? "Write your next message; send it when the image is done…"
+                        : model.pendingAsk != nil ? "Type your answer…"
                         : model.latestImageTurn == nil ? "Describe an image…" : "Describe a change, or something new…",
                     text: $model.draft, axis: .vertical
                 )
@@ -195,19 +205,34 @@ struct ComposerView: View {
 
                     Spacer(minLength: 0)
 
-                    Button {
-                        model.send()
-                    } label: {
-                        Image(systemName: "arrow.up")
-                            .font(.body.weight(.semibold))
-                            .frame(width: 28, height: 28)
-                            .background(Circle().fill(canSend ? Theme.accent : Color.secondary.opacity(0.25)))
-                            .foregroundStyle(canSend ? Color.black.opacity(0.85) : Color.secondary)
+                    if model.isGeneratingHere {
+                        // The next message may refer to the image being made, so it waits for it; Stop ends it.
+                        Button {
+                            model.stopGeneratingHere()
+                        } label: {
+                            Image(systemName: "stop.fill")
+                                .font(.caption.weight(.bold))
+                                .frame(width: 28, height: 28)
+                                .background(Circle().fill(Color.secondary.opacity(0.25)))
+                        }
+                        .buttonStyle(.plain)
+                        .help("Stop the image being made")
+                        .accessibilityLabel("Stop")
+                    } else {
+                        Button {
+                            model.send()
+                        } label: {
+                            Image(systemName: "arrow.up")
+                                .font(.body.weight(.semibold))
+                                .frame(width: 28, height: 28)
+                                .background(Circle().fill(canSend ? Theme.accent : Color.secondary.opacity(0.25)))
+                                .foregroundStyle(canSend ? Color.black.opacity(0.85) : Color.secondary)
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(!canSend)
+                        .keyboardShortcut(.return, modifiers: .command)
+                        .accessibilityLabel("Send")
                     }
-                    .buttonStyle(.plain)
-                    .disabled(!canSend)
-                    .keyboardShortcut(.return, modifiers: .command)
-                    .accessibilityLabel("Send")
                 }
             }
             .padding(12)
