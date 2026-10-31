@@ -55,3 +55,21 @@ always run; the engine still frees idle models first and logs when room is short
 their check. On a busy 16 GB Mac, expect the result in the table above.
 For comparison, with 10.8 GB available the agent passed its check and all 5 turns passed
 (planning 12 to 13 s per edit, peak swap-in 2.5 MB/s).
+
+## Ministral 3 3B, the default under 24 GB (2026-10-30)
+
+Same five turns on the 16 GB tier, ballast so about 4.2 GB stayed available (less than the 8B runs
+above), no free-memory check for the agent (as shipped), and image jobs now wait up to 10 s for memory
+that is still coming back after the agent unloads (`Engine._plan_memory`).
+
+| Turn | planned by | plan | image | strategy | peak MLX | swap-in | pressure | GPU p99 | pass |
+|---|---|---|---|---|---|---|---|---|---|
+| 0 new image | router (agent answer failed the checks) | 11.6 s | 17.6 s | sequential | 3.39 GB | 0.5 MB/s | warn | 1.4 ms | ✅ |
+| 1 edit | Ministral 3 3B | 9.8 s | 37.9 s | streamed | 2.02 GB | 5.0 MB/s | warn | 21.9 ms | ✅ |
+| 2 edit | Ministral 3 3B | 9.5 s | 34.7 s | sequential | 4.10 GB | **131.7 MB/s** | warn | 3.6 ms | ❌ |
+| 3 edit | Ministral 3 3B | 8.5 s | 38.8 s | streamed | 2.04 GB | 10.5 MB/s | warn | 20.8 ms | ✅ |
+| 4 edit | Ministral 3 3B | 8.4 s | 35.0 s | sequential | 4.12 GB | 2.8 MB/s | warn | 3.0 ms | ✅ |
+
+Every edit was planned by the agent and every image was made; pressure never reached critical. One
+turn had a swap-in burst twice the gate's 64 MB/s (net swap over the turn fell by 0.34 GB). Compare the
+8B without its check above: critical pressure, 327 MB/s, and the next image refused.

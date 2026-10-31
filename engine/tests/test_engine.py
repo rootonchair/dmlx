@@ -158,6 +158,16 @@ def test_insufficient_memory_is_readable(make_engine, client_for):
     assert err["code"] == "insufficient_memory" and "GB" in err["message"]
 
 
+def test_an_image_job_waits_for_memory_that_is_coming_back(make_engine, client_for, monkeypatch):
+    import dmlx.engine as engine_module
+
+    monkeypatch.setattr(engine_module, "RECLAIM_POLL_S", 0.01)
+    engine = make_engine()
+    rising = iter([1.0, 2.0, 64.0])  # just after the agent was unloaded, then its memory comes back
+    engine.memory.headroom = lambda: int(next(rising, 64.0) * GB)
+    assert _gen(client_for(engine)).status_code == 200
+
+
 def test_force_runs_anyway(make_engine, client_for):
     client = client_for(make_engine(headroom_gb=1.0))
     res = _gen(client, dmlx={"force": True})

@@ -132,6 +132,10 @@ def prompt_assistant_spec(model_id: str | None = None) -> ModelSpec:
     )
 
 
+RECLAIM_WAIT_S = 10.0  # how long an image job waits for memory that is still coming back
+RECLAIM_POLL_S = 1.0
+
+
 class RequestError(Exception):
     def __init__(self, code: str, message: str, status: int = 400):
         super().__init__(message)
@@ -1038,6 +1042,22 @@ class Engine:
         job.emit("image", {"index": 0, "result_id": final_id})
         job.emit("done", {"result_ids": job.result_ids, "report": job.report})
 
+    def _plan_memory(self, spec: ModelSpec, activation: int, **kwargs):
+        """The memory plan for a job, waiting a few seconds when it does not fit yet but free memory is still
+        rising: right after the agent is unloaded, macOS takes a moment to hand its memory back (measured:
+        2.2 GB usable just after, against about 5.5 GB before it ran)."""
+        deadline = time.monotonic() + RECLAIM_WAIT_S
+        best = -1
+        while True:
+            try:
+                return self.memory.plan(spec, activation, **kwargs)
+            except InsufficientMemory as exc:
+                if time.monotonic() >= deadline or exc.headroom <= best:
+                    raise
+                best = exc.headroom
+            time.sleep(RECLAIM_POLL_S)
+            self.memory.monitor._last = sysmem.snapshot()
+
     def _run(self, job: Job) -> None:
         spec = self.registry.get(job.model_id)
         job.status = "running"
@@ -1047,7 +1067,7 @@ class Engine:
             run_request, rewrite = self._rewrite(job, spec)
             cached = job.n == 1 and getattr(adapter, "has_embedding", lambda _p: False)(run_request.prompt)
             skip = ("text_encoder",) if cached else ()
-            plan = self.memory.plan(
+            plan = self._plan_memory(
                 spec,
                 spec.activation_bytes(job.request.width, job.request.height, len(job.request.image_paths)),
                 strategy=job.strategy,
