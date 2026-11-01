@@ -4,7 +4,7 @@ Create and edit images by chatting, fully on your Mac. A native macOS app and a 
 [MLX](https://github.com/ml-explore/mlx) and [mflux](https://github.com/filipstrand/mflux), with a small
 on-device agent that plans every message.
 
-**Built to keep your Mac usable while it works.** Every image job is checked against free memory first, and stopped before macOS starts swapping. Tested on a 24 GB Mac and a simulated 16 GB one; a real 16 GB Mac is next ([task 10](tasks/10-real-16gb-and-notarize.md)).
+**Built to keep your Mac usable while it works.** Every image job is checked against free memory first, and stopped before macOS starts swapping. Tested on a 24 GB Mac and on a simulated 16 GB Mac ([how](tasks/10-16gb-without-a-16gb-mac.md)).
 
 > **Status: v0.1 beta 2.** Images only (generate and edit); video is planned. Not notarized yet.
 > See [release notes](docs/RELEASE_NOTES.md) and [known issues](docs/KNOWN_ISSUES.md).

@@ -3,7 +3,7 @@
 | Area | Issue | Workaround / plan |
 |---|---|---|
 | Install | The app is ad-hoc signed, not notarized. macOS blocks the first launch. | Right-click → Open, or `xattr -dr com.apple.quarantine /Applications/dMLX.app`. Notarized builds need an Apple Developer ID. |
-| Hardware | The 16 GB target is validated on a loaded 24 GB Mac and with the 16 GB tier emulated, **not yet on a real 16 GB machine**. | Please report results with the bug template (chip + memory). |
+| Hardware | The 16 GB target is tested on a loaded 24 GB Mac and on a simulated 16 GB Mac, **not on a real 16 GB machine**. | The simulation holds back the missing memory and applies the same gate (no critical pressure, swap-in ≤ 64 MB/s). |
 | Speed | Edits take about twice as long as new images (the reference image doubles the sequence): ~37 s at 1024² on a base M5, ~45 s in lowest-memory mode. | Pro/Max chips are proportionally faster. |
 | Speed | Lowest-memory mode (used only when memory is very tight) reads the model from disk block by block: about 25% slower. | Close a few apps; the engine picks a faster mode by itself when there is room. |
 | Quality | Below 32 GB, Z-Image decodes tiled (visually identical). FLUX.2 Klein uses an exact banded decoder that matches the one-piece decode up to rounding. | — |
