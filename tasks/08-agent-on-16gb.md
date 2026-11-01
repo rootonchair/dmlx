@@ -1,7 +1,7 @@
 # 08 · The agent on a busy 16 GB Mac
 
-**Status:** Mostly done 2026-10-30: with Ministral 3 3B (the default under 24 GB) a busy 16 GB Mac
-passes 4/5 turns, never critical, every image made; one swap-in burst (132 MB/s) remains.
+**Status:** Done 2026-11-01: with Ministral 3 3B (the default under 24 GB) a busy 16 GB Mac plans every
+edit without critical pressure; the one swap-in burst seen did not come back when re-run.
 
 ## Problem
 - The assistant (Qwen3-VL-8B) needs about 8.4 GB available: 6.9 GB for itself plus the 1.5 GB macOS
@@ -27,6 +27,9 @@ passes 4/5 turns, never critical, every image made; one swap-in burst (132 MB/s)
 About 4.2 GB available, five turns: every edit planned by the agent (8-10 s), every image made,
 pressure warn at worst, 4/5 pass. One turn had a 131.7 MB/s swap-in burst.
 
-## Remaining
-- [ ] The one swap-in burst: find which step causes it (the agent's load, or the image model reloading
-      after it) and whether waiting a little longer for memory, or the planner's smaller image size, avoids it.
+## The swap-in burst (2026-10-31)
+The 131.7 MB/s burst came before the image job (the job's own sampler saw 22.7 MB/s), on a turn where
+about 2 GB more was free at job start than on the turns either side and swap used fell by 0.34 GB: most
+likely another app paging itself back in. Re-run with every step timed (agent load, replies, unload,
+image job) and only 3.2 GB available: 5/5 pass, at most 9.6 MB/s swap-in; the agent's cycle (about 13 s
+per edit) swapped almost nothing and no image job had to wait for memory.

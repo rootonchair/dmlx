@@ -73,3 +73,9 @@ that is still coming back after the agent unloads (`Engine._plan_memory`).
 Every edit was planned by the agent and every image was made; pressure never reached critical. One
 turn had a swap-in burst twice the gate's 64 MB/s (net swap over the turn fell by 0.34 GB). Compare the
 8B without its check above: critical pressure, 327 MB/s, and the next image refused.
+
+Re-run 2026-10-31 with every step timed, no ballast and only 3.2 GB available (a busier Mac: about
+7.8 GB in the compressor): 5/5 pass, at most 9.6 MB/s swap-in, pressure warn at worst. Per edit the
+agent loaded in 1.5 to 2 s, replied in 11 to 13 s and unloaded in 0.2 s; no image job had to wait for
+memory. The burst above came before its image job, on a turn with about 2 GB more free at job start and
+swap falling, so most likely another app paging back in. Script: `raw/mem16_phases.py`.

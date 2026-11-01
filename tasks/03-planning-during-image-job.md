@@ -37,6 +37,7 @@ chat B, which sent "make the boat red" during A's job.
 - The harness's `waitIdle` now also waits while a message is planned or any job runs.
 
 ## Remaining
-- [ ] Chat B's planned edit was refused for memory: 2.2 GB usable just after the agent unloaded, against
+- [x] Chat B's planned edit was refused for memory: 2.2 GB usable just after the agent unloaded, against
       3.1 GB needed (about 5.5 GB was free before). macOS takes a moment to hand back the agent's memory;
       the image job could wait a few seconds for it before refusing (task 08).
+      Done: image jobs wait up to 10 s for it (`Engine._plan_memory`, task 08).

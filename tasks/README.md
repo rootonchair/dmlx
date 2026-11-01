@@ -10,5 +10,5 @@ One file per task; update its **Status** line as work lands.
 | 05 | [Text to draw in double quotes](05-double-quotes.md) | Open: needs an A/B over seeds |
 | 06 | [Image labels are misread](06-image-label-resolution.md) | Done |
 | 07 | [The agent can't see older images, and long chats are cut](07-older-images-and-long-chats.md) | Done: 'look' tool; prompt-vs-pixels case open |
-| 08 | [The agent on a busy 16 GB Mac](08-agent-on-16gb.md) | Mostly done: 4/5 pass with Ministral; one swap burst |
+| 08 | [The agent on a busy 16 GB Mac](08-agent-on-16gb.md) | Done: Ministral plans every edit; the swap burst did not come back |
 | 09 | [Decisions in code that belong to the agent](09-fixed-rules.md) | Done; one style-reference case open |
