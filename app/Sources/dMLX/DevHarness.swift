@@ -118,8 +118,16 @@ enum DevHarness {
         if step["settings"] != nil { showSettings(model) }
         if let tab = step["settingsTab"] as? String { model.settingsTab = tab }
         if step["closeSettings"] != nil { settingsWindow()?.close() }
+        if step["openEditor"] != nil, let t = model.latestImageTurn { model.openEditor(t.id) }
+        if step["closeEditor"] != nil { model.closeEditor() }
         if let name = step["capture"] as? String {
-            capture(name: name, window: step["window"] as? String == "settings" ? settingsWindow() : mainWindow(), out: out)
+            let window: NSWindow? = switch step["window"] as? String {
+            case "settings": settingsWindow()
+            case "sheet": mainWindow()?.attachedSheet  // the Crop / Draw editor
+            case "addModel": addModelWindow
+            default: mainWindow()
+            }
+            capture(name: name, window: window, out: out)
         }
         if let seconds = step["sleep"] as? Double { try? await _Concurrency.Task.sleep(for: .seconds(seconds)) }
         if let timeout = step["waitIdle"] as? Double {
@@ -224,7 +232,8 @@ enum DevHarness {
     }
 
     private static func mainWindow() -> NSWindow? {
-        NSApp.windows.filter { $0.isVisible && $0 !== settingsWindow() }.max { $0.frame.width < $1.frame.width }
+        NSApp.windows.filter { $0.isVisible && $0 !== settingsWindow() && $0 !== addModelWindow && $0.sheetParent == nil }
+            .max { $0.frame.width < $1.frame.width }
     }
 
     /// The window as it is on screen, through screencapture (ImageRenderer cannot draw native controls).
