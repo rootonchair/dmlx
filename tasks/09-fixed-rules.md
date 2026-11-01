@@ -1,6 +1,6 @@
 # 09 · Decisions in code that belong to the agent
 
-**Status:** Done 2026-10-30 (one case open: a style reference from an attached image).
+**Status:** Done 2026-11-01 (the style-reference case passes on the 9B and Ministral; the 8B and 4B keep a new image).
 
 Found by checking the agent, the engine's routing and the app for places where code decided what the
 model should. Each became a tool, a skill or written guidance; what stays in code only refuses what
@@ -35,5 +35,11 @@ the snow; the notes now say Klein is the usual choice and Qwen Image 2.1 is wort
 exact words or precise multi-image edits.
 
 ## Remaining
-- [ ] "a dragon in the style of this card": the 8B and the 4B make a new image and drop the card (the
-      removed rule used to turn it into an edit). The instruction says so; they do not follow it.
+- [x] "a dragon in the style of this card" (2026-11-01). Every model *used* the card (its colors went into the
+      prompt) but chose a new image, which cannot see it. Guidance alone (a worked example with another
+      subject, and "image.generate cannot see these" next to the attachments) changed nothing. Now a
+      feedback step, not a rule: when a plan makes a new image while images are attached, the agent is shown
+      its plan and told the new image will not see them, and answers again; it may repeat its plan. The 9B
+      and Ministral then edit the card; the 8B and the 4B keep the new image (their decision). The new
+      case `attach-unrelated` ("forget the photo, make a watercolor…") stays a new image on all four.
+      Cost: one more agent call (about 3-8 s) only for a new image planned with attachments.

@@ -134,7 +134,31 @@ def _digest(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _without_line_comments(text: str) -> str:
+    """Small models sometimes annotate their JSON with `// ...`; drop those outside strings."""
+    out, in_string, escaped, i = [], False, False, 0
+    while i < len(text):
+        ch = text[i]
+        if in_string:
+            if escaped:
+                escaped = False
+            elif ch == "\\":
+                escaped = True
+            elif ch == '"':
+                in_string = False
+        elif ch == '"':
+            in_string = True
+        elif text.startswith("//", i):
+            end = text.find("\n", i)
+            i = len(text) if end < 0 else end
+            continue
+        out.append(ch)
+        i += 1
+    return "".join(out)
+
+
 def _json_objects(text: str) -> list[str]:
+    text = _without_line_comments(text)
     spans, depth, start = [], 0, -1
     for i, ch in enumerate(text):
         if ch == "{":

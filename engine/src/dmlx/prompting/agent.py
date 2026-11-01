@@ -28,6 +28,7 @@ _LOOK_IMAGES = 3  # images per look
 _LOOKED_SIDE = 384  # images it asked to look at are shown smaller: enough to tell a boat from a teapot
 _MAX_PROMPT_CHARS = 2_000
 _MAX_ASK_CHARS = 300
+_REPLY_KINDS = ("notice", "reply")  # the app's notes and the agent's own replies
 
 INSTRUCTIONS = (
     "You are the planner of an image app. Read the chat, look at the images shown to you, then decide what "
@@ -50,15 +51,16 @@ INSTRUCTIONS = (
     "- Images attached to the new message are what the user means by 'this': edit them, and do not add the "
     "latest image unless the message refers to it. image.generate cannot use any image, so a message that "
     "uses an attached image in any way (its style, its subject, 'like this') is image.edit with that image "
-    "in edit or references.\n"
+    "in edit or references. Example: a watercolor is attached and the message is 'a lighthouse painted like "
+    "this' -> image.edit with the watercolor in edit, prompt: paint a lighthouse in its style.\n"
     "- 'edit' is the one image being changed. 'references' are the OTHER images the request needs: 'put the "
     "teapot from the first image into the boat' edits the boat image with the first image as a reference; "
     "'combine the cat and the dog' edits one and references the other. At most 2 references.\n"
-    "- 'in the style of this' or 'like this' with an image is image.edit of that image.\n"
     "- Use only image ids that appear in the chat. If you cannot tell which image or workflow is meant, set "
     "intent to \"ambiguous\" and ask one short question.\n"
-    "- If the app's last line is a question, the NEW message answers it: plan the user's message before the "
-    "question together with this answer.\n"
+    "- When your question is still open, a NEW message that gives what you asked for ('the boat', 'a new "
+    "one') answers it: plan the earlier message with this answer. A message that asks for something else "
+    "('actually, a lighthouse at night') is a new request: plan it on its own without asking again.\n"
     "Writing the prompt, in the user's language:\n"
     "- For image.edit: ONE standalone sentence stating the full change with the chat resolved, so it makes "
     "sense without the chat: 'more' after 'make it dark blue' becomes 'Make the teapot an even deeper navy "
@@ -66,8 +68,10 @@ INSTRUCTIONS = (
     "- For image.generate: 40-120 words describing subject, setting, composition, lighting and one style, "
     "about the requested picture only: bring nothing from earlier images (no subjects, settings or objects) "
     "unless the user asks for them. A message that is already a detailed prompt is kept as written.\n"
-    "- A message that is not a request for an image (a greeting, a question about the app) is \"ambiguous\" "
-    "with a short reply in \"ask\".\n"
+    "- A message that is not a request for an image (a greeting, thanks, a question about the app) is "
+    "\"ambiguous\" with your reply to it in \"ask\": one or two friendly sentences that answer what was "
+    "said and invite a request in your own words, naming only images that exist. Do not "
+    "ask whether to edit or make a new image when nothing was requested.\n"
     "- Describe what you SEE in the images; if a prompt in the chat disagrees with an image, trust the image.\n"
     "- Quotation marks make the model draw those exact words: put words the user wants to appear in DOUBLE "
     "quotes (written \\\" inside the JSON string), never single quotes; never quote text being removed, and "
@@ -129,7 +133,7 @@ def chat_lines(state: dict, full: bool = False) -> list[str]:
             attached = item.get("input_ids") or []
             extra = f" [attached {', '.join(attached)}]" if attached else ""
             lines.append(f"user: {item.get('text', '')[:300]}{extra}")
-        elif item.get("kind") == "notice":
+        elif item.get("kind") in _REPLY_KINDS:
             lines.append(f"app: {item.get('text', '')[:300]}")  # e.g. the question asked before the NEW message
     return lines if full else lines[-MAX_HISTORY_LINES:]
 
@@ -194,26 +198,44 @@ def _view(state: dict, shown: list[str]) -> str:
 
 
 def _new_message(state: dict) -> str:
-    """The message, or for an answer to the app's question, the request and the answer together: the
-    model otherwise follows the image in view over a short answer such as 'the boat'."""
+    """The message, and when the agent's question is still open, that question with the message it was
+    about: the model decides whether this answers it or is a new request (a bare short answer such as
+    'the boat' otherwise loses to the image in view)."""
     history = state.get("history") or []
-    if len(history) >= 2 and history[-1].get("kind") == "notice" and history[-2].get("kind") == "user":
+    if len(history) >= 2 and history[-1].get("kind") in _REPLY_KINDS and history[-2].get("kind") == "user":
         request, question = history[-2].get("text", "")[:300], history[-1].get("text", "")[:300]
-        return f'{request} (asked "{question}", the user answered: {state["message"]})'
+        return (f'{state["message"]}\n(Your question "{question}" about the earlier message "{request}" is open. '
+                f'A message that gives what you asked for, even in a word or two, is the answer: plan "{request}" '
+                "with it. Only a message that asks for something else on its own is a new request: plan it alone.)")
     return state["message"]
+
+
+def _pictures(state: dict, shown: list[str], looked: list[str]) -> str:
+    """Which picture is which: the model gets the pictures first and the text after, so each one is named
+    by its position."""
+    names = [_view(state, [rid]) for rid in shown] + [f"{_view(state, [rid])}, which you asked to look at"
+                                                      for rid in looked]
+    ordinals = ["1st", "2nd", "3rd", "4th", "5th", "6th", "7th", "8th", "9th"]
+    return "; ".join(f"{ordinals[i]}: {name}" for i, name in enumerate(names)) or "none"
 
 
 def messages(state: dict, workflows: dict[str, str], shown: list[str], looked: list[str] = (),
              looks_left: int = _MAX_LOOKS, models: dict[str, list[tuple[str, str]]] | None = None,
-             free_gb: float | None = None, full_chat: bool = False) -> list[dict]:
+             free_gb: float | None = None, full_chat: bool = False, repeated: bool = False) -> list[dict]:
     listed = "\n".join(f"- {name}: {text}" for name, text in workflows.items())
-    attached = ", ".join(state.get("attachments") or []) or "none"
+    attachments = state.get("attachments") or []
+    attached = (f"{', '.join(attachments)} (image.generate cannot see these; only image.edit can use them)"
+                if attachments else "none")
     index = image_index(state)
     body = "\n".join([
         *(["Images in this chat:", *index] if index else []),
         "Whole chat:" if full_chat else "Chat so far (last lines):", *(chat_lines(state, full_chat) or ["(empty)"]),
-        f"Attached to the new message: {attached}", f"Images shown to you, in order: {_view(state, shown)}",
-        *([f"You asked to look at {_view(state, list(looked))}; they are shown after the others."] if looked else []),
+        f"Attached to the new message: {attached}",
+        f"Pictures shown to you, in order: {_pictures(state, shown, list(looked))}",
+        *(["What you asked to look at is already among these pictures."] if repeated else []),
+        *(["Listed prompts may not match their pictures: start your answer with \"seen\", a few words on what "
+           "each picture actually shows ({\"seen\": {\"image 2\": \"a teapot\", \"image 1\": \"a rowboat\"}, "
+           "\"intent\": ...}), then choose the image by what it shows."] if looked else []),
         "" if looks_left else "You cannot look at more images now: answer with the plan.",
         *(_model_lines(models, free_gb) if models else []), "",
         f"NEW message: {_new_message(state)}",
@@ -331,17 +353,19 @@ def plan(
         allowed.add(state["current_result_id"])
     shown = shown_images(state)
     looked: list[str] = []
-    looks_left, full_chat = _MAX_LOOKS, False
+    looks_left, full_chat, repeated = _MAX_LOOKS, False, False
     while True:
         feeds = [image_path(rid) for rid in shown] + [(image_path(rid), _LOOKED_SIDE) for rid in looked]
-        reply = assistant.chat(messages(state, workflows, shown, looked, looks_left, models, free_gb, full_chat), feeds)
+        reply = assistant.chat(
+            messages(state, workflows, shown, looked, looks_left, models, free_gb, full_chat, repeated), feeds)
         wanted = look_request(reply, state=state, allowed_ids=allowed, shown=shown + looked)
         if wanted is None or not looks_left:
             break
         if wanted == ["chat"]:
             wanted, full_chat = ([] if full_chat else ["chat"]), True
-        # Asking for nothing new (an image already shown, none that exists, the chat again) uses up the looks.
-        looks_left = looks_left - 1 if wanted else 0
+        # Asking for nothing new (an image already shown, none that exists, the chat again) uses up the looks,
+        # and the model is told what it asked for is already in view.
+        looks_left, repeated = (looks_left - 1, False) if wanted else (0, True)
         looked += [rid for rid in wanted if rid != "chat"]
     result = check(reply, state=state, candidates=list(workflows), allowed_ids=allowed,
                    provider=f"agent:{assistant.name}", shown=shown + looked, models=models)
@@ -355,6 +379,18 @@ def plan(
         if isinstance(result, str):
             log.warning("agent answer unusable twice (%s; then %s): %.300s", first, result, reply)
             return None
+    attached = list(state.get("attachments") or [])
+    if result.intent == "image.generate" and attached:
+        # Not a refusal: a new image is allowed here. The agent is told what its plan leaves out and decides.
+        confirm = messages(state, workflows, shown, looked, 0, models, free_gb, full_chat)
+        confirm[1]["content"] += (
+            f"\n\nYour plan: {reply.strip()[:1500]}\nIt makes a new image, which will not see the attached "
+            f"{_view(state, attached)}. If the message uses them in any way (their style, subject or look), "
+            "answer again with image.edit and them in edit or references; if they are not needed, repeat your plan.")
+        second = check(assistant.chat(confirm, feeds), state=state, candidates=list(workflows), allowed_ids=allowed,
+                       provider=f"agent:{assistant.name}", shown=shown + looked, models=models)
+        if isinstance(second, Plan):
+            result = second
     result = replace(result, looked=tuple(looked))
     if result.intent != "image.edit" or not result.prompt or not result.describe:
         return result

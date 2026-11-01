@@ -1,6 +1,6 @@
 # 07 · The agent can't see older images, and long chats are cut
 
-**Status:** Done 2026-10-30, except an image whose prompt disagrees with its pixels
+**Status:** Done 2026-11-01 (prompt-vs-pixels passes on the 8B, the 9B and Ministral; not the 4B)
 
 ## Problem
 - `agent.shown_images` shows the attachments, or else only the current image (at most 3). For "the first
@@ -54,4 +54,21 @@ Ministral and the 8B look for "the boat" and "make the boat red" and get them ri
 one is meant).
 
 ## Remaining
-- [ ] The prompt-vs-pixels case.
+- [x] The prompt-vs-pixels case (2026-11-01). The raw replies showed why: the 8B looked at image 1, then
+      asked to look at image 1 again. mlx-vlm puts every picture before the text, so the model could not
+      tell which picture was "image 1". Now the message names pictures by position ("1st: image 2 … (latest);
+      2nd: image 1 …, which you asked to look at"); asking for a picture already shown is answered with
+      "What you asked to look at is already among these pictures"; after a look the agent is asked to
+      start with `"seen"`, what each picture actually shows. The 8B then edits image 1.
+
+## Results 2026-11-01 (real images 10 cases, eval 44 cases)
+| Model | Real | Eval | Before (real / old 38) |
+|---|---|---|---|
+| Qwen3-VL 8B | 10/10 | 42/44 | 9/10, 37/38 → 37/38 |
+| Qwen3.5 9B | 9/10 (ask-boat: adds the teapot as a reference) | 44/44 | 9/10, 38/38 → 38/38 |
+| Ministral 3 3B | 10/10 | 41/44 | 9/10, 35/38 → 36/38 |
+| Qwen3-VL 4B | 6/10 (asks instead of looking) | 40/44 | 6/10, 36/38 → 35/38 |
+
+Medians 3.7-7.5 s per message; the slowest message 17.8 s (the 9B with an attachment, which adds a
+confirmation round, task 09). Ministral's earlier misses were JSON with `// comments` after an invented
+`"model"`; the reply parser now drops line comments outside strings (`local_vlm._without_line_comments`).

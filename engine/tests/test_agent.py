@@ -1,5 +1,7 @@
 import json
 
+import pytest
+
 from dmlx.prompting import agent
 from dmlx.prompting.local_vlm import LocalVLMPromptProvider
 
@@ -107,10 +109,10 @@ def test_a_number_the_chat_lacks_falls_back_to_the_images_shown():
 
 def test_the_model_sees_one_numbering_for_the_images_in_view():
     body = agent.messages(STATE, {"image.edit": "edit"}, agent.shown_images(STATE))[1]["content"]
-    assert "Images shown to you, in order: image 2 id=img_2" in body and "<image" not in body
+    assert "Pictures shown to you, in order: 1st: image 2 id=img_2" in body and "<image" not in body
     state = {**STATE, "attachments": ["up_1"]}
     body = agent.messages(state, {"image.edit": "edit"}, agent.shown_images(state))[1]["content"]
-    assert "Images shown to you, in order: attachment 1 id=up_1" in body
+    assert "Pictures shown to you, in order: 1st: attachment 1 id=up_1" in body
 
 
 def test_the_agent_starts_with_the_image_this_and_it_mean():
@@ -145,7 +147,8 @@ def test_the_agent_looks_at_an_older_image_before_deciding():
     assert result.as_decision()["looked"] == ["img_1"]
     assert model.calls[0][1] == ["/img_2.png"]  # first only the latest image
     assert model.calls[1][1] == ["/img_2.png", ("/img_1.png", 384)]  # then the one it asked for, smaller
-    assert "You asked to look at image 1 id=img_1" in model.calls[1][0][1]["content"]
+    assert ("1st: image 2 id=img_2 (latest); 2nd: image 1 id=img_1, which you asked to look at"
+            in model.calls[1][0][1]["content"])
 
 
 def test_the_agent_answers_without_looking_when_the_latest_image_is_enough():
@@ -161,6 +164,7 @@ def test_looking_is_limited_and_then_the_agent_must_answer():
     # Asking again for an image already shown ends the looking: the next turn must answer.
     assert len(model.calls) == 3 and result.inputs == ("img_1",)
     assert "You cannot look at more images now" in model.calls[2][0][1]["content"]
+    assert "already among these pictures" in model.calls[2][0][1]["content"]
     model = _Replies('{"look": ["image 1"]}', '{"look": ["image 3"]}', '{"look": ["image 4"]}')
     state = {**STATE, "history": STATE["history"] + [
         {"kind": "image", "text": f"p{n}", "image_number": n, "operation": "image.generate", "result_id": f"img_{n}",
@@ -179,7 +183,7 @@ def test_a_long_chat_still_lists_every_image():
     state = {"message": "make image 1 red", "current_result_id": "img_12", "attachments": [], "history": history}
     body = agent.messages(state, {"image.edit": "edit"}, agent.shown_images(state))[1]["content"]
     assert "image 1 id=img_1: picture 1" in body and "from prompt: picture 1\n" not in body
-    assert "Images shown to you, in order: image 12 id=img_12 (latest)\n" in body
+    assert "Pictures shown to you, in order: 1st: image 12 id=img_12 (latest)\n" in body
 
 
 def test_the_model_reads_the_chat_and_sees_attachments_then_the_current_image():
@@ -190,14 +194,24 @@ def test_the_model_reads_the_chat_and_sees_attachments_then_the_current_image():
     assert body.endswith("NEW message: more")
 
 
-def test_the_question_the_app_asked_is_part_of_the_chat():
+@pytest.mark.parametrize("kind", ["notice", "reply"])
+def test_an_open_question_is_shown_with_the_message_and_the_agent_decides_if_it_is_answered(kind):
     state = {**STATE, "message": "the first one", "history": [*STATE["history"],
              {"kind": "user", "text": "make it red", "input_ids": []},
-             {"kind": "notice", "text": "Which image do you mean?"}]}
+             {"kind": kind, "text": "Which image do you mean?"}]}
     lines = agent.chat_lines(state)
     assert lines[-2:] == ["user: make it red", "app: Which image do you mean?"]
     body = agent.messages(state, {"image.edit": "edit"}, ["img_2"])[1]["content"]
-    assert body.endswith('NEW message: make it red (asked "Which image do you mean?", the user answered: the first one)')
+    new = body.split("NEW message: ", 1)[1]
+    assert new.startswith("the first one\n")
+    assert 'Your question "Which image do you mean?" about the earlier message "make it red" is open' in new
+    assert "is the answer" in new and "is a new request: plan it alone" in new
+
+
+def test_attachments_are_described_as_usable_only_by_an_edit():
+    state = {**STATE, "attachments": ["up_1"]}
+    body = agent.messages(state, {"image.edit": "edit"}, ["up_1"])[1]["content"]
+    assert "Attached to the new message: up_1 (image.generate cannot see these" in body
 
 
 # -- through the engine's routing ---------------------------------------------------------
@@ -522,3 +536,26 @@ def test_the_agent_can_read_the_whole_chat():
     assert "user: note 1\n" not in model.calls[0][0][1]["content"]  # cut at first
     assert "Whole chat:" in model.calls[1][0][1]["content"] and "user: note 1\n" in model.calls[1][0][1]["content"]
     assert result.inputs == ("img_12",)
+
+
+def test_a_plan_with_line_comments_is_still_read():
+    reply = ('```json\n{"intent": "image.edit", "edit": "img_2", "references": [],\n'
+             '"prompt": "Make the sign say \\"OPEN // 24h\\" in red.",\n'
+             '"model": "MidJourney",  // strong at signs\n"ask": null}\n```')
+    plan = agent.check(reply, state=STATE, candidates=CANDIDATES, allowed_ids={"img_1", "img_2"}, provider="t")
+    assert plan.inputs == ("img_2",) and plan.prompt == 'Make the sign say "OPEN // 24h" in red.'
+    assert plan.model is None  # a model it was not offered is ignored
+
+
+def test_a_new_image_that_leaves_out_the_attachments_is_confirmed_by_the_agent():
+    state = {**STATE, "message": "a dragon in the style of this card", "attachments": ["up_card"]}
+    workflows = {"image.edit": "e", "image.generate": "g"}
+    model = _Replies('{"intent": "image.generate", "prompt": "A dragon, flat style."}',
+                     '{"intent": "image.edit", "edit": "up_card", "references": [], "prompt": "Paint a dragon."}')
+    result = agent.plan(model, state, workflows, image_path=lambda rid: f"/{rid}.png")
+    assert result.intent == "image.edit" and result.inputs == ("up_card",)
+    assert "will not see the attached attachment 1 id=up_card" in model.calls[1][0][1]["content"]
+    # The agent may keep the new image: it decides, the code only tells it.
+    model = _Replies('{"intent": "image.generate", "prompt": "A cat."}')
+    result = agent.plan(model, {**state, "message": "a cat"}, workflows, image_path=lambda rid: f"/{rid}.png")
+    assert result.intent == "image.generate" and len(model.calls) == 2
