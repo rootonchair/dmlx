@@ -306,15 +306,18 @@ def test_the_first_message_is_planned_too(make_engine, client_for, tmp_path):
     assert len(model.calls) == 2 and model.calls[0][1] == []  # no image to show yet
 
 
-def test_a_bad_or_failed_answer_falls_back_to_the_router(make_engine, client_for, tmp_path):
+def test_a_bad_or_failed_answer_asks_the_user_instead_of_guessing(make_engine, client_for, tmp_path, caplog):
     engine = make_engine()
     client = client_for(engine)
     source = _source(client)
-    for reply in ('{"intent": "image.edit", "inputs": ["img_invented"], "prompt": "x"}', RuntimeError("boom")):
+    for reply, note in (('{"intent": "image.edit", "inputs": ["img_invented"], "prompt": "x"}', "rejected"),
+                        (RuntimeError("boom"), "failed")):
         _Model(reply).install(engine, tmp_path)
         decision = _route(client, source)
-        assert not decision["provider"].startswith("agent:") and "prompt" not in decision
+        assert decision["intent"] == "ambiguous" and decision["planning"] == note and "current one" in decision["ask"]
+        assert "prompt" not in decision and "input_result_ids" not in decision
         assert not engine.prompt_assistant.resident or engine.memory.total >= 24 * 1024**3
+    assert "img_invented" in caplog.text  # the rejected reply is logged
 
 
 def test_an_image_job_always_unloads_the_assistant_first(make_engine, client_for, tmp_path):

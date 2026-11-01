@@ -9,6 +9,7 @@ caller falls back to the rule + router path.
 from __future__ import annotations
 
 import json
+import logging
 import re
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -16,6 +17,8 @@ from typing import Callable
 
 from dmlx.intelligence.base import IntelligenceError
 from dmlx.prompting.local_vlm import LocalVLMPromptProvider, _json_objects
+
+log = logging.getLogger("dmlx.agent")
 
 MAX_INPUTS = 3
 MAX_HISTORY_LINES = 16
@@ -346,9 +349,11 @@ def plan(
         # One more try, told what was wrong, instead of falling back silently.
         retry = messages(state, workflows, shown, looked, 0, models, free_gb, full_chat)
         retry[1]["content"] += f"\n\nYour last answer could not be used: {result}. Answer again with the plan."
-        result = check(assistant.chat(retry, feeds), state=state, candidates=list(workflows), allowed_ids=allowed,
+        first, reply = result, assistant.chat(retry, feeds)
+        result = check(reply, state=state, candidates=list(workflows), allowed_ids=allowed,
                        provider=f"agent:{assistant.name}", shown=shown + looked, models=models)
         if isinstance(result, str):
+            log.warning("agent answer unusable twice (%s; then %s): %.300s", first, result, reply)
             return None
     result = replace(result, looked=tuple(looked))
     if result.intent != "image.edit" or not result.prompt or not result.describe:

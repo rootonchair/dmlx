@@ -359,6 +359,14 @@ class Engine:
             planned, note = self._plan(safe_state, candidates, wait=bool(state.get("wait")), models=models)
             if planned is not None:
                 return planned
+            if note in ("rejected", "failed"):
+                # The agent was asked and has no usable plan: ask the user rather than let the rules or the
+                # router guess (a greeting became an edit of the latest image).
+                return {"intent": "ambiguous", "confidence": 0.0, "probabilities": {name: 0.0 for name in candidates},
+                        "provider": "agent:unusable", "planning": note,
+                        "ask": ("I couldn't work out what to do with that. Should I make a new image, or change "
+                                "the current one?") if has_current or explicit_count else
+                               "I couldn't work out what to do with that. What image should I make?"}
         decision = self._route_without_agent(safe_state, candidates)
         if note:
             decision["planning"] = note  # e.g. "skipped_busy": the client can tell the agent did not plan this

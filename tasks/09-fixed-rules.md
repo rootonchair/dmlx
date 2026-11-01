@@ -18,7 +18,8 @@ cannot run.
 | Single quotes rewritten to double by a regex | Removed (task 05 tests whether quotes matter). |
 
 Still code, as checks: an image the agent names must exist; a new image takes no images; an edit takes
-1-3; only workflows an installed model can run are offered; an unusable answer falls back to the router.
+1-3; only workflows an installed model can run are offered; an unusable answer (after one retry) or a failed plan asks the user what to do (2026-11-01; it used
+to fall back to the router, which turned "hello" into an edit).
 
 ## Results (real images 10 cases, eval 38 cases; before = with the rules, after task 07)
 | Model | Real | Eval | Before | Model picks |
