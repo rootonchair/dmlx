@@ -56,17 +56,19 @@ rm -rf "$APP/Contents/Resources/engine/python/lib/python$PY_VERSION/test" \
 
 echo "==> Installing engine dependencies (locked)"
 REQ="$(mktemp)"
-(cd "$ROOT/engine" && uv export --frozen --no-dev --no-hashes --no-emit-project --format requirements-txt) \
+(cd "$ROOT/engine" && uv export --frozen --no-dev --no-hashes --no-emit-project --extra local-llm --format requirements-txt) \
   | grep -v -E "$EXCLUDE" | grep -v '^\s*#' | grep -v '^-e' > "$REQ"
-# mflux declares torch/opencv/matplotlib as hard deps; install it without deps, the rest from the lock.
-grep -v '^mflux==' "$REQ" > "$REQ.rest"
-uv pip install --python "$PY" --no-cache --break-system-packages -r "$REQ.rest" >/dev/null
-uv pip install --python "$PY" --no-cache --break-system-packages --no-deps "$(grep '^mflux==' "$REQ")" >/dev/null
+# local-llm brings mlx-vlm, the planning agent's runtime.
+# mflux and mlx-vlm declare torch/opencv/matplotlib as hard deps; install exactly the lock without them
+# (the export already lists every dependency), then mflux without deps.
+grep -v -E '^mflux ?(==|@)' "$REQ" > "$REQ.rest"
+uv pip install --python "$PY" --no-cache --break-system-packages --no-deps -r "$REQ.rest" >/dev/null
+uv pip install --python "$PY" --no-cache --break-system-packages --no-deps "$(grep -E '^mflux ?(==|@)' "$REQ")" >/dev/null
 uv pip install --python "$PY" --no-cache --break-system-packages --no-deps "$ROOT/engine" >/dev/null
 rm -f "$REQ" "$REQ.rest"
 
 echo "==> Smoke-testing the bundled engine"
-"$PY" -I -c "import dmlx, dmlx.api, dmlx.adapters.mflux_adapter, mflux.models.flux2.variants, mflux.models.z_image.variants.z_image; print('engine import ok', dmlx.__version__)"
+"$PY" -I -c "import dmlx, dmlx.api, dmlx.adapters.mflux_adapter, mflux.models.flux2.variants, mflux.models.z_image.variants.z_image, mlx_lm, mlx_vlm; print('engine import ok', dmlx.__version__)"
 
 echo "==> Cleaning bytecode caches"
 find "$APP/Contents/Resources/engine" -name "__pycache__" -type d -prune -exec rm -rf {} +
