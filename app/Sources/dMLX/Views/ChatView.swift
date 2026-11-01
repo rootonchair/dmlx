@@ -32,6 +32,13 @@ struct ChatView: View {
                 .onChange(of: model.turns.count) {
                     withAnimation(.easeOut(duration: 0.25)) { proxy.scrollTo("bottom", anchor: .bottom) }
                 }
+                // A message being planned, and the agent's question about it, are not turns yet.
+                .onChange(of: model.planningMessage) {
+                    withAnimation(.easeOut(duration: 0.25)) { proxy.scrollTo("bottom", anchor: .bottom) }
+                }
+                .onChange(of: model.pendingAsk) {
+                    withAnimation(.easeOut(duration: 0.25)) { proxy.scrollTo("bottom", anchor: .bottom) }
+                }
                 .onChange(of: model.currentSessionId) {
                     proxy.scrollTo("bottom", anchor: .bottom)
                 }
