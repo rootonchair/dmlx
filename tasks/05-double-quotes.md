@@ -1,6 +1,6 @@
 # 05 · Text to draw in double quotes
 
-**Status:** Open: the double-quote premise did not hold up in an end-to-end test.
+**Status:** Done 2026-11-01: on Qwen Image 2.1 the quote style makes no difference; nothing to enforce.
 
 ## Problem
 The agent answers in JSON, where double quotes must be escaped, and the instructions' own examples use
@@ -29,3 +29,26 @@ rewrite prompt (`mflux/models/qwen21/.../grounding.py`) says text to draw goes "
       everyday apps open). Re-run `quote_ab.py` with apps closed.
       2026-10-30: refused again (7.9 GB usable). The agent's quote rewrite (`_double_quote_user_text`) was
       removed meanwhile (task 09); the instructions still ask for double quotes.
+
+## A/B 2026-11-01 (Qwen Image 2.1 q4, 9 edits, about 195 s each)
+The agent's NIGHT BLADE description on the cleaned card (`img_20261024_394a26932c38`), seeds 11, 22, 33 ×
+{single, double, no quotes}; raw rows in `docs/benchmarks/raw/quote_ab-20261101.json` (gitignored).
+
+| Seed | single | double | none |
+|---|---|---|---|
+| 11 | title drawn | title drawn | title drawn |
+| 22 | title drawn | title drawn | title drawn |
+| 33 | title drawn | title drawn | title drawn |
+
+- All 9 drew "NIGHT BLADE" large, gold, correctly spelled, at the top center. Within a seed the three
+  images are near-identical: the seed decides the result, the quotes do not. (Seed 22 also left a broken
+  band across the lower card in all three variants, unrelated to quoting.)
+- The 2026-10-25 run where double quotes drew no title did not come back with these seeds; one seed was
+  noise, as suspected.
+- The SEA WIND boat edit was refused again (needs 8.2 GB, 8.0 GB usable), so a second text case is untested.
+
+## Decision
+- No `text` field or engine-side quoting: quoting does not change what Qwen Image 2.1 draws here.
+- The instructions keep asking for double quotes (matching upstream mflux, and valid JSON when escaped);
+  harmless either way.
+- [ ] Optional: re-run the boat case with more memory free (`quote_ab.py … boat:img_20261025_c60470587ed3:11,22,33`).
