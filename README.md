@@ -4,7 +4,7 @@ Create and edit images by chatting, fully on your Mac. A native macOS app and a 
 [MLX](https://github.com/ml-explore/mlx) and [mflux](https://github.com/filipstrand/mflux), with a small
 on-device agent that plans every message.
 
-**The promise: dMLX never makes your Mac hang, even on 16 GB.**
+**Built to keep your Mac usable while it works.** Every image job is checked against free memory first, and stopped before macOS starts swapping. Tested on a 24 GB Mac and a simulated 16 GB one; a real 16 GB Mac is next ([task 10](tasks/10-real-16gb-and-notarize.md)).
 
 > **Status: v0.1 beta 2.** Images only (generate and edit); video is planned. Not notarized yet.
 > See [release notes](docs/RELEASE_NOTES.md) and [known issues](docs/KNOWN_ISSUES.md).
@@ -23,8 +23,8 @@ on-device agent that plans every message.
   which image model fits.
 - **It talks back in the chat.** Unclear messages get one short question; greetings and questions about
   the app get a reply instead of an image.
-- **Never hangs your Mac.** Memory is checked before every job, models load in pieces when it is tight,
-  and a job stops before macOS starts to swap.
+- **Keeps your Mac usable.** Memory is checked before every image job, models load in pieces when it is
+  tight, and a job stops before macOS starts to swap. Made for 16 GB and up.
 - **Versions, not overwrites.** Variations stack as v1, v2, v3; edit any version; edit your prompt and
   rerun.
 - **Private and offline.** Everything runs locally once the models are downloaded. No account, no cloud.
