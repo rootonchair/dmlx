@@ -1,6 +1,7 @@
 # Tasks
 
-Open problems in the planning agent (`engine/src/dmlx/prompting/agent.py`), from the review on 2026-10-25.
+Open problems in the planning agent (`engine/src/dmlx/prompting/agent.py`), from the review on 2026-10-25
+(03–09), and product gaps from the competitor comparison on 2026-11-02 (10–16, in priority order).
 One file per task; update its **Status** line as work lands.
 
 | # | Task | Status |
@@ -12,3 +13,10 @@ One file per task; update its **Status** line as work lands.
 | 07 | [The agent can't see older images, and long chats are cut](07-older-images-and-long-chats.md) | Done: 'look' tool; prompt-vs-pixels passes except on the 4B |
 | 08 | [The agent on a busy 16 GB Mac](08-agent-on-16gb.md) | Done: Ministral plans every edit; the swap burst did not come back |
 | 09 | [Decisions in code that belong to the agent](09-fixed-rules.md) | Done: style reference via a feedback step (9B, Ministral) |
+| 10 | [Prove 16 GB on a real Mac, then notarize](10-real-16gb-and-notarize.md) | Open: needs a 16 GB Mac and a Developer ID |
+| 11 | [Region edits: a mask brush the agent can use](11-region-edits-with-a-mask.md) | Open |
+| 12 | [LoRA import, picked by the agent](12-lora-picked-by-the-agent.md) | Open |
+| 13 | [Faster turns: previews and a planner that stays loaded](13-faster-turns.md) | Open |
+| 14 | [Upscale and restore as a chat action](14-upscale-as-a-chat-action.md) | Open: a SeedVR2 adapter exists |
+| 15 | [New model families faster](15-new-model-families.md) | Open |
+| 16 | [dMLX as a tool server for other local agents](16-tool-server-for-other-agents.md) | Open |
