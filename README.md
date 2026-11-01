@@ -12,7 +12,7 @@ Create and edit images by chatting, fully on your Mac. dMLX is a native macOS ap
 ## What it does
 
 - **Chat to create.** Describe an image; follow up in plain words ("make the boat red") to change it. Each image in a chat gets a number ("Image 2 · Edited from image 1"), and you can refer to it that way ("image 1", "the first one").
-- **A planning agent reads every message.** A small vision-language model, run on your Mac, reads the chat and looks at the images, then decides what the message asks for: a new image or an edit, and which earlier images to edit or use as references. It can look at older images in the chat and read further back when a message depends on them. For an edit it can also write a detailed description of the result, which the image model follows better than a short command. When it cannot tell what you mean, it asks one short question and you answer in the chat; a message that is not a request for an image (a greeting, a question) gets a short reply instead of an image.
+- **A planning agent reads every message.** A small vision-language model, run on your Mac, reads the chat and looks at the images, then decides what the message asks for: a new image or an edit, and which earlier images to edit or use as references. It can look at older images in the chat and read further back when a message depends on them. For an edit it can also write a detailed description of the result, which the image model follows better than a short command. Its replies appear in the chat: when it cannot tell what you mean it asks one short question, and you answer it or just ask for something else; a message that is not a request for an image (a greeting, a question about the app) gets a short reply instead of an image.
 - **Auto picks the model.** The model menu in the message box starts on **Auto**: the agent chooses among the image models you have installed, by what the message needs and the memory that is free. Pick a model in the menu and the agent never overrides it.
 - **Choose the agent.** Settings → Intelligence → Agent lists the agent models (Qwen3-VL 8B, Qwen3.5 9B, Ministral 3 3B, Qwen3-VL 4B; 2.8–6.0 GB downloads); picking one downloads it. Macs under 24 GB default to Ministral 3 3B. It is loaded only while it plans and freed before the image job starts. Without an agent model, messages are routed by rules and edits run as written.
 - **Keep typing while it works.** A sent message shows in the chat with "Planning…" while the agent decides; it is never dropped. In the chat whose image is being made, the send button becomes Stop and you can write your next message. A message sent from another chat waits for the image, then the agent plans it (on Macs with 32 GB or more it plans beside the image when both fit).
@@ -26,6 +26,12 @@ Create and edit images by chatting, fully on your Mac. dMLX is a native macOS ap
 | Refer to images by number | A sent message while the agent plans it |
 |---|---|
 | <img src="docs/screenshots/image-by-number.jpg" alt="'make image 1 look like a watercolor painting' gives Image 2, 'Edited from image 1': a moonlit forest path with a lantern, now in watercolor."> | <img src="docs/screenshots/planning.jpg" alt="A new chat: the message 'a small wooden rowboat on a still mountain lake at dawn' with 'Planning…' under it while the agent decides what to do."> |
+
+<p align="center">
+  <img src="docs/screenshots/agent-replies.jpg" width="620"
+       alt="The agent replies in the chat: 'hello' gets a greeting, 'thanks, that's lovely!' gets 'You're welcome! I'm glad you like the image of the sleeping fox', and the fox image sits between them.">
+  <br><sub>The agent replies in the chat to messages that are not requests for an image.</sub>
+</p>
 
 <p align="center">
   <img src="docs/screenshots/settings-agent.jpg" width="620"

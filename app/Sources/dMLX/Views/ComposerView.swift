@@ -76,7 +76,8 @@ struct ComposerView: View {
 
                 if model.needsRouteChoice {
                     FlowLayout(spacing: 8) {
-                        Text(model.pendingAsk ?? "Choose the workflow")
+                        // The agent's question is in the chat; here are the shortcuts to answer it.
+                        Text(model.pendingAsk == nil ? "Choose the workflow" : "Reply in the chat, or:")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                         ForEach(model.pendingRouteChoices, id: \.self) { operation in
@@ -117,7 +118,7 @@ struct ComposerView: View {
 
                 TextField(
                     model.isGeneratingHere ? "Write your next message; send it when the image is done…"
-                        : model.pendingAsk != nil ? "Type your answer…"
+                        : model.pendingAsk != nil ? "Reply, or ask for something else…"
                         : model.latestImageTurn == nil ? "Describe an image…" : "Describe a change, or something new…",
                     text: $model.draft, axis: .vertical
                 )

@@ -735,14 +735,14 @@ final class AppModel {
         execute(pending, decision: decision)
     }
 
-    /// The user typed an answer to the agent's question. The agent plans it with the original message
-    /// and the question in the chat, and both are kept in the conversation like any other turn.
+    /// The user wrote again while the agent's question was open. The agent sees the original message and
+    /// its question and decides whether this answers it or is a new request; both stay in the chat.
     private func answer(_ pending: PendingRoute, question: String, with reply: String) {
         guard let client else { return show("The engine is still starting.") }
         let history = routingHistory + [
             RoutingHistoryItem(sequence: turns.count, kind: TurnKind.user.rawValue, text: pending.message,
                                inputIds: pending.attachmentIds),
-            RoutingHistoryItem(sequence: turns.count + 1, kind: TurnKind.notice.rawValue, text: question),
+            RoutingHistoryItem(sequence: turns.count + 1, kind: TurnKind.reply.rawValue, text: question),
         ]
         planningMessage = reply
         let waits = generatingElsewhere != nil
@@ -761,7 +761,7 @@ final class AppModel {
                 self.appendTurn(Turn(
                     sessionId: sessionId, index: self.turns.count, kind: .user, text: pending.message,
                     attachments: pending.attachmentIds, attachmentInputs: pending.attachmentInputs))
-                self.appendTurn(Turn(sessionId: sessionId, index: self.turns.count, kind: .notice, text: question))
+                self.appendTurn(Turn(sessionId: sessionId, index: self.turns.count, kind: .reply, text: question))
                 self.pendingRoute = nil
                 self.pendingAsk = nil
                 var answering = pending

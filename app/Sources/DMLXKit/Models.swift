@@ -86,7 +86,8 @@ public struct ImageVersion: Codable, Identifiable, Hashable, Sendable {
 }
 
 public enum TurnKind: String, Codable, Sendable {
-    case user, image, notice
+    /// `reply` is the planning agent's own answer or question; `notice` is a note from the app.
+    case user, image, notice, reply
 }
 
 /// A row in the thread. Image turns carry their versions; `activeVersion` is the one shown.

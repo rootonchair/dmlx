@@ -64,6 +64,18 @@ final class StoreTests: XCTestCase {
         XCTAssertTrue(try store.turns(session: first.id).isEmpty)
         XCTAssertEqual(try store.turns(session: second.id).map(\.text), ["second"])
     }
+
+    func testTheAgentsReplyIsKeptAsItsOwnKindOfTurn() throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("dmlx-reply-\(UUID()).sqlite")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let store = try Store(path: url)
+        let session = Session(title: "Hello")
+        try store.save(session)
+        try store.save(Turn(sessionId: session.id, index: 0, kind: .user, text: "hello"))
+        try store.save(Turn(sessionId: session.id, index: 1, kind: .reply, text: "Hi! Describe an image to make."))
+
+        XCTAssertEqual(try Store(path: url).turns(session: session.id).map(\.kind), [.user, .reply])
+    }
 }
 
 final class SSEParserTests: XCTestCase {

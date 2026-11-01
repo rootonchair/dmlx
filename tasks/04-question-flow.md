@@ -28,3 +28,22 @@ Boat, then teapot, then "make it red", then the question "the boat or the teapot
 
 ## Remaining
 - [x] An answer sent during an image job: blocked in that chat; from another chat it waits for the job (task 03).
+
+## Follow-up 2026-11-01: replies in the chat, and a new request while a question is open
+- The agent's question or reply is a `reply` turn (`TurnKind.reply`), shown in the chat as its own bubble
+  (`AgentReplyBubble`), not as a caption above the message box. While it is open it shows under the held
+  message; the bar above the box keeps only the shortcuts ("Reply in the chat, or: Create new · Cancel").
+- The next message is no longer forced to be the answer. `agent._new_message` shows the open question
+  and the message it was about, and the agent decides: an answer ("the boat", even a word or two) plans
+  the earlier message with it; a new request is planned alone.
+- Greetings, thanks and questions about the app get a reply in the agent's own words (the instruction
+  no longer has an example sentence; the 8B copied it and offered "image 2" in an empty chat).
+- Eval: `greeting`, `greeting-with-image`, `thanks`, `greeting-then-edit`, `ask-then-new-request`.
+- Checked in the app (harness, 8B): "hello" → reply bubble; the fox image; "thanks, that's lovely!" →
+  "You're welcome! I'm glad you like the image of the sleeping fox…"; "now make it black and white" →
+  image 2 edited from image 1. Screenshot `docs/screenshots/agent-replies.jpg`.
+
+### Remaining
+- [ ] `ask-then-new-request` ("actually, a lighthouse on a cliff at night…" after "which image?"): only the
+      9B plans it as a new image; the 8B, Ministral and the 4B ask again ("…or is this a new request?").
+      Safe, but one extra turn.

@@ -8,6 +8,7 @@ struct TurnView: View {
         switch turn.kind {
         case .user: UserBubble(turn: turn)
         case .notice: NoticeRow(text: turn.text)
+        case .reply: AgentReplyBubble(text: turn.text)
         case .image: ImageTurnView(turn: turn)
         }
     }
@@ -106,13 +107,17 @@ struct UserBubble: View {
     }
 }
 
-/// Sent but not yet a turn: the message waiting on the user (the agent's question), then the one being planned.
+/// Sent but not yet a turn: the message waiting on the user with the agent's reply to it, then the one
+/// being planned.
 struct PendingMessages: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
         if let held = model.heldMessage {
             PendingBubble(text: held, planning: false)
+            if let reply = model.pendingAsk {
+                AgentReplyBubble(text: reply)
+            }
         }
         if let planning = model.planningMessage {
             PendingBubble(text: planning, planning: true)
@@ -142,6 +147,28 @@ struct PendingBubble: View {
                 }
             }
         }
+    }
+}
+
+/// The planning agent speaking in the chat: its reply to a message that was not a request, or its question.
+struct AgentReplyBubble: View {
+    let text: String
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: "sparkles")
+                .foregroundStyle(Theme.accent)
+                .padding(.top, 9)
+                .accessibilityHidden(true)
+            Text(text)
+                .textSelection(.enabled)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 9)
+                .background(Theme.accent.opacity(0.10), in: RoundedRectangle(cornerRadius: 16))
+            Spacer(minLength: 80)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Agent: \(text)")
     }
 }
 
