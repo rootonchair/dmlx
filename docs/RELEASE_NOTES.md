@@ -1,3 +1,44 @@
+# dMLX v0.1.0-beta2
+
+Adds a planning agent: a small vision-language model on your Mac reads every message, looks at the
+images, and decides what to do.
+
+## Highlights
+
+- **Planning agent.** Decides whether a message asks for a new image or an edit, and which images to edit
+  or use as references ("make image 1 black and white", "put the teapot from the first one in the
+  boat"). It can look at older images in the chat and read further back when it needs to. For an edit it
+  can write a detailed description of the result for the image model.
+- **It talks in the chat.** A greeting or a question about the app gets a short reply; when a message is
+  unclear the agent asks one question. Answer it, or just ask for something else.
+- **Auto picks the image model.** In Auto the agent chooses among your installed models by what the
+  message needs and the free memory; a model you pick yourself is never overridden.
+- **Choose the agent model.** Settings → Intelligence → Agent: Qwen3-VL 8B (default from 24 GB), Qwen3.5 9B,
+  Ministral 3 3B (default under 24 GB) or Qwen3-VL 4B; 2.8–6.0 GB downloads. It is loaded only while it
+  plans and freed before the image job starts.
+- **Messages are never dropped.** A sent message shows in the chat with "Planning…"; you can keep typing.
+  A message sent from another chat waits for the running image, then is planned.
+- **Qwen Image 2.1 (experimental, research license).** Can be added in Settings → Models: generate and
+  edit with up to 10 ordered references, best at exact words in the image. It needs about 9.5 GB free
+  and takes about 4 minutes per image; in Auto only the agent picks it.
+- **Removed:** the per-image Attach button. Refer to images by number instead, or attach files from
+  your Mac.
+
+## Requirements
+
+Apple Silicon, macOS 15+, 16 GB memory or more. Plus 2.8–6.0 GB disk for an agent model.
+
+## Install
+
+Unzip, move to Applications, then right-click → Open the first time (beta builds are not notarized).
+Download an agent model in Settings → Intelligence → Agent; without one, messages are routed by rules.
+
+## Known issues
+
+See `docs/KNOWN_ISSUES.md`.
+
+---
+
 # dMLX v0.1.0-beta1
 
 First public beta: chat to create and edit images, fully on your Mac.
