@@ -105,6 +105,9 @@ final class AppModel {
     private var pendingRoute: PendingRoute?
     /// The agent's question when it could not tell what a sent message means.
     private(set) var pendingAsk: String?
+    /// A sent message while it is planned: out of the composer, shown in the chat, never dropped silently.
+    private(set) var planningMessage: String?
+    private var planTask: _Concurrency.Task<Void, Never>?
     /// The local prompt assistant is downloaded: sent messages are planned by it.
     var promptAssistantInstalled = false
     private let editorStore = EditorDocumentStore.default()
@@ -328,6 +331,7 @@ final class AppModel {
     // MARK: sessions
 
     func newSession() {
+        abandonPlanning()
         keepActiveTurnsOffscreen()
         currentSessionId = nil
         turns = []
@@ -335,6 +339,7 @@ final class AppModel {
     }
 
     func select(_ id: String) {
+        abandonPlanning()
         keepActiveTurnsOffscreen()
         currentSessionId = id
         turns = (try? store?.turns(session: id)) ?? []
@@ -461,7 +466,8 @@ final class AppModel {
             return chosenModel == nil ? "Model picked for you" : ""  // the model menu already names the choice
         }
         guard routeDecisionKey == routingKey(message: message), let decision = routeDecision else {
-            return isResolvingRoute ? "Determining workflow…" : "Ready to route"
+            return isResolvingRoute ? "Determining workflow…"
+                : promptAssistantInstalled ? "Planned by the agent when you send" : "Ready to route"
         }
         switch decision.intent {
         case "image.generate":
@@ -485,8 +491,9 @@ final class AppModel {
     /// Refreshes the non-binding route hint. Structural cases resolve locally; only
     /// a continuation with a current image needs the configured decision provider.
     func scheduleRoutePreview() {
-        // While the agent's question is open, what the user types is the answer, not a new message.
-        if pendingAsk != nil, pendingRoute != nil { return }
+        // While a sent message is held (the agent's question, or a workflow to choose), what the user types
+        // is the answer or the next message, and must not drop the held one.
+        if pendingRoute != nil { return }
         routeTask?.cancel()
         pendingRoute = nil
         pendingAsk = nil
@@ -506,6 +513,14 @@ final class AppModel {
         if let decision = structuralDecision() {
             routeDecision = decision
             routeDecisionKey = key
+            routeRequest = nil
+            isResolvingRoute = false
+            return
+        }
+        // With the agent, a sent message is planned by it; a preview would only spend a router call.
+        if promptAssistantInstalled {
+            routeDecision = nil
+            routeDecisionKey = nil
             routeRequest = nil
             isResolvingRoute = false
             return
@@ -626,10 +641,14 @@ final class AppModel {
 
     func send(_ text: String? = nil) {
         let message = (text ?? draft).trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !message.isEmpty, !isResolvingRoute, !isGeneratingHere else { return }
+        guard !message.isEmpty else { return }
+        if let planning = planningMessage { return show("Not sent yet: “\(planning)” is still being planned.") }
+        guard !isGeneratingHere else { return show("Not sent: wait for the image to finish, or stop it.") }
         if let pending = pendingRoute, let question = pendingAsk, promptAssistantInstalled {
+            if text == nil { draft = "" }
             return answer(pending, question: question, with: message)
         }
+        if let held = pendingRoute?.message { return show("Choose what to do with “\(held)” first, or cancel it.") }
         let snapshot = PendingRoute(
             message: message, attachmentInputs: attachments.enumerated().map { $0.element.mediaInput(order: $0.offset) },
             latestResultId: latestImageTurn?.current?.resultId, latestTurnId: latestImageTurn?.id,
@@ -646,38 +665,60 @@ final class AppModel {
             return
         }
         guard let client else { return show("The engine is still starting.") }
-        isResolvingRoute = true
+        // The composer's hint is not this message: typing, attaching or changing the model while it is
+        // planned must not cancel it.
+        routeTask?.cancel()
+        routeRequest = nil
+        isResolvingRoute = false
+        planningMessage = message
+        if text == nil { draft = "" }
         let waits = planned && generatingElsewhere != nil
         isWaitingForImage = waits
-        routeTask?.cancel()
-        let request = RouteRequestIdentity(context: routingContext(message: message))
-        routeRequest = request
-        routeTask = _Concurrency.Task { [weak self] in
+        let history = routingHistory
+        let currentPrompt = latestImageTurn?.current?.prompt
+        planTask = _Concurrency.Task { [weak self] in
             defer { self?.isWaitingForImage = false }
             do {
                 let decision = try await client.routeWorkflow(
-                    message: message, currentResultId: snapshot.latestResultId,
-                    currentPrompt: self?.latestImageTurn?.current?.prompt, attachments: snapshot.attachmentIds,
-                    history: self?.routingHistory ?? [], selectedModel: self?.chosenModel?.id, plan: planned,
-                    wait: waits)
-                guard let self, !_Concurrency.Task.isCancelled,
-                      self.routeRequest?.accepts(
-                        context: self.routingContext(message: message), requestID: request.id) == true else {
-                    self?.isResolvingRoute = false
-                    self?.scheduleRoutePreview()
-                    return
-                }
-                self.isResolvingRoute = false
+                    message: message, currentResultId: snapshot.latestResultId, currentPrompt: currentPrompt,
+                    attachments: snapshot.attachmentIds, history: history, selectedModel: self?.chosenModel?.id,
+                    plan: planned, wait: waits)
+                guard let self, !_Concurrency.Task.isCancelled else { return }
+                self.planningMessage = nil
                 self.routeDecision = decision
                 self.routeDecisionKey = key
                 self.handle(snapshot, decision: decision)
             } catch is CancellationError {
             } catch {
-                guard let self, self.routeRequest?.accepts(
-                    context: self.routingContext(message: message), requestID: request.id) == true else { return }
-                self.isResolvingRoute = false
-                self.pendingRoute = snapshot
+                guard let self, !_Concurrency.Task.isCancelled else { return }
+                self.planningMessage = nil
+                self.giveBack(message, because: "Could not plan it: \(error.localizedDescription)")
             }
+        }
+    }
+
+    /// A sent message waiting on the user (the agent's question, or a workflow to choose), shown in the chat.
+    var heldMessage: String? { pendingRoute?.message }
+
+    /// A message that was not sent goes back to the composer, with the reason, so it is never lost.
+    private func giveBack(_ message: String, because reason: String) {
+        if draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            draft = message
+            show("\(reason) Your message is back in the message box.")
+        } else {
+            show("\(reason) Not sent: “\(message)”.")
+        }
+    }
+
+    /// Leaving the chat while a message is planned, or while the agent's question about it is open.
+    private func abandonPlanning() {
+        if let message = planningMessage {
+            planTask?.cancel()
+            planningMessage = nil
+            isWaitingForImage = false
+            giveBack(message, because: "Not sent: you changed chats while it was being planned.")
+        } else if let held = heldMessage {
+            giveBack(held, because: "Not sent: you changed chats before answering.")
         }
     }
 
@@ -701,21 +742,19 @@ final class AppModel {
                                inputIds: pending.attachmentIds),
             RoutingHistoryItem(sequence: turns.count + 1, kind: TurnKind.notice.rawValue, text: question),
         ]
-        isResolvingRoute = true
+        planningMessage = reply
         let waits = generatingElsewhere != nil
         isWaitingForImage = waits
-        routeTask?.cancel()
-        routeRequest = nil
-        routeTask = _Concurrency.Task { [weak self] in
+        planTask = _Concurrency.Task { [weak self] in
             defer { self?.isWaitingForImage = false }
             do {
                 let decision = try await client.routeWorkflow(
                     message: reply, currentResultId: pending.latestResultId,
                     currentPrompt: self?.latestImageTurn?.current?.prompt, attachments: pending.attachmentIds,
                     history: history, selectedModel: self?.chosenModel?.id, plan: true, wait: waits)
-                guard let self else { return }
-                self.isResolvingRoute = false
-                guard !_Concurrency.Task.isCancelled, self.pendingAsk == question else { return }
+                guard let self, !_Concurrency.Task.isCancelled else { return }
+                self.planningMessage = nil
+                guard self.pendingAsk == question else { return }
                 let sessionId = self.ensureSession(title: pending.message)
                 self.appendTurn(Turn(
                     sessionId: sessionId, index: self.turns.count, kind: .user, text: pending.message,
@@ -729,10 +768,10 @@ final class AppModel {
                 answering.showsAttachments = false
                 self.handle(answering, decision: decision)
             } catch is CancellationError {
-                self?.isResolvingRoute = false
             } catch {
-                self?.isResolvingRoute = false
-                self?.show("Could not plan the answer: \(error.localizedDescription)")
+                guard let self, !_Concurrency.Task.isCancelled else { return }
+                self.planningMessage = nil
+                self.giveBack(reply, because: "Could not plan the answer: \(error.localizedDescription)")
             }
         }
     }
@@ -755,11 +794,16 @@ final class AppModel {
     }
 
     func cancelPendingRoute() {
-        if pendingAsk != nil, let pending = pendingRoute, draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        if let pending = pendingRoute, draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             draft = pending.message  // give the held message back
         }
         routeTask?.cancel()
         isResolvingRoute = false
+        if planningMessage != nil {
+            planTask?.cancel()
+            planningMessage = nil
+            isWaitingForImage = false
+        }
         pendingRoute = nil
         pendingAsk = nil
     }
@@ -1152,16 +1196,6 @@ final class AppModel {
         } else {
             streams[v.id]?.cancel()
             update(turnId, v.id) { $0.status = .cancelled; $0.errorMessage = "Cancelled" }
-        }
-    }
-
-    func attachResult(_ turnId: String) {
-        guard let t = turns.first(where: { $0.id == turnId }), let rid = t.current?.resultId else { return }
-        guard attachments.count < 3 || attachments.contains(where: { $0.id == rid }) else {
-            return show("This model accepts up to 3 images.")
-        }
-        if !attachments.contains(where: { $0.id == rid }) {
-            attachments.append(Attachment(id: rid, label: "Image \(t.number)"))
         }
     }
 

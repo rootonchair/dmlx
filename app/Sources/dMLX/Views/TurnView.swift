@@ -106,6 +106,45 @@ struct UserBubble: View {
     }
 }
 
+/// Sent but not yet a turn: the message waiting on the user (the agent's question), then the one being planned.
+struct PendingMessages: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        if let held = model.heldMessage {
+            PendingBubble(text: held, planning: false)
+        }
+        if let planning = model.planningMessage {
+            PendingBubble(text: planning, planning: true)
+        }
+    }
+}
+
+/// A sent message that is not a turn yet: being planned, or waiting for the answer to the agent's question.
+struct PendingBubble: View {
+    let text: String
+    let planning: Bool
+
+    var body: some View {
+        HStack {
+            Spacer(minLength: 80)
+            VStack(alignment: .trailing, spacing: 6) {
+                Text(text)
+                    .textSelection(.enabled)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 9)
+                    .background(.quaternary, in: RoundedRectangle(cornerRadius: 16))
+                if planning {
+                    HStack(spacing: 6) {
+                        ProgressView().controlSize(.small)
+                        Text("Planning…").font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+            }
+        }
+    }
+}
+
 struct NoticeRow: View {
     let text: String
 
@@ -177,8 +216,6 @@ struct ImageTurnView: View {
                 } else if !hasNoImage {
                     Button("Variations") { model.variation(turn.id) }
                         .help("Same prompt, new seed")
-                    Button("Attach") { model.attachResult(turn.id) }
-                        .help("Attach this image to the next message")
                     Button("Crop / Draw") { model.openEditor(turn.id) }
                         .help("Prepare a non-destructive crop or paint overlay, then attach it")
                     Button {

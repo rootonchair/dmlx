@@ -17,7 +17,7 @@ Create and edit images by chatting, fully on your Mac. dMLX is a native macOS ap
 - **Choose the agent.** Settings → Intelligence → Agent lists the agent models (Qwen3-VL 8B, Qwen3.5 9B, Ministral 3 3B, Qwen3-VL 4B; 2.8–6.0 GB downloads); picking one downloads it. Macs under 24 GB default to Ministral 3 3B. It is loaded only while it plans and freed before the image job starts. Without an agent model, messages are routed by rules and edits run as written.
 - **Keep typing while it works.** In the chat whose image is being made, the send button becomes Stop and you can write your next message. A message sent from another chat waits for the image, then the agent plans it (on Macs with 32 GB or more it plans beside the image when both fit).
 - **Versions, not overwrites.** Variations stack as v1, v2, v3 on the same turn; edit any version. **Edit Prompt…** on your message replaces its image with a new run of the new words.
-- **References.** Attach up to 3 ordered images (or earlier results with **Attach**) to guide an edit. **Crop / Draw** crops a result or paints over it before attaching it, without changing the original. The engine API accepts up to 10 references for Qwen Image 2.1.
+- **References.** Refer to earlier images by number ("make image 1 black and white") and the agent picks them, as the image to edit or as references; to use a picture from your Mac, attach up to 3. **Crop / Draw** crops a result or paints over it and attaches the copy, without changing the original. The engine API accepts up to 10 references for Qwen Image 2.1.
 - **Save.** The save button writes the image to Pictures/dMLX with its prompt and seed.
 - **Stays responsive.** The engine checks free memory before every job, loads model parts one at a time when memory is tight, and in the tightest case streams the model from disk block by block (a new 1024×1024 image in about 1.5 GB). It stops a job if macOS memory pressure turns critical.
 - **Warm follow-ups.** Models stay loaded between turns and prompt embeddings are cached, so follow-up edits skip loading entirely.
@@ -107,8 +107,9 @@ Events: `queued`, `plan`, `loading{component}`, `encoding`, `step{step,total}`, 
 
 When an agent model is installed, `/v1/workflows/route` with `"plan": true` asks the planning agent
 (`engine/src/dmlx/prompting/agent.py`); its decision is still checked (the images it names must exist,
-an edit takes 1–3 images, only workflows an installed model can run) and an unusable answer falls back
-to the rules and the router below. The agent runs with the `local-llm` extra
+an edit takes 1–3 images, only workflows an installed model can run). When its answer is still unusable
+after one retry, or planning fails, the route asks the user what to do instead of guessing; the rules and
+the router below are used only without the agent, or while it cannot run beside an image job. The agent runs with the `local-llm` extra
 (`cd engine && uv sync --extra local-llm`); engine-only use can pick its model with
 `DMLX_PROMPT_ASSISTANT_MODEL` or turn it off with `DMLX_PROMPT_ASSISTANT=off`.
 

@@ -15,12 +15,13 @@ struct ChatView: View {
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 22) {
-                        if model.turns.isEmpty {
+                        if model.turns.isEmpty && model.planningMessage == nil && model.heldMessage == nil {
                             EmptyStateView(starters: starters)
                         }
                         ForEach(model.turns) { turn in
                             TurnView(turn: turn).id(turn.id)
                         }
+                        PendingMessages()
                         Color.clear.frame(height: 1).id("bottom")
                     }
                     .frame(maxWidth: 780)

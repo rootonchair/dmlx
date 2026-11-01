@@ -7,7 +7,7 @@ import SwiftUI
 /// write snapshots of the app's own window (no Screen Recording permission needed).
 ///
 /// Script: {"out": "/dir", "steps": [{"newSession": true}, {"send": "a boat"}, {"waitIdle": 300},
-///          {"snapshot": "name"}, {"variation": true}, {"edit": true}, {"draft": "text"}, {"sleep": 1},
+///          {"snapshot": "name"}, {"variation": true}, {"attachFile": "/path.png"}, {"draft": "text"}, {"sleep": 1},
 ///          {"onboarding": true|false}, {"settings": true}, {"selectSession": 0}, {"renderChat": "name"},
 ///          {"modelChoice": "auto"|"<model id>"}, {"logPreview": true},
 ///          {"windowSize": [w, h]}, {"measure": true}, {"fakeSessions": n},
@@ -98,14 +98,19 @@ enum DevHarness {
         if let timeout = step["waitRouted"] as? Double {
             let deadline = Date().addingTimeInterval(timeout)
             try? await _Concurrency.Task.sleep(for: .milliseconds(300))
-            while Date() < deadline && model.isResolvingRoute {
+            while Date() < deadline && model.planningMessage != nil {
                 try? await _Concurrency.Task.sleep(for: .milliseconds(300))
             }
             log("routed: pendingAsk=\(model.pendingAsk ?? "-") draft=\(model.draft)")
         }
-        if let text = step["send"] as? String { model.send(text) }
+        if let text = step["send"] as? String {
+            model.send(text)
+            if model.planningMessage != text && model.turns.last?.text != text, let toast = model.toast {
+                log("send not taken: \(toast)")
+            }
+        }
         if step["variation"] != nil, let t = model.latestImageTurn { model.variation(t.id) }
-        if step["edit"] != nil, let t = model.latestImageTurn { model.attachResult(t.id) }
+        if let path = step["attachFile"] as? String { model.attach(files: [URL(fileURLWithPath: path)]) }
         if let show = step["onboarding"] as? Bool { model.showOnboarding = show }
         if step["settings"] != nil { NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil) }
         if let seconds = step["sleep"] as? Double { try? await _Concurrency.Task.sleep(for: .seconds(seconds)) }
@@ -114,7 +119,7 @@ enum DevHarness {
             try? await _Concurrency.Task.sleep(for: .milliseconds(500))  // a send plans before its turn exists
             while Date() < deadline {
                 let busy = model.turns.contains { $0.versions.contains { $0.isActive } }
-                    || model.isResolvingRoute || !model.activeRuns.isEmpty
+                    || model.planningMessage != nil || !model.activeRuns.isEmpty
                 if !busy { break }
                 try? await _Concurrency.Task.sleep(for: .milliseconds(300))
             }
@@ -126,7 +131,7 @@ enum DevHarness {
             let last = model.turns.last.map { "\($0.kind.rawValue)#\($0.number) \($0.current?.status.rawValue ?? "-") planner=\($0.current?.workflowPrompt?.compiler ?? "-")" } ?? "-"
             log("flags[\(label)] chat=\(model.currentSession?.title ?? "new") generatingHere=\(model.isGeneratingHere) "
                 + "elsewhere=\(model.generatingElsewhere?.title ?? "-") waiting=\(model.isWaitingForImage) "
-                + "resolving=\(model.isResolvingRoute) turns=\(model.turns.count) last=\(last) draft=\(model.draft)")
+                + "planning=\(model.planningMessage ?? "-") turns=\(model.turns.count) last=\(last) draft=\(model.draft)")
         }
         // In-memory only (never written to the store): fill or empty the sidebar list.
         if let count = step["fakeSessions"] as? Int {
@@ -246,8 +251,11 @@ enum DevHarness {
             .frame(width: 220)
             .padding(12)
             VStack(alignment: .leading, spacing: 22) {
-                if model.turns.isEmpty { EmptyStateView(starters: ["A fox logo, flat vector, two colors"]) }
+                if model.turns.isEmpty && model.planningMessage == nil && model.heldMessage == nil {
+                    EmptyStateView(starters: ["A fox logo, flat vector, two colors"])
+                }
                 ForEach(model.turns) { TurnView(turn: $0) }
+                PendingMessages()
             }
             .frame(width: 780)
         }

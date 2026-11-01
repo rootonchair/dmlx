@@ -11,7 +11,7 @@ struct ComposerView: View {
     private let suggestions = ["Make it foggy", "Add warm evening light", "Make it black and white", "Variations"]
 
     var canSend: Bool {
-        model.isEngineRunning && !model.isResolvingRoute && !model.isGeneratingHere
+        model.isEngineRunning && model.planningMessage == nil && !model.isGeneratingHere
             && !model.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
