@@ -5,8 +5,8 @@ Create and edit images by chatting, fully on your Mac. dMLX is a native macOS ap
 > Status: **v0.1 beta**. Images only (generate + edit). Video is planned, not included. See [known issues](docs/KNOWN_ISSUES.md).
 
 <p align="center">
-  <img src="docs/screenshots/chat-generate-edit-versions.jpg" width="720"
-       alt="A dMLX chat: 'a small wooden rowboat on a still mountain lake at dawn' makes image 1; 'make the boat red' makes image 2, an edit of image 1, with versions v1 and v2 and the Variations, Attach, Crop / Draw and Save buttons under it.">
+  <img src="docs/screenshots/chat-edit-versions.jpg" width="760"
+       alt="A dMLX chat: 'make the boat red' turns a wooden rowboat on a misty mountain lake red. The result is Image 2, 'Edited from image 1', with versions v1 and v2, the Variations, Crop / Draw and Save buttons, suggestion chips and the message box with the size and model menus.">
 </p>
 
 ## What it does
@@ -15,13 +15,23 @@ Create and edit images by chatting, fully on your Mac. dMLX is a native macOS ap
 - **A planning agent reads every message.** A small vision-language model, run on your Mac, reads the chat and looks at the images, then decides what the message asks for: a new image or an edit, and which earlier images to edit or use as references. It can look at older images in the chat and read further back when a message depends on them. For an edit it can also write a detailed description of the result, which the image model follows better than a short command. When it cannot tell what you mean, it asks one short question and you answer in the chat; a message that is not a request for an image (a greeting, a question) gets a short reply instead of an image.
 - **Auto picks the model.** The model menu in the message box starts on **Auto**: the agent chooses among the image models you have installed, by what the message needs and the memory that is free. Pick a model in the menu and the agent never overrides it.
 - **Choose the agent.** Settings → Intelligence → Agent lists the agent models (Qwen3-VL 8B, Qwen3.5 9B, Ministral 3 3B, Qwen3-VL 4B; 2.8–6.0 GB downloads); picking one downloads it. Macs under 24 GB default to Ministral 3 3B. It is loaded only while it plans and freed before the image job starts. Without an agent model, messages are routed by rules and edits run as written.
-- **Keep typing while it works.** In the chat whose image is being made, the send button becomes Stop and you can write your next message. A message sent from another chat waits for the image, then the agent plans it (on Macs with 32 GB or more it plans beside the image when both fit).
+- **Keep typing while it works.** A sent message shows in the chat with "Planning…" while the agent decides; it is never dropped. In the chat whose image is being made, the send button becomes Stop and you can write your next message. A message sent from another chat waits for the image, then the agent plans it (on Macs with 32 GB or more it plans beside the image when both fit).
 - **Versions, not overwrites.** Variations stack as v1, v2, v3 on the same turn; edit any version. **Edit Prompt…** on your message replaces its image with a new run of the new words.
 - **References.** Refer to earlier images by number ("make image 1 black and white") and the agent picks them, as the image to edit or as references; to use a picture from your Mac, attach up to 3. **Crop / Draw** crops a result or paints over it and attaches the copy, without changing the original. The engine API accepts up to 10 references for Qwen Image 2.1.
 - **Save.** The save button writes the image to Pictures/dMLX with its prompt and seed.
 - **Stays responsive.** The engine checks free memory before every job, loads model parts one at a time when memory is tight, and in the tightest case streams the model from disk block by block (a new 1024×1024 image in about 1.5 GB). It stops a job if macOS memory pressure turns critical.
 - **Warm follow-ups.** Models stay loaded between turns and prompt embeddings are cached, so follow-up edits skip loading entirely.
 - **Local API.** The engine speaks an OpenAI-compatible images API, so other apps and agents can use it too.
+
+| Refer to images by number | A sent message while the agent plans it |
+|---|---|
+| <img src="docs/screenshots/image-by-number.jpg" alt="'make image 1 look like a watercolor painting' gives Image 2, 'Edited from image 1': a moonlit forest path with a lantern, now in watercolor."> | <img src="docs/screenshots/planning.jpg" alt="A new chat: the message 'a small wooden rowboat on a still mountain lake at dawn' with 'Planning…' under it while the agent decides what to do."> |
+
+<p align="center">
+  <img src="docs/screenshots/settings-agent.jpg" width="620"
+       alt="Settings, Intelligence, Agent: Qwen3-VL 8B in use (5.8 GB, recommended for 24 GB and up), Qwen3.5 9B and Ministral 3 3B ready (recommended for 16 GB).">
+  <br><sub>Settings → Intelligence → Agent: pick the model that plans your messages.</sub>
+</p>
 
 ## Requirements
 
