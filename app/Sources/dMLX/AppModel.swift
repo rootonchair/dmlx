@@ -107,6 +107,8 @@ final class AppModel {
     private(set) var pendingAsk: String?
     /// A sent message while it is planned: out of the composer, shown in the chat, never dropped silently.
     private(set) var planningMessage: String?
+    /// The open Settings tab.
+    var settingsTab = "models"
     private var planTask: _Concurrency.Task<Void, Never>?
     /// The local prompt assistant is downloaded: sent messages are planned by it.
     var promptAssistantInstalled = false

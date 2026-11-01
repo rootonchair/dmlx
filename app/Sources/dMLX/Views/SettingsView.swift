@@ -3,12 +3,15 @@ import DMLXKit
 import SwiftUI
 
 struct SettingsView: View {
+    @Environment(AppModel.self) private var app
+
     var body: some View {
-        TabView {
-            ModelsSettings().tabItem { Label("Models", systemImage: "square.stack.3d.up") }
-            MemorySettings().tabItem { Label("Memory", systemImage: "memorychip") }
-            IntelligenceSettings().tabItem { Label("Intelligence", systemImage: "sparkles") }
-            EngineSettings().tabItem { Label("Engine", systemImage: "gearshape.2") }
+        @Bindable var app = app
+        TabView(selection: $app.settingsTab) {
+            ModelsSettings().tabItem { Label("Models", systemImage: "square.stack.3d.up") }.tag("models")
+            MemorySettings().tabItem { Label("Memory", systemImage: "memorychip") }.tag("memory")
+            IntelligenceSettings().tabItem { Label("Intelligence", systemImage: "sparkles") }.tag("intelligence")
+            EngineSettings().tabItem { Label("Engine", systemImage: "gearshape.2") }.tag("engine")
         }
         .padding(16)
     }

@@ -13,6 +13,9 @@ import SwiftUI
 ///          {"windowSize": [w, h]}, {"measure": true}, {"fakeSessions": n},
 ///          {"ask": {"message": "…", "question": "…"}} (as if the agent asked), {"waitRouted": 60},
 ///          {"flags": "label"} (logs whether this or another chat is making an image, and a waiting message),
+///          {"settingsTab": "intelligence"} (with {"settings": true}, which hosts SettingsView in its own window), {"closeSettings": true},
+///          {"capture": "name", "window": "main"|"settings"} (the real window through screencapture, native
+///          controls included; needs Screen Recording for the launching terminal),
 ///          {"quit": true}]}
 @MainActor
 enum DevHarness {
@@ -112,7 +115,12 @@ enum DevHarness {
         if step["variation"] != nil, let t = model.latestImageTurn { model.variation(t.id) }
         if let path = step["attachFile"] as? String { model.attach(files: [URL(fileURLWithPath: path)]) }
         if let show = step["onboarding"] as? Bool { model.showOnboarding = show }
-        if step["settings"] != nil { NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil) }
+        if step["settings"] != nil { showSettings(model) }
+        if let tab = step["settingsTab"] as? String { model.settingsTab = tab }
+        if step["closeSettings"] != nil { settingsWindow()?.close() }
+        if let name = step["capture"] as? String {
+            capture(name: name, window: step["window"] as? String == "settings" ? settingsWindow() : mainWindow(), out: out)
+        }
         if let seconds = step["sleep"] as? Double { try? await _Concurrency.Task.sleep(for: .seconds(seconds)) }
         if let timeout = step["waitIdle"] as? Double {
             let deadline = Date().addingTimeInterval(timeout)
@@ -194,6 +202,52 @@ enum DevHarness {
             }
         }
         if step["quit"] != nil { NSApp.terminate(nil) }
+    }
+
+    /// The Settings scene cannot be opened from here (showSettingsWindow: is gone); host its view instead.
+    private static func showSettings(_ model: AppModel) {
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 620, height: 460),
+            styleMask: [.titled, .closable], backing: .buffered, defer: false)
+        window.title = "Settings"
+        window.identifier = NSUserInterfaceItemIdentifier("HarnessSettings")
+        window.isReleasedWhenClosed = false
+        window.contentView = NSHostingView(rootView: SettingsView().environment(model)
+            .frame(width: 620, height: 460).tint(Theme.accent))
+        window.center()
+        window.orderFrontRegardless()
+    }
+
+    private static func settingsWindow() -> NSWindow? {
+        NSApp.windows.first { $0.isVisible && $0.identifier?.rawValue.contains("Settings") == true }
+            ?? NSApp.windows.first { $0.isVisible && ["Models", "Memory", "Intelligence", "Engine"].contains($0.title) }
+    }
+
+    private static func mainWindow() -> NSWindow? {
+        NSApp.windows.filter { $0.isVisible && $0 !== settingsWindow() }.max { $0.frame.width < $1.frame.width }
+    }
+
+    /// The window as it is on screen, through screencapture (ImageRenderer cannot draw native controls).
+    static func capture(name: String, window: NSWindow?, out: URL) {
+        guard let window else {
+            return log("capture \(name): no such window; " + NSApp.windows.map {
+                "\($0.title)|\($0.identifier?.rawValue ?? "-")|visible=\($0.isVisible)" }.joined(separator: ", "))
+        }
+        // An inactive window draws its sidebar and composer late or not at all; bring the app forward first.
+        NSApp.activate(ignoringOtherApps: true)
+        window.makeKeyAndOrderFront(nil)
+        RunLoop.main.run(until: Date().addingTimeInterval(0.8))
+        let file = out.appendingPathComponent("\(name).png")
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
+        process.arguments = ["-x", "-o", "-l\(window.windowNumber)", file.path]
+        do {
+            try process.run()
+            process.waitUntilExit()
+            log("capture \(file.path) status \(process.terminationStatus)")
+        } catch {
+            log("capture \(name) failed: \(error)")
+        }
     }
 
     static func snapshot(name: String, out: URL, all: Bool) {
