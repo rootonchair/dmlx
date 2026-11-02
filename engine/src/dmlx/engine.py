@@ -283,6 +283,13 @@ class Engine:
         attachments = state.get("attachments") or []
         if not isinstance(attachments, list) or len(attachments) > 16 or not all(isinstance(item, str) for item in attachments):
             raise RequestError("invalid_route", "Routing attachments must be a list of at most 16 IDs.", 422)
+        # What the app knows about an attachment, e.g. "image 1 after Crop / Draw": shown to the agent next to it.
+        raw_notes = state.get("attachment_notes") or {}
+        if not isinstance(raw_notes, dict) or len(raw_notes) > 16 or not all(
+                isinstance(key, str) and isinstance(value, str) for key, value in raw_notes.items()):
+            raise RequestError("invalid_route", "Routing attachment_notes must map at most 16 IDs to text.", 422)
+        attachment_notes = {key: value.strip()[:300] for key, value in raw_notes.items()
+                            if key in attachments and value.strip()}
         raw_history = state.get("history") or []
         if not isinstance(raw_history, list) or len(raw_history) > 24 or not all(isinstance(item, dict) for item in raw_history):
             raise RequestError("invalid_route", "Routing history must contain at most 24 objects.", 422)
@@ -319,6 +326,7 @@ class Engine:
             "current_result_id": str(state.get("current_result_id") or "")[:256] or None,
             "current_prompt": current_prompt or None,
             "attachments": attachments,
+            "attachment_notes": attachment_notes,
             "history": history,
         }
         explicit_count = len(attachments)

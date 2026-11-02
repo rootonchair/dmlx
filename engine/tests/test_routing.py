@@ -174,6 +174,8 @@ def test_route_request_is_bounded_and_drops_unknown_state(make_engine, client_fo
     )
     assert response.status_code == 200
     assert "untrusted_extra" not in provider.calls[0][0]
+    bad = {"message": "x", "attachments": ["up_1"], "attachment_notes": ["image 1"]}
+    assert client.post("/v1/workflows/route", json=bad).status_code == 422
 
 
 def test_router_connection_test_uses_provider_directly(make_engine, client_for):

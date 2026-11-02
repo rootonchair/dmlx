@@ -127,6 +127,23 @@ final class AppModel {
         var attachmentIds: [String] { attachmentInputs.map(\.id) }
     }
 
+    /// The chat image a prepared image (Crop / Draw) was made from, by its base result id.
+    private func preparedFrom(_ input: MediaInput) -> Turn? {
+        guard let base = input.metadata["base_result_id"] else { return nil }
+        return turns.first { $0.versions.contains { $0.resultId == base } }
+    }
+
+    /// What the agent should know about each attachment it cannot tell from the pixels alone.
+    private func attachmentNotes(_ inputs: [MediaInput]) -> [String: String] {
+        var notes: [String: String] = [:]
+        for input in inputs where input.metadata["base_result_id"] != nil {
+            let source = preparedFrom(input).map { "image \($0.number)" } ?? "a chat image"
+            notes[input.id] = "\(source) prepared in Crop / Draw: the user cropped it and may have painted marks on it "
+                + "to show what to change"
+        }
+        return notes
+    }
+
     init() {
         do {
             store = try Store(path: Store.defaultURL())
@@ -677,13 +694,15 @@ final class AppModel {
         let waits = planned && generatingElsewhere != nil
         isWaitingForImage = waits
         let history = routingHistory
+        let notes = attachmentNotes(snapshot.attachmentInputs)
         let currentPrompt = latestImageTurn?.current?.prompt
         planTask = _Concurrency.Task { [weak self] in
             defer { self?.isWaitingForImage = false }
             do {
                 let decision = try await client.routeWorkflow(
                     message: message, currentResultId: snapshot.latestResultId, currentPrompt: currentPrompt,
-                    attachments: snapshot.attachmentIds, history: history, selectedModel: self?.chosenModel?.id,
+                    attachments: snapshot.attachmentIds, attachmentNotes: notes, history: history,
+                    selectedModel: self?.chosenModel?.id,
                     plan: planned, wait: waits)
                 guard let self, !_Concurrency.Task.isCancelled else { return }
                 self.planningMessage = nil
@@ -753,6 +772,7 @@ final class AppModel {
                 let decision = try await client.routeWorkflow(
                     message: reply, currentResultId: pending.latestResultId,
                     currentPrompt: self?.latestImageTurn?.current?.prompt, attachments: pending.attachmentIds,
+                    attachmentNotes: self?.attachmentNotes(pending.attachmentInputs) ?? [:],
                     history: history, selectedModel: self?.chosenModel?.id, plan: true, wait: waits)
                 guard let self, !_Concurrency.Task.isCancelled else { return }
                 self.planningMessage = nil
@@ -896,9 +916,13 @@ final class AppModel {
             let inputs = routedInputs(pending, decision: decision)
             guard !inputs.isEmpty else { return noModel(sessionId) }
             var route = "Edited from the attached image"
-            if pending.attachmentIds.isEmpty, let source = inputs.first,
-               let t = turns.first(where: { $0.current?.resultId == source.id }) {
-                route = "Edited from image \(t.number) · v\(t.activeVersion + 1)"
+            if let source = inputs.first {
+                if let attached = pending.attachmentInputs.first(where: { $0.id == source.id }) {
+                    if let base = preparedFrom(attached) { route = "Edited from the prepared image \(base.number)" }
+                } else if let t = turns.first(where: { $0.versions.contains { $0.resultId == source.id } }) {
+                    let version = t.versions.firstIndex { $0.resultId == source.id } ?? t.activeVersion
+                    route = "Edited from image \(t.number) · v\(version + 1)"
+                }
             }
             if inputs.count > 1 { route += " + \(inputs.count - 1) reference\(inputs.count > 2 ? "s" : "")" }
             startImageTurn(sessionId: sessionId, prompt: message, model: model, task: .edit, inputs: inputs, route: route,

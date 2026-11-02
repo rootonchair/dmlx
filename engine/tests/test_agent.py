@@ -211,7 +211,10 @@ def test_an_open_question_is_shown_with_the_message_and_the_agent_decides_if_it_
 def test_attachments_are_described_as_usable_only_by_an_edit():
     state = {**STATE, "attachments": ["up_1"]}
     body = agent.messages(state, {"image.edit": "edit"}, ["up_1"])[1]["content"]
-    assert "Attached to the new message: up_1 (image.generate cannot see these" in body
+    assert "Attached to the new message: up_1. image.generate cannot see these" in body
+    noted = agent.messages({**state, "attachment_notes": {"up_1": "image 2 prepared in Crop / Draw"}},
+                           {"image.edit": "edit"}, ["up_1"])[1]["content"]
+    assert "Attached to the new message: up_1 (image 2 prepared in Crop / Draw)." in noted
 
 
 # -- through the engine's routing ---------------------------------------------------------
@@ -559,3 +562,16 @@ def test_a_new_image_that_leaves_out_the_attachments_is_confirmed_by_the_agent()
     model = _Replies('{"intent": "image.generate", "prompt": "A cat."}')
     result = agent.plan(model, {**state, "message": "a cat"}, workflows, image_path=lambda rid: f"/{rid}.png")
     assert result.intent == "image.generate" and len(model.calls) == 2
+
+
+def test_the_agent_is_told_what_a_prepared_image_is(make_engine, client_for, tmp_path):
+    engine = make_engine()
+    client = client_for(engine)
+    source = _source(client)
+    model = _Model(json.dumps({"intent": "image.edit", "edit": source, "prompt": "Paint a pattern.", "describe": False}))
+    model.install(engine, tmp_path)
+    _route(client, source, attachments=[source], attachment_notes={
+        source: "image 1 prepared in Crop / Draw", "img_other": "not attached"})
+    body = model.calls[0][0][1]["content"]
+    assert f"Attached to the new message: {source} (image 1 prepared in Crop / Draw)." in body
+    assert "not attached" not in body

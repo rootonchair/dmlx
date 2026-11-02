@@ -173,7 +173,8 @@ enum DevHarness {
             let last = model.turns.last.map { "\($0.kind.rawValue)#\($0.number) \($0.current?.status.rawValue ?? "-") planner=\($0.current?.workflowPrompt?.compiler ?? "-")" } ?? "-"
             log("flags[\(label)] chat=\(model.currentSession?.title ?? "new") generatingHere=\(model.isGeneratingHere) "
                 + "elsewhere=\(model.generatingElsewhere?.title ?? "-") waiting=\(model.isWaitingForImage) "
-                + "planning=\(model.planningMessage ?? "-") turns=\(model.turns.count) last=\(last) draft=\(model.draft)")
+                + "planning=\(model.planningMessage ?? "-") turns=\(model.turns.count) last=\(last) draft=\(model.draft)"
+                + " decision=\(model.routeDecision.map { "\($0.intent) \($0.input_result_ids ?? []) \($0.provider)" } ?? "-")")
         }
         // In-memory only (never written to the store): fill or empty the sidebar list.
         if let count = step["fakeSessions"] as? Int {

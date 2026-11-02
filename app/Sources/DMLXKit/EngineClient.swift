@@ -149,12 +149,14 @@ public final class EngineClient: @unchecked Sendable {
 
     public func routeWorkflow(
         message: String, currentResultId: String?, currentPrompt: String?, attachments: [String],
+        attachmentNotes: [String: String] = [:],
         history: [RoutingHistoryItem] = [], selectedModel: String? = nil, plan: Bool = false, wait: Bool = false
     ) async throws -> WorkflowDecision {
         var body: [String: Any] = [
             "message": message, "attachments": attachments,
             "history": history.map(\.jsonObject),
         ]
+        if !attachmentNotes.isEmpty { body["attachment_notes"] = attachmentNotes }
         // A sent message (not the typing preview) is planned by the local agent when it is installed.
         if plan { body["plan"] = true }
         // An image is being made in another chat: the engine plans this once it is done (or beside it).

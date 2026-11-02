@@ -224,7 +224,9 @@ def messages(state: dict, workflows: dict[str, str], shown: list[str], looked: l
              free_gb: float | None = None, full_chat: bool = False, repeated: bool = False) -> list[dict]:
     listed = "\n".join(f"- {name}: {text}" for name, text in workflows.items())
     attachments = state.get("attachments") or []
-    attached = (f"{', '.join(attachments)} (image.generate cannot see these; only image.edit can use them)"
+    notes = state.get("attachment_notes") or {}
+    named = [f"{rid} ({notes[rid]})" if notes.get(rid) else rid for rid in attachments]
+    attached = (f"{', '.join(named)}. image.generate cannot see these; only image.edit can use them"
                 if attachments else "none")
     index = image_index(state)
     body = "\n".join([
