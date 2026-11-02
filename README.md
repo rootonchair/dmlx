@@ -30,6 +30,25 @@ on-device agent that plans every message.
 - **Private and offline.** Everything runs locally once the models are downloaded. No account, no cloud.
 - **A local API.** The engine speaks an OpenAI-compatible images API for other apps and agents.
 
+## Editing with Crop / Draw
+
+Change any result in plain words, or show exactly what you mean first: open **Crop / Draw** on an image,
+crop it, paint marks on it, erase the marks you got wrong, then attach the copy and say what to do.
+The original image is never changed.
+
+| 1 · Crop | 2 · Paint a mark | 3 · Erase a slip |
+|---|---|---|
+| <img src="docs/screenshots/edit-1-crop.jpg" alt="The Crop / Draw editor with the Crop tool: a dashed crop frame tightened around a white teapot on a wooden table, with presets Full, Square, 3:2 and 2:3."> | <img src="docs/screenshots/edit-2-paint.jpg" alt="The Paint tool: a red circle drawn around the teapot's body, plus a stray red line running onto the table."> | <img src="docs/screenshots/edit-3-erase.jpg" alt="The Erase tool: the stray line is erased (shown faded) and the red circle stays. 'Drag to erase paint. The original image is never erased.'"> |
+
+**4 · Attach and ask.** **Attach edited image** puts the prepared copy in the message box; the agent reads
+the marks with your words.
+
+<img src="docs/screenshots/edit-4-attach.jpg" alt="The message box with 'Prepared image 1' attached and the message 'paint a blue and white floral pattern on the teapot where I circled in red, and remove the red marks'. Above it: 'Will edit the attached image · FLUX.2 Klein 4B'.">
+
+| Before | After: "paint a blue and white floral pattern on the teapot where I circled in red, and remove the red marks" |
+|---|---|
+| <img src="docs/screenshots/edit-before.jpg" alt="Image 1: a plain white ceramic teapot on a wooden table."> | <img src="docs/screenshots/edit-after.jpg" alt="Image 2: the same teapot, cropped closer, now covered in a blue and white floral pattern, with no red marks left."> |
+
 ## A tour
 
 Every screenshot is from the app running on a 24 GB Mac with Qwen3-VL 8B as the agent.
@@ -39,8 +58,8 @@ Every screenshot is from the app running on a 24 GB Mac with Qwen3-VL 8B as the 
 | <img src="docs/screenshots/agent-asks.jpg" alt="'make them match' gets the agent's question: 'Could you clarify which two images you want to match, or if you mean to adjust the current image to match a previous one?', with Create new, Edit current and Cancel above the message box."> | <img src="docs/screenshots/answer-with-reference.jpg" alt="'give the teapot the same weathered wood as the boat' gives Image 3, edited from image 2 with one reference: the ceramic teapot now carved from dark weathered wood."> |
 | **It finds older images.** The teapot is the latest image; "make the boat red" edits the boat in image 1. The agent looks at older images when the message points to them. | **It replies to small talk.** A greeting or a thank-you gets a reply in the chat, not an image. |
 | <img src="docs/screenshots/finds-older-image.jpg" alt="'make the boat red' gives Image 4, 'Edited from image 1': the wooden rowboat on the misty mountain lake, now red."> | <img src="docs/screenshots/agent-replies.jpg" alt="'hello' gets a greeting from the agent; a sleeping fox in the snow is made; 'thanks, that's lovely!' gets 'You're welcome! I'm glad you like the image of the sleeping fox'."> |
-| **Your own pictures.** Attach up to 3 files (paper clip or drag and drop). "a lighthouse on a cliff at dusk, painted like this" uses the attached watercolor as the style. | **Crop / Draw.** Crop a result, or paint and erase on it; the copy is attached to your next message and the original is kept. |
-| <img src="docs/screenshots/attach-composer.jpg" alt="The message box with watercolor-forest.png attached and 'a lighthouse on a cliff at dusk, painted like this'."><br><img src="docs/screenshots/attach-result.jpg" alt="Image 1, 'Edited from the attached image': a lighthouse on a cliff at dusk in soft watercolor."> | <img src="docs/screenshots/crop-draw.jpg" alt="The Crop / Draw editor on the lighthouse: Crop, Paint and Erase tools, undo and redo, and crop presets Full, Square, 3:2 and 2:3."> |
+| **Your own pictures.** Attach up to 3 files (paper clip or drag and drop). "a lighthouse on a cliff at dusk, painted like this" uses the attached watercolor as the style. | **Crop / Draw on any result.** Crop, paint and erase marks, then attach the copy; see [Editing with Crop / Draw](#editing-with-crop--draw) for the whole workflow. |
+| <img src="docs/screenshots/attach-composer.jpg" alt="The message box with watercolor-forest.png attached and 'a lighthouse on a cliff at dusk, painted like this'."><br><img src="docs/screenshots/attach-result.jpg" alt="Image 1, 'Edited from the attached image': a lighthouse on a cliff at dusk in soft watercolor."> | <img src="docs/screenshots/edit-2-paint.jpg" alt="The Crop / Draw editor with a red circle painted around a teapot."> |
 | **Auto picks the model, and memory is checked first.** For a title in the image the agent picked Qwen Image 2.1 (best at words). It needed 9.5 GB and 9.2 GB was free, so the job was refused instead of slowing the Mac; **Try anyway** runs it in the lowest-memory mode. | **Never lost while it plans.** A sent message shows with "Planning…" while the agent decides; you can keep typing. |
 | <img src="docs/screenshots/memory-check.jpg" alt="'write the title NIGHT BLADE in the banner at the top' gives Image 2 with Qwen Image 2.1 Base Q4: 'needs about 9.5 GB but only 9.2 GB can be used without slowing down your Mac', with Retry and Try anyway."> | <img src="docs/screenshots/planning.jpg" alt="'make them match' sent, with 'Planning…' under it."> |
 | **Add models.** Search the community versions of the supported families, or paste any Hugging Face repo; dMLX checks it before downloading. | **Manage models.** See what is installed, remove models, and set the default (Auto lets the agent choose). |
