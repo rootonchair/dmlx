@@ -77,6 +77,12 @@ enum DevHarness {
         if let name = step["renderChat"] as? String { renderChat(model, name: name, out: out) }
         if let text = step["draft"] as? String { model.draft = text }
         if let choice = step["modelChoice"] as? String { model.modelChoice = choice }
+        if let name = step["aspect"] as? String, let aspect = Aspect(rawValue: name) { model.aspect = aspect }
+        // The "Try anyway" button on the latest image turn (a job refused for memory).
+        if step["tryAnyway"] != nil, let t = model.latestImageTurn, t.current?.errorMessage != nil {
+            log("try anyway after: \(t.current?.errorMessage ?? "")")
+            model.retry(t.id, force: true)
+        }
         if step["suggestions"] != nil {
             do { log("suggestions: \(try await model.catalogSuggestions().count)") } catch { log("suggestions error: \(error.localizedDescription)") }
         }
