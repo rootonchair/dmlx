@@ -120,6 +120,32 @@ enum DevHarness {
         if step["closeSettings"] != nil { settingsWindow()?.close() }
         if step["openEditor"] != nil, let t = model.latestImageTurn { model.openEditor(t.id) }
         if step["closeEditor"] != nil { model.closeEditor() }
+        // {"editorDoc": {"tool": "Paint", "crop": [x, y, w, h], "paint": [[[x, y], ...]], "erase": [[[x, y], ...]],
+        //  "width": 0.03}}: reopen the editor on the latest image with this crop and these strokes (normalized).
+        if let spec = step["editorDoc"] as? [String: Any], let t = model.latestImageTurn {
+            if model.editorDocument != nil {
+                // Let the sheet go away first, or SwiftUI keeps the old editor (its tool and strokes).
+                model.closeEditor()
+                try? await _Concurrency.Task.sleep(for: .seconds(1.2))
+            }
+            model.editorStartTool = spec["tool"] as? String
+            model.openEditor(t.id)
+            if var doc = model.editorDocument {
+                if let c = spec["crop"] as? [Double], c.count == 4 {
+                    doc.crop = NormalizedRect(x: c[0], y: c[1], width: c[2], height: c[3])
+                }
+                let width = spec["width"] as? Double ?? 0.03
+                func strokes(_ key: String, erases: Bool) -> [PaintStroke] {
+                    (spec[key] as? [[[Double]]] ?? []).map { line in
+                        PaintStroke(points: line.map { NormalizedPoint(x: $0[0], y: $0[1]) }, width: erases ? width * 1.6 : width,
+                                    erases: erases)
+                    }
+                }
+                doc.strokes = strokes("paint", erases: false) + strokes("erase", erases: true)
+                model.editorDocument = doc
+            }
+        }
+        if step["applyEditor"] != nil, let doc = model.editorDocument { model.applyEditor(doc) }
         if let name = step["capture"] as? String {
             let window: NSWindow? = switch step["window"] as? String {
             case "settings": settingsWindow()

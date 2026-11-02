@@ -1216,6 +1216,9 @@ final class AppModel {
         editorTurnNumber = turn.number
     }
 
+    /// Dev harness only: the tool the editor opens on ("Crop", "Paint" or "Erase").
+    var editorStartTool: String?
+
     func closeEditor() {
         guard !isExportingEditor else { return }
         editorDocument = nil

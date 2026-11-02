@@ -26,10 +26,11 @@ struct EditorView: View {
     let onApply: (EditorDocument) -> Void
 
     init(
-        document: EditorDocument, source: NSImage, isExporting: Bool,
+        document: EditorDocument, source: NSImage, isExporting: Bool, startTool: String? = nil,
         onCancel: @escaping () -> Void, onApply: @escaping (EditorDocument) -> Void
     ) {
         _document = State(initialValue: document)
+        _tool = State(initialValue: startTool.flatMap(EditorTool.init(rawValue:)) ?? .crop)
         self.source = source
         self.isExporting = isExporting
         self.onCancel = onCancel
