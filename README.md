@@ -38,15 +38,35 @@ A small agent on your Mac plans each message.
 Each example is a chat in the app, with **Auto** set. The agent selected the model. For a removal, the
 first message makes an image and the second message removes something from it.
 
-| Remove text | Remove an object | Remove a person |
-|---|---|---|
-| <img src="docs/screenshots/use-remove-text.jpg" alt="Chat: a message asks for a coffee shop window with hand-painted lettering, and Image 1 shows it. The message 'remove all the text from the window' gives Image 2, the same window with no lettering."> | <img src="docs/screenshots/use-remove-object.jpg" alt="Chat: a message asks for a desk with a laptop, a coffee mug and a plant, and Image 1 shows it. The message 'remove the coffee mug' gives Image 2, the same desk with no mug."> | <img src="docs/screenshots/use-remove-person.jpg" alt="Chat: a message asks for a beach at sunset with one person who walks along the water, and Image 1 shows it. The message 'remove the person' gives Image 2, the same beach with no person."> |
-| "remove all the text from the window" · Qwen Image 2.1 · about 5 min | "remove the coffee mug" · FLUX.2 Klein 4B · 36 s | "remove the person" · FLUX.2 Klein 4B · 40 s |
+### Remove text
 
-| Poster (Portrait) | Banner (Landscape) |
-|---|---|
-| <img src="docs/screenshots/use-poster.jpg" alt="Chat: a message asks for a jazz night poster with the title MIDNIGHT ECHO in large gold letters. Image 1 is an art deco poster of a saxophone player in blue light, with MIDNIGHT ECHO in gold."> | <img src="docs/screenshots/use-banner.jpg" alt="Chat: a message asks for a bakery banner with the words FRESH BREAD DAILY. Image 1 is a wide image of loaves on a wooden counter, with FRESH BREAD DAILY at the top."> |
-| Qwen Image 2.1 · about 4 min | Qwen Image 2.1 · about 4 min |
+"remove all the text from the window" · Qwen Image 2.1 · about 5 min
+
+<img src="docs/screenshots/use-remove-text.jpg" width="480" alt="Chat: a message asks for a coffee shop window with hand-painted lettering, and Image 1 shows it. The message 'remove all the text from the window' gives Image 2, the same window with no lettering.">
+
+### Remove an object
+
+"remove the coffee mug" · FLUX.2 Klein 4B · 36 s
+
+<img src="docs/screenshots/use-remove-object.jpg" width="480" alt="Chat: a message asks for a desk with a laptop, a coffee mug and a plant, and Image 1 shows it. The message 'remove the coffee mug' gives Image 2, the same desk with no mug.">
+
+### Remove a person
+
+"remove the person" · FLUX.2 Klein 4B · 40 s
+
+<img src="docs/screenshots/use-remove-person.jpg" width="480" alt="Chat: a message asks for a beach at sunset with one person who walks along the water, and Image 1 shows it. The message 'remove the person' gives Image 2, the same beach with no person.">
+
+### Make a poster
+
+A Portrait image with a title · Qwen Image 2.1 · about 4 min
+
+<img src="docs/screenshots/use-poster.jpg" width="560" alt="Chat: a message asks for a jazz night poster with the title MIDNIGHT ECHO in large gold letters. Image 1 is an art deco poster of a saxophone player in blue light, with MIDNIGHT ECHO in gold.">
+
+### Make a banner
+
+A Landscape image with words · Qwen Image 2.1 · about 4 min
+
+<img src="docs/screenshots/use-banner.jpg" width="640" alt="Chat: a message asks for a bakery banner with the words FRESH BREAD DAILY. Image 1 is a wide image of loaves on a wooden counter, with FRESH BREAD DAILY at the top.">
 
 For exact words in an image, the agent usually selects Qwen Image 2.1. This model is slow, it needs about
 9.5 GB of free memory, and its license does not permit commercial use. FLUX.2 Klein 4B is fast, but it
@@ -78,18 +98,66 @@ keep them. The prepared image is one of the 3 images that you can attach.
 
 All screenshots show the app on a 24 GB Mac. The agent model is Qwen3-VL 8B.
 
-| | |
-|---|---|
-| **The app keeps your message while the agent plans.** After you send a message, the chat shows it with "Planning…" while the agent decides. You can type your next message. You can send it when the plan is complete. | **If the agent is not sure, it asks.** With two images in the chat, the message "make them match" gets a question. The agent does not guess. You can answer the question, click **Create new** or **Edit current**, or send a different request. |
-| <img src="docs/screenshots/planning.jpg" alt="The message 'make them match' after you send it, with 'Planning…' below it."> | <img src="docs/screenshots/agent-asks.jpg" alt="The message 'make them match' gets this question from the agent: 'Could you clarify which two images you want to match, or if you mean to adjust the current image to match a previous one?'. Create new, Edit current and Cancel show above the message box."> |
-| **It can use two images.** The message "give the teapot the same weathered wood as the boat" edits the teapot. It uses the boat as a reference ("Edited from image 2 · v1 + 1 reference"). | **It finds older images.** The teapot is the latest image. The message "make the boat red" edits the boat in image 1. If the message refers to older images, the agent examines them. |
-| <img src="docs/screenshots/answer-with-reference.jpg" alt="The message 'give the teapot the same weathered wood as the boat' gives Image 3, edited from image 2 with one reference. The ceramic teapot is now made of carved, dark, weathered wood."> | <img src="docs/screenshots/finds-older-image.jpg" alt="The message 'make the boat red' gives Image 4, 'Edited from image 1'. The wooden rowboat on the misty mountain lake is now red."> |
-| **It replies to casual messages.** If you send a greeting or thanks, the agent replies in the chat. It does not make an image. | **Use your own images.** You can attach a maximum of 3 images with the paper clip or with drag and drop. The message "a lighthouse on a cliff at dusk, painted like this" uses the attached watercolor as the style. |
-| <img src="docs/screenshots/agent-replies.jpg" alt="The message 'hello' gets a greeting from the agent. The message 'a small red fox curled up asleep in fresh snow, soft morning light' makes Image 1, a sleeping fox. The message 'thanks, that's lovely!' gets the reply 'You're welcome! I'm glad you like the image of the sleeping fox'."> | <img src="docs/screenshots/attach-composer.jpg" alt="The message box with watercolor-forest.png attached and the message 'a lighthouse on a cliff at dusk, painted like this'."><br><img src="docs/screenshots/attach-result.jpg" alt="Image 1, 'Edited from the attached image': a lighthouse on a cliff at dusk in soft watercolor."> |
-| **The app keeps every version.** **Variations** adds v2, v3 and more to a result. Click v1 or v2 to show a version. You can edit each version. The save button writes the image to Pictures/dMLX with its prompt and seed. | **Add models.** Use the search field to find community versions of the supported families. You can also paste a Hugging Face repo. Before the download, dMLX makes sure that it can use the repo. It also shows the download size and the license. |
-| <img src="docs/screenshots/versions.jpg" alt="Image 2, 'Edited from image 1', a red rowboat on a misty mountain lake. Below it: the v1 and v2 buttons (v2 is selected), Variations, Crop / Draw and the save button."> | <img src="docs/screenshots/add-model.jpg" alt="The Add a model window. It has a search field and community versions of FLUX.2 Klein, Z-Image Turbo and other models, with Add and Download."> |
-| **Auto selects the model, and the engine first does a memory check.** For a title in the image, the agent selected Qwen Image 2.1, because this model is the best at text in images. This model needed 9.5 GB, but only 9.2 GB was available without slowing down the Mac. Thus the engine refused the job. **Try anyway** runs the job in the mode that uses the least memory. If the Mac becomes slow, the engine stops the job. | **Control the models.** You can see the installed models, remove models, and set the default model. If you set Auto, the agent selects the model. |
-| <img src="docs/screenshots/memory-check.jpg" alt="The message 'write the title NIGHT BLADE in the banner at the top' gives Image 2 with Qwen Image 2.1 Base Q4 and this text: 'needs about 9.5 GB but only 9.2 GB can be used without slowing down your Mac'. Retry and Try anyway show below the text."> | <img src="docs/screenshots/settings-models.jpg" alt="Settings, Models. FLUX.2 Klein 4B, Qwen Image 2.1 Base Q4 and Z-Image Turbo are downloaded, each with Remove. The default model is Auto. The window also shows Add Model."> |
+### The app keeps your message while the agent plans
+
+After you send a message, the chat shows it with "Planning…" while the agent decides. You can type your next message. You can send it when the plan is complete.
+
+<img src="docs/screenshots/planning.jpg" width="640" alt="The message 'make them match' after you send it, with 'Planning…' below it.">
+
+### If the agent is not sure, it asks
+
+With two images in the chat, the message "make them match" gets a question. The agent does not guess. You can answer the question, click **Create new** or **Edit current**, or send a different request.
+
+<img src="docs/screenshots/agent-asks.jpg" width="640" alt="The message 'make them match' gets this question from the agent: 'Could you clarify which two images you want to match, or if you mean to adjust the current image to match a previous one?'. Create new, Edit current and Cancel show above the message box.">
+
+### It can use two images
+
+The message "give the teapot the same weathered wood as the boat" edits the teapot. It uses the boat as a reference ("Edited from image 2 · v1 + 1 reference").
+
+<img src="docs/screenshots/answer-with-reference.jpg" width="560" alt="The message 'give the teapot the same weathered wood as the boat' gives Image 3, edited from image 2 with one reference. The ceramic teapot is now made of carved, dark, weathered wood.">
+
+### It finds older images
+
+The teapot is the latest image. The message "make the boat red" edits the boat in image 1. If the message refers to older images, the agent examines them.
+
+<img src="docs/screenshots/finds-older-image.jpg" width="560" alt="The message 'make the boat red' gives Image 4, 'Edited from image 1'. The wooden rowboat on the misty mountain lake is now red.">
+
+### It replies to casual messages
+
+If you send a greeting or thanks, the agent replies in the chat. It does not make an image.
+
+<img src="docs/screenshots/agent-replies.jpg" width="560" alt="The message 'hello' gets a greeting from the agent. The message 'a small red fox curled up asleep in fresh snow, soft morning light' makes Image 1, a sleeping fox. The message 'thanks, that's lovely!' gets the reply 'You're welcome! I'm glad you like the image of the sleeping fox'.">
+
+### Use your own images
+
+You can attach a maximum of 3 images with the paper clip or with drag and drop. The message "a lighthouse on a cliff at dusk, painted like this" uses the attached watercolor as the style.
+
+<img src="docs/screenshots/attach-composer.jpg" width="640" alt="The message box with watercolor-forest.png attached and the message 'a lighthouse on a cliff at dusk, painted like this'."><br>
+<img src="docs/screenshots/attach-result.jpg" width="560" alt="Image 1, 'Edited from the attached image': a lighthouse on a cliff at dusk in soft watercolor.">
+
+### The app keeps every version
+
+**Variations** adds v2, v3 and more to a result. Click v1 or v2 to show a version. You can edit each version. The save button writes the image to Pictures/dMLX with its prompt and seed.
+
+<img src="docs/screenshots/versions.jpg" width="480" alt="Image 2, 'Edited from image 1', a red rowboat on a misty mountain lake. Below it: the v1 and v2 buttons (v2 is selected), Variations, Crop / Draw and the save button.">
+
+### Auto selects the model, and the engine first does a memory check
+
+For a title in the image, the agent selected Qwen Image 2.1, because this model is the best at text in images. This model needed 9.5 GB, but only 9.2 GB was available without slowing down the Mac. Thus the engine refused the job. **Try anyway** runs the job in the mode that uses the least memory. If the Mac becomes slow, the engine stops the job.
+
+<img src="docs/screenshots/memory-check.jpg" width="640" alt="The message 'write the title NIGHT BLADE in the banner at the top' gives Image 2 with Qwen Image 2.1 Base Q4 and this text: 'needs about 9.5 GB but only 9.2 GB can be used without slowing down your Mac'. Retry and Try anyway show below the text.">
+
+### Add models
+
+Use the search field to find community versions of the supported families. You can also paste a Hugging Face repo. Before the download, dMLX makes sure that it can use the repo. It also shows the download size and the license.
+
+<img src="docs/screenshots/add-model.jpg" width="480" alt="The Add a model window. It has a search field and community versions of FLUX.2 Klein, Z-Image Turbo and other models, with Add and Download.">
+
+### Control the models
+
+You can see the installed models, remove models, and set the default model. If you set Auto, the agent selects the model.
+
+<img src="docs/screenshots/settings-models.jpg" width="480" alt="Settings, Models. FLUX.2 Klein 4B, Qwen Image 2.1 Base Q4 and Z-Image Turbo are downloaded, each with Remove. The default model is Auto. The window also shows Add Model.">
 
 ## The agent
 
