@@ -36,37 +36,41 @@ A small agent on your Mac plans each message.
 ## Edit with Crop / Draw
 
 You can write in simple words how to change a result. You can also show your request on the image first.
-Open **Crop / Draw** on an image. Crop the image. Paint marks on it. Erase the marks that are not correct.
-Attach the copy. Then write what to do. The app does not change the original image.
+Open **Crop / Draw** below a result. Crop the image. Paint marks on it. Erase the marks that are not correct.
+Click **Attach edited image**. Then write what to do. The app does not change the original image.
 
 | 1 · Crop | 2 · Paint a mark | 3 · Erase an incorrect mark |
 |---|---|---|
-| <img src="docs/screenshots/edit-1-crop.jpg" alt="The Crop / Draw editor with the Crop tool. A small dashed crop frame surrounds a white teapot on a wooden table. The presets are Full, Square, 3:2 and 2:3."> | <img src="docs/screenshots/edit-2-paint.jpg" alt="The Paint tool. A red circle surrounds the body of the teapot. An unwanted red line also goes onto the table."> | <img src="docs/screenshots/edit-3-erase.jpg" alt="The Erase tool. The tool erased the unwanted line, which shows faded. The red circle stays. 'Drag to erase paint. The original image is never erased.'"> |
+| <img src="docs/screenshots/edit-1-crop.jpg" alt="The Crop / Draw editor with the Crop tool. A dashed crop frame surrounds a white teapot on a wooden table. The area outside the frame is dark."> | <img src="docs/screenshots/edit-2-paint.jpg" alt="The Paint tool. A red circle surrounds the body of the teapot. An incorrect red line goes from the circle onto the table."> | <img src="docs/screenshots/edit-3-erase.jpg" alt="The Erase tool. The incorrect red line is gone. The red circle stays. The text below the image says 'Drag to erase paint. The original image is never erased.'"> |
+| The dark area is not in the prepared image. | The circle shows the area to change. The line onto the table is an error. | Erase removes only paint. The image below the paint does not change. |
 
-**4 · Attach and ask.** **Attach edited image** puts the prepared copy in the message box. The agent reads
-the marks together with your words.
+**4 · Attach and ask.** **Attach edited image** puts the prepared image in the message box. The agent
+gets the prepared image, a note that tells it the image is image 1 after Crop / Draw, and your words.
+The marks are part of the prepared image. Write "remove the marks" in your message, or the result can
+keep them. The prepared image is one of the 3 images that you can attach.
 
 <img src="docs/screenshots/edit-4-attach.jpg" alt="The message box with 'Prepared image 1' attached and the message 'paint a blue and white floral pattern on the teapot where I circled in red, and remove the red marks'. Above the message box: 'Will edit the attached image · FLUX.2 Klein 4B'.">
 
-| Before | After: "paint a blue and white floral pattern on the teapot where I circled in red, and remove the red marks" |
+| Before (image 1) | After (image 2, "Edited from the prepared image 1") |
 |---|---|
-| <img src="docs/screenshots/edit-before.jpg" alt="Image 1: a plain white ceramic teapot on a wooden table."> | <img src="docs/screenshots/edit-after.jpg" alt="Image 2: the same teapot with a closer crop. A blue and white floral pattern now covers it. No red marks remain."> |
+| <img src="docs/screenshots/edit-before.jpg" alt="Image 1: a plain white ceramic teapot on a wooden table."> | <img src="docs/screenshots/edit-after.jpg" alt="Image 2: the same teapot, closer, because of the crop. A blue and white floral pattern covers it. No red marks remain."> |
 
 ## Tour of the app
 
 All screenshots show the app on a 24 GB Mac. The agent model is Qwen3-VL 8B.
 
-| **If the agent is not sure, it asks.** With two images in the chat, the message "make them match" gets a question. The agent does not guess. You can answer the question, use the shortcuts, or send a different request. | **Then it uses the two images.** The message "give the teapot the same weathered wood as the boat" edits the teapot. It uses the boat as a reference ("Edited from image 2 · + 1 reference"). |
+| | |
 |---|---|
-| <img src="docs/screenshots/agent-asks.jpg" alt="The message 'make them match' gets this question from the agent: 'Could you clarify which two images you want to match, or if you mean to adjust the current image to match a previous one?'. Create new, Edit current and Cancel show above the message box."> | <img src="docs/screenshots/answer-with-reference.jpg" alt="The message 'give the teapot the same weathered wood as the boat' gives Image 3, edited from image 2 with one reference. The ceramic teapot is now made of carved, dark, weathered wood."> |
-| **It finds older images.** The teapot is the latest image. The message "make the boat red" edits the boat in image 1. If the message refers to older images, the agent examines them. | **It replies to casual messages.** If you send a greeting or thanks, the agent replies in the chat. It does not make an image. |
-| <img src="docs/screenshots/finds-older-image.jpg" alt="The message 'make the boat red' gives Image 4, 'Edited from image 1'. The wooden rowboat on the misty mountain lake is now red."> | <img src="docs/screenshots/agent-replies.jpg" alt="The message 'hello' gets a greeting from the agent. Then the app makes an image of a sleeping fox in the snow. The message 'thanks, that's lovely!' gets the reply 'You're welcome! I'm glad you like the image of the sleeping fox'."> |
-| **Use your own pictures.** You can attach a maximum of 3 files with the paper clip or with drag and drop. The message "a lighthouse on a cliff at dusk, painted like this" uses the attached watercolor as the style. | **Use Crop / Draw on a result.** You can crop the image, paint marks, and erase marks. Then you attach the copy. For the full procedure, refer to [Edit with Crop / Draw](#edit-with-crop--draw). |
-| <img src="docs/screenshots/attach-composer.jpg" alt="The message box with watercolor-forest.png attached and the message 'a lighthouse on a cliff at dusk, painted like this'."><br><img src="docs/screenshots/attach-result.jpg" alt="Image 1, 'Edited from the attached image': a lighthouse on a cliff at dusk in soft watercolor."> | <img src="docs/screenshots/edit-2-paint.jpg" alt="The Crop / Draw editor with a red circle painted around a teapot."> |
-| **Auto selects the model, and the engine first does a memory check.** For a title in the image, the agent selected Qwen Image 2.1, because this model is the best at words. This model needed 9.5 GB, but only 9.2 GB was free. Thus the engine refused the job, and the Mac did not become slow. **Try anyway** runs the job in the mode that uses the least memory. | **The app keeps your message while the agent plans.** After you send a message, the chat shows it with "Planning…" while the agent decides. You can continue to type. |
-| <img src="docs/screenshots/memory-check.jpg" alt="The message 'write the title NIGHT BLADE in the banner at the top' gives Image 2 with Qwen Image 2.1 Base Q4 and this text: 'needs about 9.5 GB but only 9.2 GB can be used without slowing down your Mac'. Retry and Try anyway show below the text."> | <img src="docs/screenshots/planning.jpg" alt="The message 'make them match' after you send it, with 'Planning…' below it."> |
-| **Add models.** Use the search field to find community versions of the supported families. You can also paste any Hugging Face repo. dMLX does a check of the repo before it downloads it. | **Control the models.** You can see the installed models, remove models, and set the default model. If you set Auto, the agent selects the model. |
-| <img src="docs/screenshots/add-model.jpg" alt="The Add a model window. It has a search field and community versions of FLUX.2 Klein, Z-Image Turbo and other models, with Add and Download."> | <img src="docs/screenshots/settings-models.jpg" alt="Settings, Models. FLUX.2 Klein 4B, Qwen Image 2.1 Base Q4 and Z-Image Turbo are downloaded, each with Remove. The default model is Auto. The window also shows Add Model."> |
+| **The app keeps your message while the agent plans.** After you send a message, the chat shows it with "Planning…" while the agent decides. You can type your next message. You can send it when the plan is complete. | **If the agent is not sure, it asks.** With two images in the chat, the message "make them match" gets a question. The agent does not guess. You can answer the question, click **Create new** or **Edit current**, or send a different request. |
+| <img src="docs/screenshots/planning.jpg" alt="The message 'make them match' after you send it, with 'Planning…' below it."> | <img src="docs/screenshots/agent-asks.jpg" alt="The message 'make them match' gets this question from the agent: 'Could you clarify which two images you want to match, or if you mean to adjust the current image to match a previous one?'. Create new, Edit current and Cancel show above the message box."> |
+| **It can use two images.** The message "give the teapot the same weathered wood as the boat" edits the teapot. It uses the boat as a reference ("Edited from image 2 · v1 + 1 reference"). | **It finds older images.** The teapot is the latest image. The message "make the boat red" edits the boat in image 1. If the message refers to older images, the agent examines them. |
+| <img src="docs/screenshots/answer-with-reference.jpg" alt="The message 'give the teapot the same weathered wood as the boat' gives Image 3, edited from image 2 with one reference. The ceramic teapot is now made of carved, dark, weathered wood."> | <img src="docs/screenshots/finds-older-image.jpg" alt="The message 'make the boat red' gives Image 4, 'Edited from image 1'. The wooden rowboat on the misty mountain lake is now red."> |
+| **It replies to casual messages.** If you send a greeting or thanks, the agent replies in the chat. It does not make an image. | **Use your own images.** You can attach a maximum of 3 images with the paper clip or with drag and drop. The message "a lighthouse on a cliff at dusk, painted like this" uses the attached watercolor as the style. |
+| <img src="docs/screenshots/agent-replies.jpg" alt="The message 'hello' gets a greeting from the agent. The message 'a small red fox curled up asleep in fresh snow, soft morning light' makes Image 1, a sleeping fox. The message 'thanks, that's lovely!' gets the reply 'You're welcome! I'm glad you like the image of the sleeping fox'."> | <img src="docs/screenshots/attach-composer.jpg" alt="The message box with watercolor-forest.png attached and the message 'a lighthouse on a cliff at dusk, painted like this'."><br><img src="docs/screenshots/attach-result.jpg" alt="Image 1, 'Edited from the attached image': a lighthouse on a cliff at dusk in soft watercolor."> |
+| **The app keeps every version.** **Variations** adds v2, v3 and more to a result. Click v1 or v2 to show a version. You can edit each version. The save button writes the image to Pictures/dMLX with its prompt and seed. | **Add models.** Use the search field to find community versions of the supported families. You can also paste a Hugging Face repo. Before the download, dMLX makes sure that it can use the repo. It also shows the download size and the license. |
+| <img src="docs/screenshots/versions.jpg" alt="Image 2, 'Edited from image 1', a red rowboat on a misty mountain lake. Below it: the v1 and v2 buttons (v2 is selected), Variations, Crop / Draw and the save button."> | <img src="docs/screenshots/add-model.jpg" alt="The Add a model window. It has a search field and community versions of FLUX.2 Klein, Z-Image Turbo and other models, with Add and Download."> |
+| **Auto selects the model, and the engine first does a memory check.** For a title in the image, the agent selected Qwen Image 2.1, because this model is the best at text in images. This model needed 9.5 GB, but only 9.2 GB was available without slowing down the Mac. Thus the engine refused the job. **Try anyway** runs the job in the mode that uses the least memory. If the Mac becomes slow, the engine stops the job. | **Control the models.** You can see the installed models, remove models, and set the default model. If you set Auto, the agent selects the model. |
+| <img src="docs/screenshots/memory-check.jpg" alt="The message 'write the title NIGHT BLADE in the banner at the top' gives Image 2 with Qwen Image 2.1 Base Q4 and this text: 'needs about 9.5 GB but only 9.2 GB can be used without slowing down your Mac'. Retry and Try anyway show below the text."> | <img src="docs/screenshots/settings-models.jpg" alt="Settings, Models. FLUX.2 Klein 4B, Qwen Image 2.1 Base Q4 and Z-Image Turbo are downloaded, each with Remove. The default model is Auto. The window also shows Add Model."> |
 
 ## The agent
 
@@ -128,10 +132,10 @@ uses simple rules to route messages. For more data, refer to
   describe a different image.
 - **To use an older image:** refer to it in your message ("make image 1 black and white", "put the teapot
   from the first one in the boat").
-- **To use your own pictures:** attach a maximum of 3 pictures from your Mac with the paper clip. As an
-  alternative, drop the pictures on the message box.
+- **To use your own images:** attach a maximum of 3 images from your Mac with the paper clip. As an
+  alternative, drop the images on the message box. A prepared image from Crop / Draw is one of the 3.
 - **Variations** adds v2, v3… to a result. **Crop / Draw** crops a result or paints on it, and then attaches
-  the copy. The save button writes the image to Pictures/dMLX with its prompt and seed.
+  the prepared image. The save button writes the image to Pictures/dMLX with its prompt and seed.
 - **Edit Prompt…** on one of your messages runs the image of that message again with the new words.
 - While the app makes an image, the send button changes to **Stop**. You can write your next message during
   this time.
