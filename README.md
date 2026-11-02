@@ -35,23 +35,18 @@ A small agent on your Mac plans each message.
 
 ## What you can make
 
-Each example is one message in the app, with **Auto** set. The agent selected the model. The left image
-is before the message and the right image is after it.
+Each example is a chat in the app, with **Auto** set. The agent selected the model. For a removal, the
+first message makes an image and the second message removes something from it.
 
-| Remove text: "remove all the text from the window" |
-|---|
-| <img src="docs/screenshots/use-remove-text.jpg" alt="Left: a coffee shop window with large white hand-painted lettering on the glass. Right: the same window and street with no lettering."> |
-| Qwen Image 2.1 · about 5 min |
+| Remove text | Remove an object | Remove a person |
+|---|---|---|
+| <img src="docs/screenshots/use-remove-text.jpg" alt="Chat: a message asks for a coffee shop window with hand-painted lettering, and Image 1 shows it. The message 'remove all the text from the window' gives Image 2, the same window with no lettering."> | <img src="docs/screenshots/use-remove-object.jpg" alt="Chat: a message asks for a desk with a laptop, a coffee mug and a plant, and Image 1 shows it. The message 'remove the coffee mug' gives Image 2, the same desk with no mug."> | <img src="docs/screenshots/use-remove-person.jpg" alt="Chat: a message asks for a beach at sunset with one person who walks along the water, and Image 1 shows it. The message 'remove the person' gives Image 2, the same beach with no person."> |
+| "remove all the text from the window" · Qwen Image 2.1 · about 5 min | "remove the coffee mug" · FLUX.2 Klein 4B · 36 s | "remove the person" · FLUX.2 Klein 4B · 40 s |
 
-| Remove an object: "remove the coffee mug" | Remove a person: "remove the person" |
+| Poster (Portrait) | Banner (Landscape) |
 |---|---|
-| <img src="docs/screenshots/use-remove-object.jpg" alt="Left: a desk with a laptop, a white coffee mug and a potted plant. Right: the same desk with no mug."> | <img src="docs/screenshots/use-remove-person.jpg" alt="Left: a beach at sunset with one person who walks along the water. Right: the same beach with no person."> |
-| FLUX.2 Klein 4B · 36 s | FLUX.2 Klein 4B · 41 s |
-
-| Poster (Portrait): a jazz night poster with the title "MIDNIGHT ECHO" | Banner (Landscape): a bakery banner with the words "FRESH BREAD DAILY" |
-|---|---|
-| <img src="docs/screenshots/use-poster.jpg" width="300" alt="A tall art deco poster: a saxophone player in blue light, with the title MIDNIGHT ECHO in large gold letters."> | <img src="docs/screenshots/use-banner.jpg" alt="A wide banner: loaves of bread on a wooden counter in morning light, with the words FRESH BREAD DAILY in large letters."> |
-| Qwen Image 2.1 · about 4 min | FLUX.2 Klein 4B · 19 s |
+| <img src="docs/screenshots/use-poster.jpg" alt="Chat: a message asks for a jazz night poster with the title MIDNIGHT ECHO in large gold letters. Image 1 is an art deco poster of a saxophone player in blue light, with MIDNIGHT ECHO in gold."> | <img src="docs/screenshots/use-banner.jpg" alt="Chat: a message asks for a bakery banner with the words FRESH BREAD DAILY. Image 1 is a wide image of loaves on a wooden counter, with FRESH BREAD DAILY at the top."> |
+| Qwen Image 2.1 · about 4 min | Qwen Image 2.1 · about 4 min |
 
 For exact words in an image, the agent usually selects Qwen Image 2.1. This model is slow, it needs about
 9.5 GB of free memory, and its license does not permit commercial use. FLUX.2 Klein 4B is fast, but it
