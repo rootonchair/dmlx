@@ -127,3 +127,32 @@ def test_saved_specs_load_and_bad_files_are_skipped(tmp_path, monkeypatch, remot
 ])
 def test_suggestion_labels(repo, expected):
     assert catalog.label(repo) == expected
+
+
+@pytest.mark.parametrize("repo", ["someone/Qwen-Image-2.1-mflux-4bit", "mflux-community/qwen-image-2-1-mflux-q4"])
+def test_detects_qwen_image_21_under_both_names(remote, repo):
+    remote(_names(double=60), {"mflux_version": "0.23.0", "quantization_level": "4"})
+    assert catalog.detect(repo, FILES, "qwen-research").family == "qwen-image-2.1"
+
+
+def test_suggestions_keep_supported_families_only(monkeypatch):
+    import huggingface_hub
+    from types import SimpleNamespace
+
+    repos = [
+        "mflux-community/flux2-klein-4b-mflux-q4",
+        "mflux-community/qwen-image-2-1-mflux-q4",
+        "mflux-community/qwen-image-2-1-turbo-mflux-q4",
+        "mflux-community/flux-3-image-klein-mflux-q4",
+        "mflux-community/qwen-image-2-1-controlnet-union-mflux-q4",
+        "mflux-community/krea-2-turbo-mflux-q4",
+    ]
+
+    class Api:
+        def list_models(self, **_):
+            return [SimpleNamespace(id=r, downloads=1) for r in repos]
+
+    monkeypatch.setattr(huggingface_hub, "HfApi", Api)
+    monkeypatch.setattr(catalog, "_suggestions", None)
+    assert [s["repo"] for s in catalog.suggestions()] == repos[:2]
+    monkeypatch.setattr(catalog, "_suggestions", None)

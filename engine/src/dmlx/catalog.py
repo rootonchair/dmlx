@@ -190,11 +190,16 @@ def _bits_label(quantization: int | None) -> str:
     return f"{quantization}-bit" if quantization else "full precision"
 
 
+def _is_qwen_21(repo: str) -> bool:
+    """Qwen Image 2.1, named either "Qwen-Image-2.1" or "qwen-image-2-1" (mflux-community)."""
+    return "qwen-image-2-1" in _slug(repo)
+
+
 def detect(repo: str, files: dict[str, int], card_license: str | None) -> Inspection:
     lowered = repo.lower()
     if "controlnet" in lowered or "lora" in lowered:
         raise InspectError("ControlNet and LoRA repos are add-ons, not full models; dMLX does not support them yet.")
-    if "qwen-image-2.1" in lowered and "turbo" in lowered:
+    if _is_qwen_21(repo) and "turbo" in lowered:
         raise InspectError("Qwen Image 2.1 Turbo is not supported yet; use a Base MFLUX checkpoint.")
     folders = {f.split("/")[0] for f in files if "/" in f and f.endswith(".safetensors")}
     if "transformer" not in folders:
@@ -213,7 +218,7 @@ def detect(repo: str, files: dict[str, int], card_license: str | None) -> Inspec
     level = meta.get("quantization_level")
     quantization = int(level) if level not in (None, "", "None", "null") else None
     double, single = _count(names, "transformer_blocks"), _count(names, "single_transformer_blocks")
-    if "qwen-image-2.1" in lowered and double and not single:
+    if _is_qwen_21(repo) and double and not single:
         config, family = "qwen_image_21", "qwen-image-2.1"
         name = "Qwen Image 2.1 Base"
         defaults = {"steps": 40, "guidance": 4.0, "width": 1024, "height": 1024}
@@ -333,7 +338,9 @@ def suggestions() -> list[dict]:
         lowered = model.id.lower()
         if "controlnet" in lowered or "lora" in lowered:
             continue
-        if "klein" in lowered or "z-image" in lowered or ("qwen-image-2.1" in lowered and "turbo" not in lowered):
+        if "flux-3" in lowered:  # FLUX.3 Image Klein: another family, not FLUX.2 Klein
+            continue
+        if "klein" in lowered or "z-image" in lowered or (_is_qwen_21(model.id) and "turbo" not in lowered):
             out.append({"repo": model.id, "label": label(model.id), "downloads": getattr(model, "downloads", None) or 0})
     _suggestions = (time.monotonic(), out)
     return out
