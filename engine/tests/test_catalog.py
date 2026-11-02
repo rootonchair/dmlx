@@ -136,8 +136,9 @@ def test_detects_qwen_image_21_under_both_names(remote, repo):
 
 
 def test_suggestions_keep_supported_families_only(monkeypatch):
-    import huggingface_hub
     from types import SimpleNamespace
+
+    import huggingface_hub
 
     repos = [
         "mflux-community/flux2-klein-4b-mflux-q4",
@@ -154,5 +155,40 @@ def test_suggestions_keep_supported_families_only(monkeypatch):
 
     monkeypatch.setattr(huggingface_hub, "HfApi", Api)
     monkeypatch.setattr(catalog, "_suggestions", None)
-    assert [s["repo"] for s in catalog.suggestions()] == repos[:2]
+    assert [s["repo"] for s in catalog.suggestions()] == [repos[0], repos[1], repos[3]]
     monkeypatch.setattr(catalog, "_suggestions", None)
+
+
+GENERIC_FILES = {
+    "transformer/0.safetensors": 3_000_000_000,
+    "text_encoder/0.safetensors": 2_000_000_000,
+    "text_encoder/tokenizer.json": 1000,
+    "vae/0.safetensors": 160_000_000,
+}
+
+
+def test_detects_a_generic_family_from_its_weight_definition(remote):
+    remote([], {"mflux_version": "0.23.0", "quantization_level": "4"})
+    found = catalog.detect("mflux-community/flux-3-image-klein-mflux-q4", GENERIC_FILES, "flux-3-image-klein-license")
+    spec = found.to_spec_data()
+
+    assert (found.family, found.mflux_config, found.name) == ("flux3-klein", "flux3_image_klein", "FLUX.3 Klein (4-bit)")
+    assert found.tasks == ["t2i", "edit"] and not found.permissive_license
+    assert spec["adapter"] == "mflux.flux3_klein" and spec["agent_note"]
+    assert spec["components"]["transformer"]["stream"] == ["auto"]
+
+
+def test_a_generic_family_needs_every_part_and_its_tokenizer(remote):
+    remote([], {"mflux_version": "0.23.0", "quantization_level": "4"})
+    files = {k: v for k, v in GENERIC_FILES.items() if k != "vae/0.safetensors"}
+    with pytest.raises(catalog.InspectError, match="missing its vae"):
+        catalog.detect("mflux-community/flux-3-image-klein-mflux-q4", files, None)
+    # ERNIE keeps its tokenizer in tokenizer/, FLUX.3 in text_encoder/.
+    with pytest.raises(catalog.InspectError, match="missing its tokenizer"):
+        catalog.detect("mflux-community/ernie-image-turbo-mflux-q4", GENERIC_FILES, None)
+
+
+def test_unsupported_versions_of_a_generic_family_are_named():
+    with pytest.raises(catalog.InspectError, match="ERNIE Image Turbo"):
+        catalog.detect("mflux-community/ernie-image-base-mflux-q4", GENERIC_FILES, None)
+    assert catalog.label("mflux-community/flux-3-image-klein-mflux-q8") == "FLUX.3 Klein · 8-bit"

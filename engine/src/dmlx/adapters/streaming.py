@@ -107,9 +107,23 @@ def block_prefixes(index: TensorIndex, lists: list[str]) -> list[str]:
     return [f"{name}.{i}." for name, i in sorted(found, key=lambda f: (lists.index(f[0]), f[1]))]
 
 
+def stacks_from_index(index: TensorIndex, min_blocks: int = 4) -> list[str]:
+    """Block stacks named by the weights themselves: the path before the first number, if it has enough blocks."""
+    numbers: dict[str, set[int]] = {}
+    for key in index.keys():
+        parts = key.split(".")
+        for i, part in enumerate(parts[:-1]):
+            if part.isdigit():
+                numbers.setdefault(".".join(parts[:i]), set()).add(int(part))
+                break
+    return sorted(path for path, found in numbers.items() if path and len(found) >= min_blocks)
+
+
 def stream_peak_bytes(directory: Path, lists: list[str]) -> int:
     """Weights resident while streaming: the non-block part, the running block and the one read ahead."""
     index = TensorIndex(directory)
+    if lists == ["auto"]:
+        lists = stacks_from_index(index)
     prefixes = block_prefixes(index, lists)
     blocks = [index.nbytes(p) for p in prefixes]
     return index.nbytes() - sum(blocks) + 2 * max(blocks, default=0)

@@ -96,7 +96,8 @@ class Hooks:
 
     def before_phase(self, phase):
         self.events.append(f"+{phase}")
-        part = {"encode": "text_encoder", "denoise": "transformer", "decode": "vae", "preprocess": "vae"}[phase]
+        part = {"encode": "text_encoder", "denoise": "transformer", "decode": "vae", "preprocess": "vae",
+                "layout": "transformer"}[phase]
         if not self.adapter.is_loaded(part):
             self.adapter.load_component(part)
 
@@ -129,8 +130,8 @@ def test_parts_load_in_their_phase_even_when_read_before_the_loop(tmp_path):
 
     adapter.generate(_request(), hooks)
 
-    # The early transformer read enters denoise once and frees the text encoder first.
-    assert hooks.events[:3] == ["+encode", "-encode", "+denoise"]
+    # The early transformer read loads it (layout) and frees the text encoder first; the loop enters denoise.
+    assert hooks.events[:3] == ["+encode", "-encode", "+layout"]
     assert hooks.events.count("+denoise") == 1
     assert "+decode" in hooks.events
     assert adapter.loaded == ["text_encoder", "transformer", "vae"]
@@ -182,3 +183,30 @@ def test_find_stacks_finds_nested_block_lists():
             self.pair = [Part("a"), Part("b")]  # too short to be a stack
 
     assert sorted(find_stacks(Outer())) == ["blocks", "model.layers"]
+
+
+def test_stacks_from_the_weight_index():
+    from dmlx.adapters.streaming import stacks_from_index
+
+    class Index:
+        names = [f"language_model.model.layers.{i}.mlp.weight" for i in range(6)]
+        names += [f"layers.{i}.attn.weight" for i in range(5)]
+        names += ["pair.0.weight", "pair.1.weight", "norm.weight"]
+
+        def keys(self, prefix=""):
+            return [n for n in self.names if n.startswith(prefix)]
+
+    assert stacks_from_index(Index()) == ["language_model.model.layers", "layers"]
+
+
+def test_cached_encodings_are_evaluated_when_encoding_ends(tmp_path):
+    adapter = _adapter(tmp_path)
+    settled = []
+    original = adapter._settle_encodings
+    adapter._settle_encodings = lambda: (settled.append(len(adapter.prompt_cache)), original())
+    hooks = Hooks(adapter)
+
+    adapter.generate(_request(), hooks)
+
+    # Settled before the guard frees the text encoder, with the new encoding already in the cache.
+    assert settled and settled[0] == 1

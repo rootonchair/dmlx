@@ -1,6 +1,6 @@
 # 15 · New model families faster
 
-**Status:** In progress. Generic adapter works for ERNIE Image Turbo (2026-11-02); not offered in the app yet.
+**Status:** Done for ERNIE Image Turbo, MOSS Image and FLUX.3 Klein (2026-11-02). More families open below.
 
 ## Why
 dMLX runs three families in mflux format (FLUX.2 Klein, Z-Image, Qwen Image 2.1). Draw Things already ships
@@ -106,16 +106,31 @@ A second run of the same prompt skips the text encoder (the bounded prompt cache
 **No change to the current families.** The base adapter now reaches parts through `_module` and `_install`.
 FLUX.2 Klein 512 px gives identical images before and after, sequential and streamed.
 
-## To do
+## Done (2026-11-02)
 - [x] Prototype the generic adapter on ERNIE Image Turbo; measure the scratch build cost.
-- [ ] Measure ERNIE's activation and decode numbers properly (`tools/bench_family.py`); the spec still has
-      FLUX.2 VAE placeholders. Then add ERNIE to the catalog with its `agent_note`.
-- [ ] Move FLUX.2 Klein, Z-Image and Qwen Image 2.1 to the generic adapter. All three must give the same
-      images (same seed) and the same peaks as today.
-- [ ] Component roles in `ModelSpec` and `JobGuard`.
-- [ ] Detection from the weight definition; catalog suggestions from the supported family list.
-- [ ] `tools/bench_family.py`; add ERNIE, MOSS and FLUX.3 Klein with their notes and the license flow.
-- [ ] Update to mflux 0.24 (check for API changes), then Iris.
+- [x] `dmlx bench-family` (`engine/src/dmlx/family_bench.py`): per-phase peaks above the resident weights,
+      sizes under 1 MP counted as 1 MP, 10% margin. Checked against FLUX.2 Klein's hand-measured numbers.
+- [x] ERNIE Image Turbo in the catalog with measured numbers and an `agent_note`.
+- [x] Detection from the weight definition (every part and tokenizer must be in the repo); suggestions from
+      the supported family list; unsupported versions (ERNIE base, FLUX.3 Klein Base) are named.
+- [x] FLUX.2 Klein, Z-Image and Qwen Image 2.1 run on the generic adapter (`mflux_family.py`; Qwen 2.1 is a
+      small subclass). The old per-family classes are gone. Results: `docs/benchmarks/families.md`.
+- [x] MOSS Image and FLUX.3 Klein (see the benchmark doc). Their measurements found that a lazily cached
+      prompt encoding kept the text encoder alive; the adapter now evaluates cached encodings when the
+      encode phase ends (FLUX.3 peak 4.83 → 3.70 GB, MOSS 6.94 → 4.37 GB at 512 px).
+- [x] `stream: [auto]`: the adapter finds the stacks from the module, the planner from the weight index.
+
+Component roles (design point 4) turned out not to be needed for these families: specs already give each
+part a phase, and Boogu's `mllm` is only a folder name. They come back with Ideogram 4 (two transformers)
+and Iris (no VAE).
+
+## Still open
+- [ ] The guard trusts `free_component`. Check active memory after a free and log when it does not drop,
+      so a leak like the one above shows up in any family.
+- [ ] Update to mflux 0.24 (check for API changes), then Iris (no VAE).
+- [ ] Boogu, FIBO (JSON prompts), Krea 2 (root shards, 16 GB), Ideogram 4 (two transformers, license).
+- [ ] Re-measure FLUX.2 Klein's and Z-Image's full decode with `bench-family` (mflux's block decoder made
+      the old 8.6 / 6.7 GB per MP spikes much smaller); only Macs with 32 GB or more use full decode.
 
 ## Done when
 A new mflux family is added with a family entry and a benchmark run, with no new engine code beyond hooks.

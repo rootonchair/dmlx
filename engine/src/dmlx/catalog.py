@@ -1,6 +1,6 @@
 """Adding models from Hugging Face: inspect a repo, build a model spec, suggest compatible repos.
 
-dMLX can run any repo of a model family it has an adapter for (FLUX.2 Klein, Z-Image, Qwen Image 2.1), saved in
+dMLX can run any repo of a model family it has an adapter for, saved in
 mflux's format (pre-quantized packs such as those from mflux-community). Inspection reads only
 the repo's file list, each component's weight index and one shard header (a ranged request of a
 few kilobytes), so nothing is downloaded before the user confirms.
@@ -59,10 +59,63 @@ FAMILIES = {
         "negative_prompt": True,
         "small_text_encoder": True,
     },
+    # Families the generic adapter runs from mflux's weight definitions (task 15). They are found by
+    # repo name ("match"), then checked against the weight definition's parts and tokenizers.
+    # Memory numbers: `dmlx bench-family` on an M5 (sequential, 10% margin), docs/benchmarks/families.md.
+    "ernie-image": {
+        "adapter": "mflux.ernie_image",
+        "tasks": ["t2i"],
+        "max_references": 0,
+        "match": ("ernie-image",),
+        "variants": [{"when": "turbo", "config": "ernie_image_turbo", "name": "ERNIE Image Turbo",
+                      "defaults": {"steps": 8, "guidance": 1.0}}],
+        "stream": {"text_encoder": ["auto"], "transformer": ["auto"]},
+        # Measured 2026-11-02: denoise +1.35 GB, decode +1.31 GB at 1024 px (mflux's block decoder
+        # is always low-memory, so full and tiled are the same).
+        "activation_gb_per_mp": 1.5,
+        "decode_gb_per_mp": 1.4,
+        "decode_tiled_gb_per_mp": 1.4,
+        "agent_note": "New images only; slow (about 2.5 minutes at 1024 px); "
+        "an 8B model by Baidu, good at following long prompts.",
+    },
+    "moss-image": {
+        "adapter": "mflux.moss_image",
+        "tasks": ["t2i"],
+        "max_references": 0,
+        "match": ("moss-image",),
+        "variants": [{"when": "sft", "config": "moss_image_sft", "name": "MOSS Image",
+                      "defaults": {"steps": 50, "guidance": 3.0}}],
+        "stream": {"text_encoder": ["auto"], "transformer": ["auto"]},
+        # Measured 2026-11-02 at 1024 px: denoise +0.86 GB, decode +7.04 GB full, +2.02 GB tiled.
+        "activation_gb_per_mp": 1.0,
+        "decode_gb_per_mp": 7.4,
+        "decode_tiled_gb_per_mp": 2.3,
+        "agent_note": "New images only; very slow (about 13 minutes at 1024 px, 3 minutes at 512 px); "
+        "use only when the user asks for it.",
+    },
+    "flux3-klein": {
+        "adapter": "mflux.flux3_klein",
+        "tasks": ["t2i", "edit"],
+        "max_references": 3,
+        "match": ("flux-3-image-klein", "flux3-image-klein", "flux3-klein"),
+        "variants": [{"unless": "base", "config": "flux3_image_klein", "name": "FLUX.3 Klein",
+                      "defaults": {"steps": 16, "guidance": 1.0}}],
+        "stream": {"text_encoder": ["auto"], "transformer": ["auto"]},
+        # Measured 2026-11-02 at 1024 px: denoise +1.06 GB (+1.52 GB with one reference), decode +1.31 GB.
+        "activation_gb_per_mp": 1.2,
+        "reference_activation_factor": 0.5,
+        "decode_gb_per_mp": 1.4,
+        "decode_tiled_gb_per_mp": 1.4,
+        "agent_note": "New images and edits with up to 3 images; about 2 minutes per 1024 px image "
+        "(4 for an edit), slower than FLUX.2 Klein.",
+    },
 }
 
 
-_OTHER_MODEL = "dMLX can run FLUX.2 Klein, Z-Image, and Qwen Image 2.1 Base models; this repo is a different model."
+_OTHER_MODEL = (
+    "dMLX can run FLUX.2 Klein, FLUX.3 Klein, Z-Image, Qwen Image 2.1 Base, ERNIE Image Turbo and MOSS Image "
+    "models; this repo is a different model."
+)
 
 
 class InspectError(Exception):
@@ -129,6 +182,8 @@ class Inspection:
             "reference_activation_factor": family.get("reference_activation_factor", 0.75),
             **{k: family[k] for k in ("decode_gb_per_mp", "decode_tiled_gb_per_mp", "decode_banded_gb_per_mp") if k in family},
         }
+        if family.get("agent_note"):
+            data["agent_note"] = family["agent_note"]
         if family.get("negative_prompt"):
             data["capabilities"] = {
                 "image.generate": {"inputs": {}, "prompt": {"positive": True, "negative": True}},
@@ -201,6 +256,9 @@ def detect(repo: str, files: dict[str, int], card_license: str | None) -> Inspec
         raise InspectError("ControlNet and LoRA repos are add-ons, not full models; dMLX does not support them yet.")
     if _is_qwen_21(repo) and "turbo" in lowered:
         raise InspectError("Qwen Image 2.1 Turbo is not supported yet; use a Base MFLUX checkpoint.")
+    family_id = _generic_family(repo)
+    if family_id:
+        return _detect_generic(repo, files, card_license, family_id)
     folders = {f.split("/")[0] for f in files if "/" in f and f.endswith(".safetensors")}
     if "transformer" not in folders:
         raise InspectError(_OTHER_MODEL)
@@ -260,6 +318,75 @@ def detect(repo: str, files: dict[str, int], card_license: str | None) -> Inspec
     )
 
 
+def _generic_family(repo: str) -> str | None:
+    slug = _slug(repo)
+    return next((fid for fid, fam in FAMILIES.items() if any(m in slug for m in fam.get("match", ()))), None)
+
+
+def _variant(repo: str, family: dict) -> dict | None:
+    slug = _slug(repo)
+    for variant in family["variants"]:
+        if variant.get("when") and variant["when"] not in slug:
+            continue
+        if variant.get("unless") and variant["unless"] in slug:
+            continue
+        return variant
+    return None
+
+
+def _subdir_files(files: dict[str, int], subdir: str) -> list[str]:
+    subdir = subdir.strip("/")
+    return [f for f in files if (f.startswith(f"{subdir}/") if subdir else "/" not in f)]
+
+
+def _detect_generic(repo: str, files: dict[str, int], card_license: str | None, family_id: str) -> Inspection:
+    """Check a repo against the weight definition of its family: every part and tokenizer must be there."""
+    from dmlx.adapters.mflux_family import weight_definition
+
+    family = FAMILIES[family_id]
+    variant = _variant(repo, family)
+    if variant is None:
+        names = ", ".join(v["name"] for v in family["variants"])
+        raise InspectError(f"dMLX runs {names} from this family; this version is not supported yet.")
+    definition = weight_definition(family["adapter"], variant["config"])
+    missing, size, transformer_dir = [], 0, None
+    for component in definition.get_components():
+        shards = [f for f in _subdir_files(files, component.hf_subdir) if f.endswith(".safetensors")]
+        if not shards:
+            missing.append(component.name.replace("_", " "))
+        size += sum(files[f] for f in shards)
+        if component.name == "transformer":
+            transformer_dir = component.hf_subdir.strip("/")
+    for tokenizer in definition.get_tokenizers():
+        if not _subdir_files(files, tokenizer.hf_subdir):
+            missing.append("tokenizer")
+    if missing:
+        raise InspectError(f"This repo is missing its {' and '.join(missing)}, so dMLX cannot run it on its own.")
+    _names, meta = _tensor_names(repo, files, transformer_dir or "transformer")
+    if not meta.get("mflux_version"):
+        raise InspectError(
+            "This repo is not in mflux's format. Use an mflux version of the model "
+            "(for example one from huggingface.co/mflux-community)."
+        )
+    level = meta.get("quantization_level")
+    quantization = int(level) if level not in (None, "", "None", "null") else None
+    license_id = (card_license or "unknown").lower()
+    return Inspection(
+        repo=repo,
+        id=_slug(repo),
+        name=f"{variant['name']} ({_bits_label(quantization)})",
+        family=family_id,
+        mflux_config=variant["config"],
+        tasks=list(family["tasks"]),
+        license=license_id,
+        permissive_license=license_id in _PERMISSIVE,
+        quantization=quantization,
+        size_bytes=size,
+        defaults={**variant["defaults"], "width": 1024, "height": 1024},
+        activation_gb_per_mp=family["activation_gb_per_mp"],
+    )
+
+
 def normalize_repo(text: str) -> str:
     """Accept `owner/name`, or a huggingface.co URL to the repo or one of its pages."""
     text = text.strip().rstrip("/")
@@ -309,7 +436,11 @@ def label(repo: str) -> str:
     name = repo.split("/")[-1].lower()
     tokens = re.split(r"[^a-z0-9]+", name)
     precision = next((f"{t[1:]}-bit" for t in tokens if re.fullmatch(r"q\d", t)), "full precision" if "bf16" in tokens else "")
-    if "klein" in tokens:
+    family_id = _generic_family(repo)
+    variant = _variant(repo, FAMILIES[family_id]) if family_id else None
+    if variant:
+        title = variant["name"]
+    elif "klein" in tokens:
         size = "9B" if "9b" in tokens else "4B"
         title = f"FLUX.2 Klein {'Base ' if 'base' in tokens else ''}{size}{' KV' if 'kv' in tokens else ''}"
     elif "z" in tokens and "image" in tokens:
@@ -338,9 +469,12 @@ def suggestions() -> list[dict]:
         lowered = model.id.lower()
         if "controlnet" in lowered or "lora" in lowered:
             continue
-        if "flux-3" in lowered:  # FLUX.3 Image Klein: another family, not FLUX.2 Klein
+        family_id = _generic_family(model.id)
+        if family_id:
+            if _variant(model.id, FAMILIES[family_id]) is None:
+                continue
+        elif not ("klein" in lowered or "z-image" in lowered or (_is_qwen_21(model.id) and "turbo" not in lowered)):
             continue
-        if "klein" in lowered or "z-image" in lowered or (_is_qwen_21(model.id) and "turbo" not in lowered):
-            out.append({"repo": model.id, "label": label(model.id), "downloads": getattr(model, "downloads", None) or 0})
+        out.append({"repo": model.id, "label": label(model.id), "downloads": getattr(model, "downloads", None) or 0})
     _suggestions = (time.monotonic(), out)
     return out

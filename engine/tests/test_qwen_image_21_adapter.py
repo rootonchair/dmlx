@@ -3,7 +3,7 @@ from pathlib import Path
 from PIL import Image
 
 from dmlx.adapters.base import GenRequest
-from dmlx.adapters.mflux_adapter import ADAPTERS, QwenImage21Adapter
+from dmlx.adapters.mflux_family import QwenImage21Adapter, adapter_for
 from dmlx.adapters.streaming import block_prefixes
 
 
@@ -29,7 +29,7 @@ def _request(*, negative_prompt=None):
 
 
 def test_qwen_adapter_is_registered_and_preserves_reference_order():
-    assert ADAPTERS["mflux.qwen_image_21"] is QwenImage21Adapter
+    assert adapter_for("mflux.qwen_image_21") is QwenImage21Adapter
     adapter = QwenImage21Adapter.__new__(QwenImage21Adapter)
     adapter.pipe = _Pipe()
 

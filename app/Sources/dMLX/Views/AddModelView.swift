@@ -27,7 +27,7 @@ struct AddModelView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Add a model").font(.title2.weight(.semibold))
-            Text("dMLX runs FLUX.2 Klein, Z-Image, and Qwen Image 2.1 Base models saved in mflux format. Search the community versions below, or paste any Hugging Face repo or link.")
+            Text("dMLX runs FLUX.2 Klein, FLUX.3 Klein, Z-Image, Qwen Image 2.1 Base, ERNIE Image Turbo and MOSS Image models saved in mflux format. Search the community versions below, or paste any Hugging Face repo or link.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
