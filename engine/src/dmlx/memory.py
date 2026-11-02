@@ -375,6 +375,9 @@ class JobGuard:
             if self.plan.strategy in ("sequential", "streamed"):
                 self.m.free(self.spec.id, "vae")
             self._ensure("transformer")
+        elif phase == "preprocess":
+            # Image-conditioned pipelines encode their source with the VAE before denoising.
+            self._ensure("vae")
         elif phase == "layout":
             # Some multimodal pipelines need transformer metadata before their
             # normal denoise callback, while the VAE is still encoding references.

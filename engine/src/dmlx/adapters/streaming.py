@@ -210,6 +210,17 @@ class SkippedLayer(nn.Module):
         return hidden_states, None
 
 
+def find_stacks(module: nn.Module, prefix: str = "", min_blocks: int = 4) -> list[str]:
+    """Dotted paths of the block stacks in a module (lists of at least `min_blocks` sub-modules)."""
+    found = []
+    for name, child in module.children().items():
+        if isinstance(child, list) and len(child) >= min_blocks and all(isinstance(c, nn.Module) for c in child):
+            found.append(prefix + name)
+        elif isinstance(child, nn.Module):
+            found += find_stacks(child, f"{prefix}{name}.", min_blocks)
+    return found
+
+
 def make_streamed(
     module: nn.Module, directory: Path, lists: list[str], skip_from: dict[str, int] | None = None, check=None,
 ) -> int:

@@ -1409,9 +1409,10 @@ def _default_adapter_factory(spec: ModelSpec, path: Path):
 
         return FakeAdapter(spec, path)
     from dmlx.adapters.mflux_adapter import ADAPTERS
+    from dmlx.adapters.mflux_family import adapter_for
 
     try:
-        cls = ADAPTERS[spec.adapter]
+        cls = ADAPTERS[spec.adapter] if spec.adapter in ADAPTERS else adapter_for(spec.adapter)
     except KeyError:
         raise RequestError("adapter_missing", f"No adapter {spec.adapter}", 500) from None
     return cls(spec, path)

@@ -18,5 +18,5 @@ One file per task; update its **Status** line as work lands.
 | 12 | [LoRA import, picked by the agent](12-lora-picked-by-the-agent.md) | Open |
 | 13 | [Faster turns: previews and a planner that stays loaded](13-faster-turns.md) | Open |
 | 14 | [Upscale and restore as a chat action](14-upscale-as-a-chat-action.md) | Open: a SeedVR2 adapter exists |
-| 15 | [New model families faster](15-new-model-families.md) | Researched; ERNIE pilot next |
+| 15 | [New model families faster](15-new-model-families.md) | In progress: generic adapter runs ERNIE |
 | 16 | [dMLX as a tool server for other local agents](16-tool-server-for-other-agents.md) | Open |

@@ -74,6 +74,7 @@ class _LoopHooks:
         self.hooks: PhaseHooks | None = None
         self.total = 0
         self.denoise_started = False
+        self.finished = False  # the denoise loop has ended (decode comes next)
 
     def call_before_loop(self, seed, prompt, latents, config, **_kwargs):
         if self.hooks:
@@ -84,6 +85,7 @@ class _LoopHooks:
             self.total = config.num_inference_steps
             if not self.denoise_started:
                 self.hooks.before_phase("denoise")
+                self.denoise_started = True
 
     def call_in_loop(self, t, seed, prompt, latents, config, time_steps, **_kwargs):
         if self.hooks:
@@ -96,6 +98,7 @@ class _LoopHooks:
             self.hooks.after_phase("denoise")
             self.hooks.before_phase("decode")
         self.denoise_started = False
+        self.finished = True
 
     def call_interrupt(self, *args, **kwargs):
         pass
@@ -163,7 +166,7 @@ class _MfluxAdapterBase:
 
     def is_loaded(self, name: str) -> bool:
         """Loaded in the form the current job wants (streamed or whole)."""
-        return getattr(self.pipe, name, None) is not None and self._streamed.get(name, False) == self._wants_stream(name)
+        return self._module(name) is not None and self._streamed.get(name, False) == self._wants_stream(name)
 
     def load_component(self, name: str) -> int:
         from mflux.models.common.weights.loading.weight_applier import WeightApplier
@@ -171,7 +174,7 @@ class _MfluxAdapterBase:
 
         with self._lock:
             if self.is_loaded(name):
-                return _module_bytes(getattr(self.pipe, name))
+                return _module_bytes(self._module(name))
             self.free_component(name)  # loaded in the other form
             if self._wants_stream(name):
                 return self._load_streamed(name)
@@ -185,10 +188,7 @@ class _MfluxAdapterBase:
             mx.eval(module.parameters())
             if name == "transformer":
                 self._after_transformer_load(module)
-            for pipe in self.pipes.values():
-                setattr(pipe, name, module)
-                if bits is not None:
-                    pipe.bits = bits
+            self._install(name, module, bits)
             if bits is not None:
                 self._quant_bits = bits
             self._streamed[name] = False
@@ -209,18 +209,16 @@ class _MfluxAdapterBase:
         )
         if name == "transformer":
             self._after_transformer_load(module)
-        for pipe in self.pipes.values():
-            setattr(pipe, name, module)
+        self._install(name, module)
         self._streamed[name] = True
         gc.collect()
         return nbytes
 
     def free_component(self, name: str) -> None:
         with self._lock:
-            if getattr(self.pipe, name, None) is None:
+            if self._module(name) is None:
                 return
-            for pipe in self.pipes.values():
-                setattr(pipe, name, None)
+            self._install(name, None)
             self._streamed.pop(name, None)
             gc.collect()
             mx.clear_cache()
@@ -241,7 +239,7 @@ class _MfluxAdapterBase:
         config = {"full": None, "tiled": TilingConfig(), "banded": TilingConfig(vae_decode_tiles_per_dim=None)}[mode]
         for pipe in self.pipes.values():
             pipe.tiling_config = config
-        vae = self.pipe.vae
+        vae = self._module("vae")
         if vae is not None:
             if mode == "banded":
                 from dmlx.adapters.banded_vae import decode
@@ -254,6 +252,8 @@ class _MfluxAdapterBase:
     def generate(self, req: GenRequest, hooks: PhaseHooks) -> Image.Image:
         with self._lock:
             self._loop_hooks.hooks = hooks
+            self._loop_hooks.denoise_started = False  # a cancelled job can leave it set
+            self._loop_hooks.finished = False
             self._current_hooks = hooks
             if self.stream_mode:
                 # A compiled forward pass cannot load weights part-way through.
@@ -286,6 +286,17 @@ class _MfluxAdapterBase:
         return value, False
 
     # -- subclass API ----------------------------------------------------------------
+    def _module(self, name: str):
+        """The loaded part, or None."""
+        return getattr(self.pipe, name, None)
+
+    def _install(self, name: str, module, bits=None) -> None:
+        """Give every pipeline the part (None removes it)."""
+        for pipe in self.pipes.values():
+            setattr(pipe, name, module)
+            if bits is not None:
+                pipe.bits = bits
+
     def _build_empty_pipelines(self) -> dict:
         raise NotImplementedError
 

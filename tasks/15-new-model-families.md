@@ -1,6 +1,6 @@
 # 15 · New model families faster
 
-**Status:** Researched 2026-11-02; not started.
+**Status:** In progress. Generic adapter works for ERNIE Image Turbo (2026-11-02); not offered in the app yet.
 
 ## Why
 dMLX runs three families in mflux format (FLUX.2 Klein, Z-Image, Qwen Image 2.1). Draw Things already ships
@@ -31,7 +31,7 @@ parts are the class names, the encode method name, and the place where the phase
 | MOSS Image | reads `self.transformer.time_signal` before the loop starts | the transformer must load before `before_loop` (like Qwen 2.1's `axes`) |
 | FLUX.3 Klein | reads `self.transformer.flow_map` before the loop; tokenizer is in `text_encoder/` | same; our catalog check wants `tokenizer/` or `processor/` and rejects the repo |
 | Iris 3B | no VAE (it works in pixels); repo saved with mflux 0.24.0 | no decode phase; needs mflux 0.24 |
-| Boogu | the text side is a component named `mllm` | the engine assumes `text_encoder` |
+| Boogu | the text side's folder is `mllm/` | only a path: the part is still `text_encoder` (checked) |
 | Ideogram 4 | two transformers (`conditional_transformer`, `unconditional_transformer`) | the engine assumes one `transformer` |
 | Krea 2 | the transformer shards are at the repo root, not in `transformer/` | detection and loading need the definition's paths |
 | FIBO | prompts are structured JSON | needs agent guidance for the prompt format |
@@ -80,9 +80,36 @@ With the sequential and streamed strategies, the peak is about the largest part 
    (`tools/bench_family.py`): 512 and 1024 px runs in the streamed strategy, peak recorded per phase, values
    written into the family entry. The no-hang gate still needs these numbers before a family is offered.
 
+## Prototype results (2026-11-02, M5 24 GB)
+
+`engine/src/dmlx/adapters/mflux_family.py`: `MfluxFamilyAdapter` plus a `FAMILIES` table (ERNIE only so far).
+Parts are properties on the pipeline that enter their phase on first read. `stream: [auto]` streams every
+block stack the part has (`streaming.find_stacks`; ERNIE's text encoder stack is `language_model.model.layers`).
+
+**Building parts on a scratch object is free.** All parts of ERNIE, Z-Image, FLUX.3, MOSS, Iris, Boogu, FIBO
+and Krea 2: 11-27 ms, under 1 MB. FLUX.2 needs `small_text_encoder` set first (a family default).
+
+**ERNIE Image Turbo through the real engine** (seed 7, 8 steps, "a red fox sitting in fresh snow, morning light"):
+
+| Run | Peak MLX | Denoise | Turn | Image vs mflux's own pipeline |
+|---|---|---|---|---|
+| mflux `ErnieImage`, all parts loaded, 512 px | 7.18 GB | 32.8 s | — | reference |
+| Generic, sequential, 512 px | 5.23 GB | 30.8 s | 37.2 s | identical (max diff 0) |
+| Generic, streamed, 512 px | 0.73 GB | 32.5 s | 38.1 s | identical (max diff 0) |
+| Generic, sequential, 1024 px | 5.56 GB | 137.8 s | 146.4 s | — |
+| Generic, streamed, 1024 px | 1.60 GB | 148.8 s | 158.4 s | — |
+
+A second run of the same prompt skips the text encoder (the bounded prompt cache hit). ERNIE is slow: about
+17 s per step at 1024 px, against about 3.2 s for Klein 4B. A 1024 px turn takes about 2.5 minutes, so its
+`agent_note` must say so.
+
+**No change to the current families.** The base adapter now reaches parts through `_module` and `_install`.
+FLUX.2 Klein 512 px gives identical images before and after, sequential and streamed.
+
 ## To do
-- [ ] Prototype the generic adapter on ERNIE Image Turbo. Measure the cost of building parts on a scratch
-      object. Check the stand-ins with `nn.Module` attribute rules, `tree_flatten` and `mx.compile`.
+- [x] Prototype the generic adapter on ERNIE Image Turbo; measure the scratch build cost.
+- [ ] Measure ERNIE's activation and decode numbers properly (`tools/bench_family.py`); the spec still has
+      FLUX.2 VAE placeholders. Then add ERNIE to the catalog with its `agent_note`.
 - [ ] Move FLUX.2 Klein, Z-Image and Qwen Image 2.1 to the generic adapter. All three must give the same
       images (same seed) and the same peaks as today.
 - [ ] Component roles in `ModelSpec` and `JobGuard`.
