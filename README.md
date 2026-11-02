@@ -33,6 +33,30 @@ A small agent on your Mac plans each message.
   account or a cloud service.
 - **A local API.** The engine has an OpenAI-compatible images API for other apps and agents.
 
+## What you can make
+
+Each example is one message in the app, with **Auto** set. The agent selected the model. The left image
+is before the message and the right image is after it.
+
+| Remove text: "remove all the text from the window" |
+|---|
+| <img src="docs/screenshots/use-remove-text.jpg" alt="Left: a coffee shop window with large white hand-painted lettering on the glass. Right: the same window and street with no lettering."> |
+| Qwen Image 2.1 · about 5 min |
+
+| Remove an object: "remove the coffee mug" | Remove a person: "remove the person" |
+|---|---|
+| <img src="docs/screenshots/use-remove-object.jpg" alt="Left: a desk with a laptop, a white coffee mug and a potted plant. Right: the same desk with no mug."> | <img src="docs/screenshots/use-remove-person.jpg" alt="Left: a beach at sunset with one person who walks along the water. Right: the same beach with no person."> |
+| FLUX.2 Klein 4B · 36 s | FLUX.2 Klein 4B · 41 s |
+
+| Poster (Portrait): a jazz night poster with the title "MIDNIGHT ECHO" | Banner (Landscape): a bakery banner with the words "FRESH BREAD DAILY" |
+|---|---|
+| <img src="docs/screenshots/use-poster.jpg" width="300" alt="A tall art deco poster: a saxophone player in blue light, with the title MIDNIGHT ECHO in large gold letters."> | <img src="docs/screenshots/use-banner.jpg" alt="A wide banner: loaves of bread on a wooden counter in morning light, with the words FRESH BREAD DAILY in large letters."> |
+| Qwen Image 2.1 · about 4 min | FLUX.2 Klein 4B · 19 s |
+
+For exact words in an image, the agent usually selects Qwen Image 2.1. This model is slow, it needs about
+9.5 GB of free memory, and its license does not permit commercial use. FLUX.2 Klein 4B is fast, but it
+does not always spell words correctly.
+
 ## Edit with Crop / Draw
 
 You can write in simple words how to change a result. You can also show your request on the image first.
