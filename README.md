@@ -90,9 +90,11 @@ keep them. The prepared image is one of the 3 images that you can attach.
 
 <img src="docs/screenshots/edit-4-attach.jpg" alt="The message box with 'Prepared image 1' attached and the message 'paint a blue and white floral pattern on the teapot where I circled in red, and remove the red marks'. Above the message box: 'Will edit the attached image · FLUX.2 Klein 4B'.">
 
-| Before (image 1) | After (image 2, "Edited from the prepared image 1") |
+| Before (the prepared image 1) | After (image 2, "Edited from the prepared image 1") |
 |---|---|
-| <img src="docs/screenshots/edit-before.jpg" alt="Image 1: a plain white ceramic teapot on a wooden table."> | <img src="docs/screenshots/edit-after.jpg" alt="Image 2: the same teapot, closer, because of the crop. A blue and white floral pattern covers it. No red marks remain."> |
+| <img src="docs/screenshots/edit-prepared.jpg" alt="The prepared image: the cropped area of image 1, a plain white teapot on a wooden table, with a red circle around its body."> | <img src="docs/screenshots/edit-after.jpg" alt="Image 2: the same teapot. A blue and white floral pattern covers it. No red marks remain."> |
+
+The result has the size and the framing of the cropped area, not of the full image 1.
 
 ## Tour of the app
 
@@ -185,12 +187,12 @@ only refuses a request that cannot run, for example an image that does not exist
   <br><sub>Settings → Intelligence → Agent</sub>
 </p>
 
-| Agent model | Download | Peak memory | Per message | Real-image checks | Notes |
-|---|---|---|---|---|---|
-| Qwen3-VL 8B | 5.8 GB | 6.2 GB | ~7 s | 10/10 | Default for 24 GB and more |
-| Qwen3.5 9B | 6.0 GB | 6.8 GB | ~7.5 s | 9/10 | Best result on the routing eval |
-| Ministral 3 3B | 2.8 GB | 4.2 GB | ~5.5 s | 10/10 | Default for less than 24 GB |
-| Qwen3-VL 4B | 3.1 GB | 3.7 GB | ~3.5 s | 6/10 | Uses the least memory; seldom examines older images |
+| Agent model | Download | Peak memory | Per message | Notes |
+|---|---|---|---|---|
+| Qwen3-VL 8B | 5.8 GB | 6.2 GB | ~7 s | Default for 24 GB and more |
+| Qwen3.5 9B | 6.0 GB | 6.8 GB | ~7.5 s | Best result on the routing eval |
+| Ministral 3 3B | 2.8 GB | 4.2 GB | ~5.5 s | Default for less than 24 GB |
+| Qwen3-VL 4B | 3.1 GB | 3.7 GB | ~3.5 s | Uses the least memory; seldom examines older images |
 
 These values are from an M5 with 24 GB (2026-11-01). The engine loads the agent only while the agent plans.
 The engine removes the agent from memory before the image job starts. If there is no agent model, the engine
