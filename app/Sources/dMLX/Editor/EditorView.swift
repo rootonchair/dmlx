@@ -210,19 +210,25 @@ private struct EditorCanvas: View {
     }
 
     private func drawOverlay(_ context: GraphicsContext, imageRect: CGRect) {
-        for stroke in document.strokes where !stroke.points.isEmpty {
-            var path = Path()
-            let points = stroke.points.map {
-                CGPoint(x: imageRect.minX + $0.x * imageRect.width, y: imageRect.minY + $0.y * imageRect.height)
+        // Paint goes on its own layer so an erase stroke clears paint, as the exported image does
+        // (EditorRenderer); the photo below is never erased.
+        context.drawLayer { layer in
+            for stroke in document.strokes where !stroke.points.isEmpty {
+                var path = Path()
+                let points = stroke.points.map {
+                    CGPoint(x: imageRect.minX + $0.x * imageRect.width, y: imageRect.minY + $0.y * imageRect.height)
+                }
+                path.move(to: points[0])
+                for point in points.dropFirst() { path.addLine(to: point) }
+                var pen = layer
+                pen.blendMode = stroke.erases ? .clear : .normal
+                let color = Color(red: stroke.color.red, green: stroke.color.green, blue: stroke.color.blue,
+                                  opacity: stroke.color.alpha)
+                pen.stroke(
+                    path, with: .color(stroke.erases ? .black : color),
+                    style: StrokeStyle(lineWidth: max(1, stroke.width * min(imageRect.width, imageRect.height)),
+                                       lineCap: .round, lineJoin: .round))
             }
-            path.move(to: points[0])
-            for point in points.dropFirst() { path.addLine(to: point) }
-            let color = Color(
-                red: stroke.color.red, green: stroke.color.green,
-                blue: stroke.color.blue, opacity: stroke.erases ? 0.35 : stroke.color.alpha)
-            context.stroke(
-                path, with: .color(stroke.erases ? .white.opacity(0.55) : color),
-                style: StrokeStyle(lineWidth: max(1, stroke.width * min(imageRect.width, imageRect.height)), lineCap: .round, lineJoin: .round))
         }
         let crop = CGRect(
             x: imageRect.minX + document.crop.x * imageRect.width,
