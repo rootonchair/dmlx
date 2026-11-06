@@ -1,6 +1,7 @@
 ---
 // The dMLX homepage. Screenshots come from the repo's docs/screenshots/ and are optimized at build time.
 import { Image, getImage } from 'astro:assets';
+import { latestDownload, releasesPage } from '../lib/release';
 import type { ImageMetadata } from 'astro';
 import '@fontsource/ibm-plex-sans/400.css';
 import '@fontsource/ibm-plex-sans/500.css';
@@ -19,7 +20,9 @@ const shot = (name: string) => {
 const og = await getImage({ src: shot('chat-edit-versions'), width: 1200, format: 'jpg' });
 
 const repo = 'https://github.com/rootonchair/dmlx';
-const releases = `${repo}/releases`;
+const releases = releasesPage;
+const download = await latestDownload();
+const downloadNote = [download.tag + (download.prerelease && !/alpha|beta|rc/.test(download.tag) ? ' (pre-release)' : ''), download.sizeMB && `${download.sizeMB} MB`, '.dmg'].filter(Boolean).join(' · ');
 const title = 'dMLX · Make and edit images with chat, on your Mac';
 const description = 'A free, open-source macOS app. Describe an image, then say what to change. A small agent on your Mac plans each message. No account, no cloud.';
 
@@ -75,12 +78,13 @@ const examples = [
       <p class="lede">Describe an image. Then say what to change. A small agent on your Mac plans each message, picks the right model, and keeps every version. No account, no cloud, and your Mac stays usable while it works.</p>
       <div class="prompt-demo"><span>Try:</span><span class="chip">make the boat red</span><span class="chip">remove the coffee mug</span><span class="chip">the first one, but foggy</span></div>
       <div class="btns">
-        <a class="btn primary" href={releases}>
+        <a class="btn primary" href={download.url}>
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16.4 12.6c0-2.4 2-3.5 2-3.6-1.1-1.6-2.8-1.8-3.4-1.8-1.4-.2-2.8.8-3.5.8-.7 0-1.8-.8-3-.8-1.6 0-3 .9-3.8 2.3-1.6 2.8-.4 7 1.2 9.3.8 1.1 1.7 2.4 2.9 2.3 1.2 0 1.6-.7 3-.7s1.8.7 3 .7c1.3 0 2.1-1.1 2.8-2.3.9-1.3 1.3-2.6 1.3-2.6s-2.5-1-2.5-3.6zM14.1 5.6c.6-.8 1.1-1.9 1-3-.9 0-2.1.6-2.7 1.4-.6.7-1.1 1.8-1 2.9 1 .1 2.1-.5 2.7-1.3z"/></svg>
           Download for macOS
         </a>
         <a class="btn" href="/docs/getting-started/">Read the docs</a>
       </div>
+      <p class="req">{downloadNote} · <a href={releases}>all releases</a></p>
       <p class="req">Apple Silicon (M1 or newer) · macOS 15 or later · 16 GB of memory or more · Apache-2.0</p>
     </div>
     <div class="shot"><Image src={shot('chat-edit-versions')} widths={[800, 1200, 1600]} sizes="(max-width: 1120px) 100vw, 1088px" alt="A dMLX chat. The message 'make the boat red' turns a wooden rowboat on a misty mountain lake red. The result is Image 2, edited from image 1, with versions v1 and v2." loading="eager" /></div>
@@ -227,12 +231,12 @@ const examples = [
       <h2>Three steps to your first image.</h2>
     </div>
     <div class="start">
-      <div><span class="n">Step 1</span><h3>Download and unzip</h3><p>Get <span class="mono">dMLX-&lt;version&gt;-macos-arm64.zip</span> from GitHub Releases. Move dMLX.app to Applications.</p></div>
+      <div><span class="n">Step 1</span><h3>Download and install</h3><p>Open the downloaded <span class="mono">.dmg</span> and drag dMLX onto the Applications folder.</p></div>
       <div><span class="n">Step 2</span><h3>Open it the first time</h3><p>The beta is not notarized yet. Right-click the app, choose Open, then Open again.</p></div>
       <div><span class="n">Step 3</span><h3>Pick your models</h3><p>dMLX offers an image model on first start. Choose an agent in Settings → Intelligence → Agent. Then it works offline.</p></div>
     </div>
     <div class="btns end">
-      <a class="btn primary" href={releases}>Download for macOS</a>
+      <a class="btn primary" href={download.url}>Download for macOS</a>
       <a class="btn" href="/docs/known-issues/">Read the known issues</a>
     </div>
   </div>
@@ -336,6 +340,7 @@ a:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outlin
 .hero h1 { font-size: clamp(2.5rem, 6.4vw, 4.6rem) }
 .hero h1 em { font-style: normal; color: var(--accent) }
 .req { font: .85rem var(--mono); color: var(--muted) }
+.req a { color: var(--accent) }
 .prompt-demo { display: inline-flex; flex-wrap: wrap; gap: 8px; align-items: center; font: .9rem var(--mono); color: var(--muted) }
 .chip { border: 1px solid var(--line); background: var(--raise); color: var(--fg); border-radius: 99px; padding: 4px 12px; font: .85rem var(--mono) }
 .shot { margin-top: 48px; border-radius: 14px 14px 0 0; overflow: hidden; border: 1px solid var(--line); border-bottom: 0; box-shadow: 0 -10px 60px -20px color-mix(in srgb, var(--accent) 35%, transparent) }

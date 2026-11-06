@@ -2,7 +2,9 @@
 # Build dist/dMLX.app: Swift app + a relocatable Python with the engine installed inside it.
 #
 #   tools/bundle_app.sh            # build the .app
+#   tools/bundle_app.sh --dmg      # also produce dist/dMLX-<version>-macos-arm64.dmg (the website's download)
 #   tools/bundle_app.sh --zip      # also produce dist/dMLX-<version>-macos-arm64.zip
+#   tools/bundle_app.sh --dmg --zip
 #
 # Requirements: Xcode command line tools, uv. Signs ad-hoc (no Apple Developer ID needed).
 set -euo pipefail
@@ -82,10 +84,17 @@ codesign --verify --verbose=1 "$APP" 2>&1 | tail -1
 
 du -sh "$APP"
 
-if [ "${1:-}" = "--zip" ]; then
-  ZIP="$DIST/dMLX-$VERSION-macos-arm64.zip"
-  rm -f "$ZIP"
-  (cd "$DIST" && ditto -c -k --sequesterRsrc --keepParent dMLX.app "$ZIP")
-  shasum -a 256 "$ZIP" | tee "$ZIP.sha256"
-fi
+for arg in "$@"; do
+  case "$arg" in
+    --zip)
+      ZIP="$DIST/dMLX-$VERSION-macos-arm64.zip"
+      rm -f "$ZIP"
+      (cd "$DIST" && ditto -c -k --sequesterRsrc --keepParent dMLX.app "$ZIP")
+      (cd "$DIST" && shasum -a 256 "$(basename "$ZIP")" | tee "$(basename "$ZIP").sha256")
+      ;;
+    --dmg)
+      "$ROOT/tools/make_dmg.sh" "$APP" "$DIST/dMLX-$VERSION-macos-arm64.dmg"
+      ;;
+  esac
+done
 echo "==> Done: $APP"

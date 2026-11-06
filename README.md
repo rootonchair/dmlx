@@ -209,9 +209,9 @@ uses simple rules to route messages. For more data, refer to
 
 ## Install
 
-1. Download `dMLX-<version>-macos-arm64.zip` from [Releases](https://github.com/rootonchair/dmlx/releases).
-   Then unzip the file.
-2. Move `dMLX.app` to Applications.
+1. Download `dMLX-<version>-macos-arm64.dmg` from [Releases](https://github.com/rootonchair/dmlx/releases)
+   or from [dmlx.vercel.app](https://dmlx.vercel.app). A `.zip` of the same app is also there.
+2. Open the `.dmg` and drag `dMLX.app` onto the Applications folder.
 3. The beta is not notarized. The first time that you open the app, do this: **right-click the app → Open → Open**.
    As an alternative, run `xattr -dr com.apple.quarantine /Applications/dMLX.app`.
 4. When you start dMLX for the first time, it recommends an image model and an agent model for your Mac, and
@@ -281,8 +281,8 @@ cd engine && uv sync --extra local-llm && uv run pytest
 cd app && swift test
 tools/dev/run_app.sh            # runs the app; the engine starts from ../engine via uv
 
-# release bundle (relocatable Python and engine inside the .app, ad-hoc signed)
-tools/bundle_app.sh --zip
+# release bundle (relocatable Python and engine inside the .app, ad-hoc signed), as a .dmg and a .zip
+tools/bundle_app.sh --dmg --zip
 ```
 
 To score the agent with the routing eval and placeholder images, run this command:
