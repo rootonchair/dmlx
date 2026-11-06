@@ -190,8 +190,7 @@ public struct EditorDocumentStore: Sendable {
     public init(root: URL) { self.root = root }
 
     public static func `default`() -> Self {
-        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        return Self(root: base.appendingPathComponent("dMLX/editor"))
+        Self(root: Store.dataDirectory().appendingPathComponent("editor"))
     }
 
     public func load(sessionId: String, resultId: String) -> EditorDocument? {

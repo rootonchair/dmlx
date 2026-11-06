@@ -8,10 +8,10 @@ import SwiftUI
 ///
 /// Script: {"out": "/dir", "steps": [{"newSession": true}, {"send": "a boat"}, {"waitIdle": 300},
 ///          {"snapshot": "name"}, {"variation": true}, {"attachFile": "/path.png"}, {"draft": "text"}, {"sleep": 1},
-///          {"onboarding": true|false}, {"settings": true}, {"selectSession": 0}, {"renderChat": "name"},
+///          {"onboarding": true|false}, {"onboardingStep": "welcome"|"setup"}, {"settings": true}, {"selectSession": 0}, {"renderChat": "name"},
 ///          {"modelChoice": "auto"|"<model id>"}, {"logPreview": true},
 ///          {"windowSize": [w, h]}, {"measure": true}, {"fakeSessions": n},
-///          {"ask": {"message": "…", "question": "…"}} (as if the agent asked), {"waitRouted": 60},
+///          {"ask": {"message": "…", "question": "…"}} (as if the agent asked), {"planning": "message"} (as if just sent; "" clears), {"waitRouted": 60},
 ///          {"flags": "label"} (logs whether this or another chat is making an image, and a waiting message),
 ///          {"appearance": "system"|"light"|"dark"}, {"settingsTab": "intelligence"} (with {"settings": true}, which hosts SettingsView in its own window), {"closeSettings": true},
 ///          {"capture": "name", "window": "main"|"settings"} (the real window through screencapture, native
@@ -101,6 +101,7 @@ enum DevHarness {
             addModelWindow = window
         }
         if step["logPreview"] != nil { log("preview [\(model.modelChoice)] \(model.draft.isEmpty ? "(empty)" : model.draft): \(model.routePreview)") }
+        if let text = step["planning"] as? String { model.harnessPlanning(text.isEmpty ? nil : text) }
         if let ask = step["ask"] as? [String: String], let message = ask["message"], let question = ask["question"] {
             model.harnessAsk(message: message, question: question)
         }
@@ -120,6 +121,7 @@ enum DevHarness {
         }
         if step["variation"] != nil, let t = model.latestImageTurn { model.variation(t.id) }
         if let path = step["attachFile"] as? String { model.attach(files: [URL(fileURLWithPath: path)]) }
+        if let name = step["onboardingStep"] as? String, let value = OnboardingStep(rawValue: name) { model.onboardingStep = value }
         if let show = step["onboarding"] as? Bool { model.showOnboarding = show }
         if step["settings"] != nil { showSettings(model) }
         if let tab = step["settingsTab"] as? String { model.settingsTab = tab }

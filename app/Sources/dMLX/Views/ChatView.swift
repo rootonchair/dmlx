@@ -29,6 +29,8 @@ struct ChatView: View {
                     .padding(.top, 24)
                     .frame(maxWidth: .infinity)
                 }
+                // Open at the latest message, and stay there while images load and change the height of the chat.
+                .defaultScrollAnchor(.bottom)
                 .onChange(of: model.turns.count) {
                     withAnimation(.easeOut(duration: 0.25)) { proxy.scrollTo("bottom", anchor: .bottom) }
                 }

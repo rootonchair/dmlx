@@ -88,6 +88,8 @@ final class AppModel {
     // UI
     var toast: String?
     var showOnboarding = false
+    var onboardingStep: OnboardingStep = .welcome
+    static let onboardingCompletedKey = "onboardingCompleted"
     var storeError: String?
 
     private var streams: [String: _Concurrency.Task<Void, Never>] = [:]
@@ -205,7 +207,10 @@ final class AppModel {
             models = list
             capabilityCatalog = try? await client.capabilities()
             promptAssistantInstalled = (try? await client.promptAssistant())?.installed ?? false
-            if openOnboarding && defaultModel(for: .t2i) == nil {
+            // First run, or no image model yet. Someone who finished setup without the agent is not asked again.
+            let completed = UserDefaults.standard.bool(forKey: Self.onboardingCompletedKey)
+            if openOnboarding && (defaultModel(for: .t2i) == nil || (!completed && !promptAssistantInstalled)) {
+                onboardingStep = .welcome
                 showOnboarding = true
             }
         }
@@ -799,6 +804,9 @@ final class AppModel {
     }
 
     /// Dev harness only: the state right after the agent asked `question` about `message`.
+    /// Dev harness only: shows a message as being planned, as right after Send.
+    func harnessPlanning(_ message: String?) { planningMessage = message }
+
     func harnessAsk(message: String, question: String) {
         pendingRoute = PendingRoute(
             message: message, attachmentInputs: [], latestResultId: latestImageTurn?.current?.resultId,
@@ -968,6 +976,7 @@ final class AppModel {
     private func noModel(_ sessionId: String) {
         appendTurn(Turn(sessionId: sessionId, index: turns.count, kind: .notice,
                         text: "No suitable model is downloaded yet. Open Models to download one."))
+        onboardingStep = .setup
         showOnboarding = true
     }
 
@@ -1351,9 +1360,7 @@ final class ImageCache {
     private var order: [String] = []
 
     static func fileURL(_ resultId: String) -> URL {
-        let base = ProcessInfo.processInfo.environment["DMLX_HOME"].map { URL(fileURLWithPath: $0) }
-            ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("dMLX")
-        return base.appendingPathComponent("results/\(resultId).png")
+        Store.dataDirectory().appendingPathComponent("results/\(resultId).png")
     }
 
     func image(_ resultId: String) -> NSImage? {
@@ -1364,4 +1371,8 @@ final class ImageCache {
         if order.count > 64 { cache[order.removeFirst()] = nil }
         return img
     }
+}
+
+enum OnboardingStep: String {
+    case welcome, setup
 }

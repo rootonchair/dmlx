@@ -43,8 +43,17 @@ public final class Store: @unchecked Sendable {
     deinit { sqlite3_close(db) }
 
     public static func defaultURL() -> URL {
-        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        return base.appendingPathComponent("dMLX/app.sqlite")
+        dataDirectory().appendingPathComponent("app.sqlite")
+    }
+
+    /// The app's data folder: DMLX_HOME when set (tests, screenshots), the same rule as the engine;
+    /// otherwise ~/Library/Application Support/dMLX.
+    public static func dataDirectory() -> URL {
+        if let home = ProcessInfo.processInfo.environment["DMLX_HOME"], !home.isEmpty {
+            return URL(fileURLWithPath: home)
+        }
+        return FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("dMLX")
     }
 
     private func exec(_ sql: String) throws {

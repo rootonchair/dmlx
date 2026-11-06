@@ -214,8 +214,9 @@ uses simple rules to route messages. For more data, refer to
 2. Move `dMLX.app` to Applications.
 3. The beta is not notarized. The first time that you open the app, do this: **right-click the app → Open → Open**.
    As an alternative, run `xattr -dr com.apple.quarantine /Applications/dMLX.app`.
-4. When you start dMLX for the first time, it offers to download an image model. Select an agent model in
-   **Settings → Intelligence → Agent**. After this step, dMLX operates offline.
+4. When you start dMLX for the first time, it recommends an image model and an agent model for your Mac, and
+   shows the total download size. Click **Download**. You can change either model, or skip the agent, and
+   change them later in **Settings**. After this step, dMLX operates offline.
 
 ## How to use dMLX
 

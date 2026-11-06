@@ -19,7 +19,6 @@ struct RootView: View {
         .sheet(isPresented: $model.showOnboarding) {
             OnboardingView()
                 .environment(model)
-                .frame(width: 560)
         }
         .overlay(alignment: .bottom) {
             if let toast = model.toast {
