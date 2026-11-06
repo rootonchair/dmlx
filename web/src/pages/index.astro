@@ -1,0 +1,419 @@
+---
+// The dMLX homepage. Screenshots come from the repo's docs/screenshots/ and are optimized at build time.
+import { Image, getImage } from 'astro:assets';
+import type { ImageMetadata } from 'astro';
+import '@fontsource/ibm-plex-sans/400.css';
+import '@fontsource/ibm-plex-sans/500.css';
+import '@fontsource/ibm-plex-sans/600.css';
+import '@fontsource/ibm-plex-mono/400.css';
+import '@fontsource/ibm-plex-mono/500.css';
+import '@fontsource-variable/bricolage-grotesque';
+import '@fontsource/figtree/600.css';
+
+const files = import.meta.glob<{ default: ImageMetadata }>('../../../docs/screenshots/*.jpg', { eager: true });
+const shot = (name: string) => {
+  const f = files[`../../../docs/screenshots/${name}.jpg`];
+  if (!f) throw new Error(`docs/screenshots/${name}.jpg not found`);
+  return f.default;
+};
+const og = await getImage({ src: shot('chat-edit-versions'), width: 1200, format: 'jpg' });
+
+const repo = 'https://github.com/rootonchair/dmlx';
+const releases = `${repo}/releases`;
+const title = 'dMLX · Make and edit images with chat, on your Mac';
+const description = 'A free, open-source macOS app. Describe an image, then say what to change. A small agent on your Mac plans each message. No account, no cloud.';
+
+const apiExample = '<span class="c"># run the engine without the app</span>\ncd engine && uv run dmlx serve --port 8642\n\n<span class="c"># make an image</span>\ncurl localhost:8642/v1/images/generations \\\n  -H <span class="s">\'content-type: application/json\'</span> \\\n  -d <span class="s">\'{"prompt": "a rowboat on a lake at dawn",\n       "size": "1024x1024"}\'</span>';
+
+const examples = [
+  { img: 'use-remove-object', q: 'remove the coffee mug', model: 'FLUX.2 Klein 4B', time: '36 s', alt: 'A desk with a laptop, mug and plant, then the same desk with no mug.' },
+  { img: 'use-remove-person', q: 'remove the person', model: 'FLUX.2 Klein 4B', time: '40 s', alt: 'A beach at sunset with one person, then the same beach with no person.' },
+  { img: 'use-remove-text', q: 'remove all the text from the window', model: 'Qwen Image 2.1', time: 'about 5 min', alt: 'A coffee shop window with painted lettering, then the same window with no lettering.' },
+  { img: 'use-poster', q: 'a jazz night poster, MIDNIGHT ECHO in large gold letters', model: 'Qwen Image 2.1', time: 'about 4 min', extra: 'Portrait', alt: 'An art deco jazz poster with MIDNIGHT ECHO in gold letters.' },
+  { img: 'use-banner', q: 'a bakery banner with the words FRESH BREAD DAILY', model: 'Qwen Image 2.1', time: 'about 4 min', extra: 'Landscape', alt: 'A wide bakery banner of loaves with FRESH BREAD DAILY at the top.' },
+  { img: 'versions', q: 'Variations', model: 'Every result keeps v1, v2, v3', time: 'nothing is overwritten', alt: 'A red rowboat with version buttons v1 and v2, Variations and Crop / Draw.' },
+];
+---
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{title}</title>
+  <meta name="description" content={description}>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="canonical" href={Astro.site ? new URL('/', Astro.site).href : '/'}>
+  <meta property="og:type" content="website">
+  <meta property="og:title" content={title}>
+  <meta property="og:description" content={description}>
+  <meta property="og:image" content={Astro.site ? new URL(og.src, Astro.site).href : og.src}>
+  <meta name="twitter:card" content="summary_large_image">
+  <script is:inline>
+    // Use the same theme choice as the docs (Starlight stores it as "starlight-theme").
+    try { const t = localStorage.getItem('starlight-theme'); if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t; } catch (e) {}
+  </script>
+</head>
+<body>
+<nav aria-label="Main">
+  <div class="wrap">
+    <a class="brand" href="/" aria-label="dMLX home">
+      <svg class="mark" viewBox="0 0 64 64" aria-hidden="true"><path d="M8 30A24 24 0 0 1 56 30Z" fill="var(--logo)"/><rect x="8" y="34" width="48" height="6" rx="3"/><rect x="13" y="43" width="17" height="6" rx="3"/><rect x="34" y="43" width="17" height="6" rx="3"/><rect x="22" y="52" width="20" height="6" rx="3"/></svg>
+      <span class="wm">dMLX</span>
+    </a>
+    <div class="links">
+      <a href="#examples">Examples</a><a href="#agent">Agent</a><a href="#models">Models</a><a href="/docs/getting-started/">Docs</a><a href={repo}>GitHub</a>
+    </div>
+    <button class="theme" type="button" id="theme" aria-label="Color theme: Auto"><span id="theme-label">Auto</span></button>
+  </div>
+</nav>
+
+<header class="hero">
+  <div class="wrap">
+    <div class="hero-copy">
+      <span class="eyebrow">Native macOS app · Apple Silicon · Open source · v0.1 beta</span>
+      <h1>Make and edit images with chat. <em>Fully on your Mac.</em></h1>
+      <p class="lede">Describe an image. Then say what to change. A small agent on your Mac plans each message, picks the right model, and keeps every version. No account, no cloud, and your Mac stays usable while it works.</p>
+      <div class="prompt-demo"><span>Try:</span><span class="chip">make the boat red</span><span class="chip">remove the coffee mug</span><span class="chip">the first one, but foggy</span></div>
+      <div class="btns">
+        <a class="btn primary" href={releases}>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16.4 12.6c0-2.4 2-3.5 2-3.6-1.1-1.6-2.8-1.8-3.4-1.8-1.4-.2-2.8.8-3.5.8-.7 0-1.8-.8-3-.8-1.6 0-3 .9-3.8 2.3-1.6 2.8-.4 7 1.2 9.3.8 1.1 1.7 2.4 2.9 2.3 1.2 0 1.6-.7 3-.7s1.8.7 3 .7c1.3 0 2.1-1.1 2.8-2.3.9-1.3 1.3-2.6 1.3-2.6s-2.5-1-2.5-3.6zM14.1 5.6c.6-.8 1.1-1.9 1-3-.9 0-2.1.6-2.7 1.4-.6.7-1.1 1.8-1 2.9 1 .1 2.1-.5 2.7-1.3z"/></svg>
+          Download for macOS
+        </a>
+        <a class="btn" href="/docs/getting-started/">Read the docs</a>
+      </div>
+      <p class="req">Apple Silicon (M1 or newer) · macOS 15 or later · 16 GB of memory or more · Apache-2.0</p>
+    </div>
+    <div class="shot"><Image src={shot('chat-edit-versions')} widths={[800, 1200, 1600]} sizes="(max-width: 1120px) 100vw, 1088px" alt="A dMLX chat. The message 'make the boat red' turns a wooden rowboat on a misty mountain lake red. The result is Image 2, edited from image 1, with versions v1 and v2." loading="eager" /></div>
+  </div>
+</header>
+
+<main>
+<section class="alt" id="examples">
+  <div class="wrap">
+    <div class="head">
+      <span class="eyebrow">What you can make</span>
+      <h2>Say it in plain words.</h2>
+      <p class="lede">Each example is one chat with the model set to Auto, so the agent picked the model. Times are from an M5 Mac with 24 GB.</p>
+    </div>
+    <div class="examples">
+      {examples.map((e) => (
+        <figure class="ex">
+          <Image src={shot(e.img)} widths={[400, 700]} sizes="(max-width: 700px) 100vw, 360px" alt={e.alt} />
+          <figcaption><q>{e.q}</q><div class="meta"><span>{e.model}</span><b>{e.time}</b>{e.extra && <span>{e.extra}</span>}</div></figcaption>
+        </figure>
+      ))}
+    </div>
+  </div>
+</section>
+
+<section id="agent">
+  <div class="wrap agent">
+    <div>
+      <div class="head">
+        <span class="eyebrow">The agent</span>
+        <h2>It reads the chat before it draws.</h2>
+        <p class="lede">A vision-language model on your Mac plans each message in about 7 seconds. It leaves memory before the image job starts.</p>
+      </div>
+      <ol class="steps">
+        <li><span class="n">1</span><div><h3>Decides what you asked for</h3><p>A new image, an edit, or no image at all. Say "hello" or "thanks" and it just replies.</p></div></li>
+        <li><span class="n">2</span><div><h3>Finds the right image</h3><p>"Make the boat red" edits the boat in image 1, even when a teapot is the latest image.</p></div></li>
+        <li><span class="n">3</span><div><h3>Writes the prompt</h3><p>A full description for a new image, or an edit instruction that stands on its own.</p></div></li>
+        <li><span class="n">4</span><div><h3>Picks the model</h3><p>Exact words in the image go to Qwen Image. Quick edits go to FLUX.2 Klein. It never overrides a model you chose.</p></div></li>
+      </ol>
+    </div>
+    <div class="stack">
+      <Image src={shot('agent-asks')} widths={[600, 1000]} sizes="(max-width: 860px) 100vw, 560px" alt="The message 'make them match' gets a clarifying question, with Create new and Edit current buttons." />
+      <p class="cap">Not sure? It asks one short question instead of guessing.</p>
+      <Image src={shot('answer-with-reference')} widths={[600, 1000]} sizes="(max-width: 860px) 100vw, 560px" alt="The teapot is edited to look like the weathered wood of the boat, using the boat as a reference." />
+      <p class="cap">"give the teapot the same weathered wood as the boat" · 1 reference</p>
+    </div>
+  </div>
+</section>
+
+<section class="alt" id="memory">
+  <div class="wrap mem">
+    <div>
+      <div class="head flush">
+        <span class="eyebrow">Built for 16 GB Macs</span>
+        <h2>Your Mac stays yours while it works.</h2>
+        <p class="lede">Before each job the engine checks free memory. If memory is low it loads the model in parts, and it stops a job before macOS starts to swap.</p>
+      </div>
+      <div class="facts">
+        <div><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg><span><b>Private and offline.</b> After the models download, every step runs on your Mac.</span></div>
+        <div><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12h4l3 8 4-16 3 8h4"/></svg><span><b>Clear about limits.</b> It tells you what a model needs and what is free, and lets you try anyway.</span></div>
+      </div>
+      <a class="more" href="/docs/memory/">How dMLX controls memory →</a>
+    </div>
+    <div class="gauge" role="img" aria-label="Memory check: Qwen Image 2.1 needs 9.5 GB, but 9.2 GB is free without slowing the Mac, so the job waits.">
+      <div class="gauge-row"><span>Memory check · Qwen Image 2.1 Base Q4</span><span>24 GB Mac</span></div>
+      <div class="bar"><div class="used"></div><div class="free"></div><div class="need"></div></div>
+      <div class="legend"><span class="k-used">In use</span><span class="k-free">Free without slowing: 9.2 GB</span><span class="k-need">Model needs: 9.5 GB</span></div>
+      <p class="verdict">The job waits. <b>Retry</b>, or <b>Try anyway</b>, which uses the mode with the least memory and stops if the Mac slows down.</p>
+      <Image src={shot('memory-check')} widths={[600, 1000]} sizes="(max-width: 860px) 100vw, 520px" alt="The app explains that the model needs about 9.5 GB but only 9.2 GB can be used without slowing down the Mac, with Retry and Try anyway." />
+    </div>
+  </div>
+</section>
+
+<section id="crop">
+  <div class="wrap">
+    <div class="head">
+      <span class="eyebrow">Crop / Draw</span>
+      <h2>Show it, then say it.</h2>
+      <p class="lede">Circle the part to change, attach the prepared image, and write what to do. The original image is never changed.</p>
+    </div>
+    <div class="edit">
+      <figure><Image src={shot('edit-1-crop')} widths={[300, 600]} sizes="(max-width: 480px) 100vw, 260px" alt="The crop frame around a white teapot." /><figcaption><b>1 · Crop</b>Keep only the area you care about.</figcaption></figure>
+      <figure><Image src={shot('edit-2-paint')} widths={[300, 600]} sizes="(max-width: 480px) 100vw, 260px" alt="A red circle painted around the teapot, with one stray line." /><figcaption><b>2 · Paint</b>Mark the area to change.</figcaption></figure>
+      <figure><Image src={shot('edit-3-erase')} widths={[300, 600]} sizes="(max-width: 480px) 100vw, 260px" alt="The stray line erased; the circle remains." /><figcaption><b>3 · Erase</b>Remove a wrong mark. Only paint is erased.</figcaption></figure>
+      <figure><Image src={shot('edit-after')} widths={[300, 600]} sizes="(max-width: 480px) 100vw, 260px" alt="The teapot now has a blue and white floral pattern and no red marks." /><figcaption><b>4 · Ask</b>"paint a blue and white floral pattern where I circled, and remove the red marks"</figcaption></figure>
+    </div>
+  </div>
+</section>
+
+<section class="alt" id="api">
+  <div class="wrap api">
+    <div class="head flush">
+      <span class="eyebrow">Local API</span>
+      <h2>Your other tools can use it too.</h2>
+      <p class="lede">The engine serves an OpenAI-compatible images API on your Mac. Point any app or coding agent that speaks <span class="mono">/v1/images</span> at it.</p>
+      <a class="more" href="/docs/api/">Engine API reference →</a>
+    </div>
+    <pre set:html={apiExample}></pre>
+  </div>
+</section>
+
+<section id="models">
+  <div class="wrap">
+    <div class="head">
+      <span class="eyebrow">Models</span>
+      <h2>Pick one, or let Auto choose.</h2>
+      <p class="lede">Add community versions of the supported families, or paste a Hugging Face repo. dMLX checks the family, size and license before it downloads.</p>
+    </div>
+    <div class="tables">
+      <div class="tbl">
+        <h3>Image models</h3>
+        <p class="sub">Run through mflux on MLX</p>
+        <table>
+          <thead><tr><th>Model</th><th>Good at</th><th>Download</th></tr></thead>
+          <tbody>
+            <tr><td>FLUX.2 Klein 4B</td><td class="note">The default. New images and edits, ~20–40 s per image.</td><td>4.6 GB</td></tr>
+            <tr><td>Z-Image Turbo</td><td class="note">New images with more photographic detail.</td><td>5.9 GB</td></tr>
+            <tr><td>Qwen Image 2.1 Base</td><td class="note">Exact words in images, ~4 min per image. Non-commercial license.</td><td>~10.6 GB</td></tr>
+          </tbody>
+        </table>
+        <p class="sub foot">Also: FLUX.2 Klein 9B, FLUX.3 Klein, ERNIE Image Turbo, MOSS Image, Boogu Image Turbo, Iris 3B Turbo and Krea 2 Turbo.</p>
+      </div>
+      <div class="tbl">
+        <h3>Agent models</h3>
+        <p class="sub">Measured on an M5 with 24 GB, 2026-11-01</p>
+        <table>
+          <thead><tr><th>Model</th><th>Peak memory</th><th>Per message</th></tr></thead>
+          <tbody>
+            <tr><td>Qwen3-VL 8B</td><td>6.2 GB</td><td>~7 s</td></tr>
+            <tr><td>Qwen3.5 9B</td><td>6.8 GB</td><td>~7.5 s</td></tr>
+            <tr><td>Ministral 3 3B</td><td>4.2 GB</td><td>~5.5 s</td></tr>
+            <tr><td>Qwen3-VL 4B</td><td>3.7 GB</td><td>~3.5 s</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="alt" id="start">
+  <div class="wrap">
+    <div class="head">
+      <span class="eyebrow">Get started</span>
+      <h2>Three steps to your first image.</h2>
+    </div>
+    <div class="start">
+      <div><span class="n">Step 1</span><h3>Download and unzip</h3><p>Get <span class="mono">dMLX-&lt;version&gt;-macos-arm64.zip</span> from GitHub Releases. Move dMLX.app to Applications.</p></div>
+      <div><span class="n">Step 2</span><h3>Open it the first time</h3><p>The beta is not notarized yet. Right-click the app, choose Open, then Open again.</p></div>
+      <div><span class="n">Step 3</span><h3>Pick your models</h3><p>dMLX offers an image model on first start. Choose an agent in Settings → Intelligence → Agent. Then it works offline.</p></div>
+    </div>
+    <div class="btns end">
+      <a class="btn primary" href={releases}>Download for macOS</a>
+      <a class="btn" href="/docs/known-issues/">Read the known issues</a>
+    </div>
+  </div>
+</section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <a class="brand" href="/" aria-label="dMLX home">
+      <svg class="mark" viewBox="0 0 64 64" aria-hidden="true"><path d="M8 30A24 24 0 0 1 56 30Z" fill="var(--logo)"/><rect x="8" y="34" width="48" height="6" rx="3"/><rect x="13" y="43" width="17" height="6" rx="3"/><rect x="34" y="43" width="17" height="6" rx="3"/><rect x="22" y="52" width="20" height="6" rx="3"/></svg>
+      <span class="wm">dMLX</span>
+    </a>
+    <div class="cols">
+      <div><b>Docs</b><a href="/docs/getting-started/">Getting started</a><a href="/docs/using-dmlx/">Using dMLX</a><a href="/docs/api/">Engine API</a></div>
+      <div><b>Project</b><a href="/docs/release-notes/">Release notes</a><a href="/docs/known-issues/">Known issues</a><a href={`${repo}/blob/main/CONTRIBUTING.md`}>Contributing</a></div>
+      <div><b>Built on</b><a href="https://github.com/ml-explore/mlx">MLX</a><a href="https://github.com/filipstrand/mflux">mflux</a><a href={repo}>GitHub</a></div>
+    </div>
+  </div>
+</footer>
+
+<script is:inline>
+  (function () {
+    var root = document.documentElement, btn = document.getElementById('theme'), label = document.getElementById('theme-label');
+    var order = ['', 'light', 'dark'], names = { '': 'Auto', light: 'Light', dark: 'Dark' };
+    function current() { return root.dataset.theme || ''; }
+    function show() { var n = names[current()]; label.textContent = n; btn.setAttribute('aria-label', 'Color theme: ' + n); }
+    btn.addEventListener('click', function () {
+      var next = order[(order.indexOf(current()) + 1) % order.length];
+      if (next) root.dataset.theme = next; else delete root.dataset.theme;
+      try { localStorage.setItem('starlight-theme', next); } catch (e) {}
+      show();
+    });
+    show();
+  })();
+</script>
+</body>
+</html>
+
+<style is:global>
+/* Layout: one 1120px column; plain and tinted bands alternate. Colors are the "Lake" brand (docs/brand/README.md). */
+:root {
+  --bg: #f4f6f8; --surface: #e9eef2; --raise: #fff; --line: #d3dbe2;
+  --fg: #18212b; --muted: #5a6875; --accent: #2f6fa3; --accent-ink: #fff; --logo: #2f6fa3; --hill: #7f97ab;
+  --code-bg: #141b22; --code-fg: #e4ecf2; --code-str: #8cc4f0; --code-com: #8a9aa8;
+  --display: 'Bricolage Grotesque Variable', 'Avenir Next', system-ui, sans-serif;
+  --body: 'IBM Plex Sans', -apple-system, 'Helvetica Neue', sans-serif;
+  --mono: 'IBM Plex Mono', ui-monospace, Menlo, monospace;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme='light']) {
+  --bg: #11161c; --surface: #18202a; --raise: #1f2934; --line: #2c3845;
+  --fg: #e8eef3; --muted: #9aa9b6; --accent: #3a84cf; --accent-ink: #fff; --logo: #7db7e8; --hill: #4f6a82;
+  --code-bg: #0b1015; color-scheme: dark } }
+:root[data-theme='dark'] {
+  --bg: #11161c; --surface: #18202a; --raise: #1f2934; --line: #2c3845;
+  --fg: #e8eef3; --muted: #9aa9b6; --accent: #3a84cf; --accent-ink: #fff; --logo: #7db7e8; --hill: #4f6a82;
+  --code-bg: #0b1015; color-scheme: dark }
+
+* { box-sizing: border-box }
+html { scroll-behavior: smooth; scroll-padding-top: 72px }
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto } }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 16px/1.6 var(--body); -webkit-font-smoothing: antialiased }
+a { color: inherit }
+img { display: block; max-width: 100%; height: auto }
+.wrap { max-width: 1120px; margin: 0 auto; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)) }
+h1, h2, h3 { font-family: var(--display); font-weight: 700; line-height: 1.08; text-wrap: balance; margin: 0; letter-spacing: -0.015em }
+h2 { font-size: clamp(1.9rem, 3.6vw, 2.8rem) }
+h3 { font-size: 1.2rem; font-weight: 550; letter-spacing: 0 }
+p { margin: 0 }
+.lede { color: var(--muted); font-size: 1.08rem; max-width: 62ch }
+.eyebrow { font: 500 .75rem/1.4 var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--accent) }
+.mono { font-family: var(--mono); font-size: .92em }
+section { padding-block: clamp(56px, 8vw, 104px) }
+section.alt { background: var(--surface) }
+.head { display: grid; gap: 14px; margin-bottom: 40px }
+.head.flush { margin-bottom: 0 }
+.more { display: inline-block; margin-top: 20px; color: var(--accent); font-weight: 600; text-decoration: none }
+.more:hover { text-decoration: underline }
+
+nav { position: sticky; top: 0; z-index: 20; background: color-mix(in srgb, var(--bg) 88%, transparent); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); border-bottom: 1px solid var(--line) }
+nav .wrap { display: flex; align-items: center; gap: 28px; height: 60px }
+.brand { display: flex; align-items: center; gap: 9px; text-decoration: none }
+.brand .mark { width: 28px; height: 28px; fill: var(--fg); flex: none }
+.brand .wm { font: 600 1.3rem/1 'Figtree', var(--body); letter-spacing: -0.02em }
+.links { display: flex; gap: 22px; font-size: .92rem; color: var(--muted); margin-left: auto }
+.links a { text-decoration: none } .links a:hover { color: var(--fg) }
+.theme { font: 500 .78rem var(--mono); color: var(--muted); background: transparent; border: 1px solid var(--line); border-radius: 99px; padding: 4px 11px; cursor: pointer }
+.theme:hover { color: var(--fg) }
+@media (max-width: 760px) { .links { display: none } .theme { margin-left: auto } }
+
+.btns { display: flex; flex-wrap: wrap; gap: 12px }
+.btns.end { margin-top: 44px }
+.btn { display: inline-flex; align-items: center; gap: 9px; font: 600 .98rem var(--body); text-decoration: none; padding: 13px 20px; border-radius: 10px; border: 1px solid var(--line); background: var(--raise); color: var(--fg) }
+.btn.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent) }
+.btn svg { width: 18px; height: 18px; fill: currentColor }
+a:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 6px }
+@media (prefers-reduced-motion: no-preference) { .btn { transition: transform .15s } .btn:hover { transform: translateY(-1px) } }
+
+.hero { padding-block: clamp(48px, 7vw, 88px) 0; overflow: hidden }
+.hero-copy { display: grid; gap: 22px; max-width: 760px }
+.hero h1 { font-size: clamp(2.5rem, 6.4vw, 4.6rem) }
+.hero h1 em { font-style: normal; color: var(--accent) }
+.req { font: .85rem var(--mono); color: var(--muted) }
+.prompt-demo { display: inline-flex; flex-wrap: wrap; gap: 8px; align-items: center; font: .9rem var(--mono); color: var(--muted) }
+.chip { border: 1px solid var(--line); background: var(--raise); color: var(--fg); border-radius: 99px; padding: 4px 12px; font: .85rem var(--mono) }
+.shot { margin-top: 48px; border-radius: 14px 14px 0 0; overflow: hidden; border: 1px solid var(--line); border-bottom: 0; box-shadow: 0 -10px 60px -20px color-mix(in srgb, var(--accent) 35%, transparent) }
+
+.examples { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px }
+@media (max-width: 400px) { .examples { grid-template-columns: 1fr } }
+.ex { margin: 0; background: var(--raise); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; display: grid; grid-template-rows: auto 1fr }
+.ex img { width: 100%; aspect-ratio: 4/3; object-fit: cover; object-position: top }
+.ex figcaption { padding: 16px 18px; display: grid; gap: 8px; align-content: start }
+.ex q { font-weight: 600 }
+.meta { display: flex; flex-wrap: wrap; gap: 6px 14px; font: .8rem var(--mono); color: var(--muted) }
+.meta b { color: var(--accent); font-weight: 500 }
+
+.agent { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr); gap: 48px; align-items: start }
+.steps { list-style: none; padding: 0; margin: 0; display: grid }
+.steps li { display: grid; grid-template-columns: 34px 1fr; gap: 14px; padding: 16px 0; border-top: 1px solid var(--line) }
+.steps li:first-child { border-top: 0 }
+.steps .n { font: 500 .85rem var(--mono); color: var(--accent); padding-top: 3px }
+.steps p { color: var(--muted); font-size: .95rem; margin-top: 4px }
+.stack { display: grid; gap: 16px }
+.stack img, .gauge img { border-radius: 10px; border: 1px solid var(--line) }
+.stack .cap { font: .8rem var(--mono); color: var(--muted); margin-top: -6px }
+@media (max-width: 860px) { .agent { grid-template-columns: 1fr } }
+
+.mem { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 48px; align-items: center }
+@media (max-width: 860px) { .mem { grid-template-columns: 1fr } }
+.gauge { background: var(--raise); border: 1px solid var(--line); border-radius: 12px; padding: 22px; display: grid; gap: 14px; font-variant-numeric: tabular-nums }
+.gauge-row { display: flex; justify-content: space-between; font: .85rem var(--mono); color: var(--muted); gap: 12px; flex-wrap: wrap }
+.bar { position: relative; height: 34px; border-radius: 8px; background: var(--surface); overflow: hidden; border: 1px solid var(--line) }
+.bar .used { position: absolute; inset: 0 auto 0 0; width: 61.7%; background: color-mix(in srgb, var(--hill) 55%, var(--surface)) }
+.bar .free { position: absolute; inset: 0 auto 0 61.7%; width: 38.3%; background: repeating-linear-gradient(135deg, transparent 0 6px, color-mix(in srgb, var(--accent) 22%, transparent) 6px 12px) }
+.bar .need { position: absolute; top: -1px; bottom: -1px; left: 61.7%; width: 39.6%; border: 2px dashed var(--accent); border-radius: 0 8px 8px 0 }
+.legend { display: flex; flex-wrap: wrap; gap: 8px 18px; font-size: .85rem; color: var(--muted) }
+.legend span::before { content: ''; display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 7px; vertical-align: -1px }
+.k-used::before { background: color-mix(in srgb, var(--hill) 55%, var(--surface)) }
+.k-free::before { background: color-mix(in srgb, var(--accent) 40%, transparent) }
+.k-need::before { background: var(--accent) }
+.verdict { font-size: .95rem; border-left: 3px solid var(--accent); padding-left: 12px }
+.facts { display: grid; gap: 14px; margin-top: 24px }
+.facts div { display: grid; grid-template-columns: 22px 1fr; gap: 10px; color: var(--muted) }
+.facts b { color: var(--fg) }
+.facts svg { width: 18px; height: 18px; stroke: var(--accent); fill: none; stroke-width: 2; margin-top: 4px }
+
+.edit { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px }
+@media (max-width: 900px) { .edit { grid-template-columns: repeat(2, minmax(0, 1fr)) } }
+@media (max-width: 480px) { .edit { grid-template-columns: 1fr } }
+.edit figure { margin: 0; display: grid; gap: 10px; align-content: start }
+.edit img { border-radius: 10px; border: 1px solid var(--line); aspect-ratio: 1; object-fit: cover; width: 100% }
+.edit figcaption { font-size: .92rem; color: var(--muted) }
+.edit figcaption b { display: block; color: var(--fg); font-family: var(--display); font-weight: 550; font-size: 1.05rem }
+
+.api { display: grid; grid-template-columns: minmax(0, .9fr) minmax(0, 1.1fr); gap: 48px; align-items: center }
+@media (max-width: 860px) { .api { grid-template-columns: 1fr } }
+pre { margin: 0; background: var(--code-bg); color: var(--code-fg); border-radius: 12px; padding: 20px 22px; overflow-x: auto; font: .85rem/1.7 var(--mono); border: 1px solid var(--line); min-width: 0 }
+pre .c { color: var(--code-com) } pre .s { color: var(--code-str) }
+
+.tables { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 28px; align-items: start }
+@media (max-width: 900px) { .tables { grid-template-columns: 1fr } }
+.tbl { background: var(--raise); border: 1px solid var(--line); border-radius: 12px; overflow-x: auto }
+.tbl h3 { padding: 18px 20px 6px }
+.tbl .sub { padding: 0 20px 12px; font-size: .85rem; color: var(--muted) }
+.tbl .sub.foot { padding: 12px 20px 16px; border-top: 1px solid var(--line) }
+table { width: 100%; border-collapse: collapse; font-size: .9rem; font-variant-numeric: tabular-nums }
+th, td { text-align: left; padding: 11px 20px; border-top: 1px solid var(--line); white-space: nowrap; vertical-align: top }
+th { font: 500 .72rem var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--muted) }
+td.note { white-space: normal; color: var(--muted); min-width: 200px }
+
+.start { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 20px }
+@media (max-width: 860px) { .start { grid-template-columns: 1fr } }
+.start > div { border-top: 2px solid var(--accent); padding-top: 18px; display: grid; gap: 8px; align-content: start }
+.start .n { font: 500 .8rem var(--mono); color: var(--accent) }
+.start p { color: var(--muted) }
+
+footer { border-top: 1px solid var(--line); padding-block: 40px; color: var(--muted); font-size: .9rem }
+footer .wrap { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 24px }
+footer .brand { color: var(--fg); align-self: start }
+footer .cols { display: flex; gap: 48px; flex-wrap: wrap }
+footer .cols div { display: grid; gap: 6px; align-content: start }
+footer .cols b { color: var(--fg); font-weight: 600 }
+footer .cols a { text-decoration: none } footer .cols a:hover { color: var(--fg) }
+</style>

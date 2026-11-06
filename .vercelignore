@@ -1,0 +1,10 @@
+# The website (web/) needs only README.md and docs/ from the rest of the repo.
+app/
+engine/
+tasks/
+tools/
+dist/
+web/node_modules/
+web/dist/
+web/.astro/
+.env*

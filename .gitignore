@@ -19,3 +19,5 @@ results/
 *.nsys-rep
 .DS_Store
 docs/benchmarks/raw/
+.vercel
+.env*

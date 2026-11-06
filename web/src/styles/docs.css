@@ -1,0 +1,33 @@
+/* Starlight in the dMLX "Lake" colors (docs/brand/README.md). */
+:root {
+  --sl-font: 'IBM Plex Sans', -apple-system, 'Helvetica Neue', sans-serif;
+  --sl-font-mono: 'IBM Plex Mono', ui-monospace, Menlo, monospace;
+  --sl-color-accent-low: #12263a;
+  --sl-color-accent: #3a84cf;
+  --sl-color-accent-high: #bfdcf5;
+  --sl-color-white: #e8eef3;
+  --sl-color-gray-1: #d3dbe2;
+  --sl-color-gray-2: #9aa9b6;
+  --sl-color-gray-3: #6f8090;
+  --sl-color-gray-4: #2c3845;
+  --sl-color-gray-5: #1f2934;
+  --sl-color-gray-6: #18202a;
+  --sl-color-black: #11161c;
+}
+:root[data-theme='light'] {
+  --sl-color-accent-low: #d6e6f4;
+  --sl-color-accent: #2f6fa3;
+  --sl-color-accent-high: #183b58;
+  --sl-color-white: #18212b;
+  --sl-color-gray-1: #24303b;
+  --sl-color-gray-2: #3d4b58;
+  --sl-color-gray-3: #5a6875;
+  --sl-color-gray-4: #9aa9b6;
+  --sl-color-gray-5: #d3dbe2;
+  --sl-color-gray-6: #e9eef2;
+  --sl-color-gray-7: #f4f6f8;
+  --sl-color-black: #ffffff;
+}
+.site-title { font-family: 'Figtree', var(--sl-font); font-weight: 600; letter-spacing: -0.02em; font-size: 1.3rem; }
+.site-title img { height: 1.6rem; }
+.sl-markdown-content img { border-radius: 10px; border: 1px solid var(--sl-color-gray-5); }
