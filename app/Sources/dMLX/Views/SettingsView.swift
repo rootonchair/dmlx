@@ -8,12 +8,32 @@ struct SettingsView: View {
     var body: some View {
         @Bindable var app = app
         TabView(selection: $app.settingsTab) {
+            GeneralSettings().tabItem { Label("General", systemImage: "gearshape") }.tag("general")
             ModelsSettings().tabItem { Label("Models", systemImage: "square.stack.3d.up") }.tag("models")
             MemorySettings().tabItem { Label("Memory", systemImage: "memorychip") }.tag("memory")
             IntelligenceSettings().tabItem { Label("Intelligence", systemImage: "sparkles") }.tag("intelligence")
             EngineSettings().tabItem { Label("Engine", systemImage: "gearshape.2") }.tag("engine")
         }
         .padding(16)
+    }
+}
+
+struct GeneralSettings: View {
+    @AppStorage(AppAppearance.key) private var appearance = AppAppearance.system.rawValue
+
+    var body: some View {
+        Form {
+            Picker("Appearance", selection: $appearance) {
+                ForEach(AppAppearance.allCases) { Text($0.title).tag($0.rawValue) }
+            }
+            .pickerStyle(.segmented)
+            .fixedSize()
+            Text("System matches the appearance you set in macOS.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .formStyle(.grouped)
+        .onChange(of: appearance) { _, value in (AppAppearance(rawValue: value) ?? .system).apply() }
     }
 }
 

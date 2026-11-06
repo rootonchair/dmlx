@@ -1,3 +1,5 @@
+<p align="center"><img src="docs/icon.png" width="128" alt="The dMLX app icon: a light blue half sun over three rows of rippled water, on a dark navy tile."></p>
+
 # dMLX
 
 Use chat to make and edit images fully on your Mac. dMLX is a native macOS app and a local engine.

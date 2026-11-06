@@ -78,6 +78,7 @@ struct EmptyStateView: View {
 
     var body: some View {
         VStack(spacing: 18) {
+            DMLXMark(size: 56)
             Text("What should we make?")
                 .font(.system(size: 36, weight: .regular, design: .serif))
             Text("Describe an image. Follow up in plain words to change it. Every result is kept as a version.")

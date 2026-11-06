@@ -14,8 +14,11 @@ struct OnboardingView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
-            Text("Welcome to dMLX")
-                .font(.system(size: 28, weight: .regular, design: .serif))
+            HStack(spacing: 12) {
+                DMLXMark(size: 40)
+                Text("Welcome to dMLX")
+                    .font(.system(size: 28, weight: .regular, design: .serif))
+            }
             Text("Everything runs on this Mac (\(ramText) memory). Download the models once; after that dMLX works offline. dMLX watches memory so your Mac stays responsive while it works.")
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)

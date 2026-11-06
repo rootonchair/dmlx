@@ -13,7 +13,7 @@ import SwiftUI
 ///          {"windowSize": [w, h]}, {"measure": true}, {"fakeSessions": n},
 ///          {"ask": {"message": "…", "question": "…"}} (as if the agent asked), {"waitRouted": 60},
 ///          {"flags": "label"} (logs whether this or another chat is making an image, and a waiting message),
-///          {"settingsTab": "intelligence"} (with {"settings": true}, which hosts SettingsView in its own window), {"closeSettings": true},
+///          {"appearance": "system"|"light"|"dark"}, {"settingsTab": "intelligence"} (with {"settings": true}, which hosts SettingsView in its own window), {"closeSettings": true},
 ///          {"capture": "name", "window": "main"|"settings"} (the real window through screencapture, native
 ///          controls included; needs Screen Recording for the launching terminal),
 ///          {"quit": true}]}
@@ -123,6 +123,10 @@ enum DevHarness {
         if let show = step["onboarding"] as? Bool { model.showOnboarding = show }
         if step["settings"] != nil { showSettings(model) }
         if let tab = step["settingsTab"] as? String { model.settingsTab = tab }
+        if let name = step["appearance"] as? String, let a = AppAppearance(rawValue: name) {
+            UserDefaults.standard.set(a.rawValue, forKey: AppAppearance.key)
+            a.apply()
+        }
         if step["closeSettings"] != nil { settingsWindow()?.close() }
         if step["openEditor"] != nil, let t = model.latestImageTurn { model.openEditor(t.id) }
         if step["closeEditor"] != nil { model.closeEditor() }

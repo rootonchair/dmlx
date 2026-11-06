@@ -156,10 +156,8 @@ struct AgentReplyBubble: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: 8) {
-            Image(systemName: "sparkles")
-                .foregroundStyle(Theme.accent)
+            DMLXMark(size: 18)
                 .padding(.top, 9)
-                .accessibilityHidden(true)
             Text(text)
                 .textSelection(.enabled)
                 .padding(.horizontal, 14)
@@ -289,7 +287,7 @@ struct VersionButtonStyle: ButtonStyle {
                 RoundedRectangle(cornerRadius: 7)
                     .fill(selected ? Theme.accent : Color.clear))
             .overlay(RoundedRectangle(cornerRadius: 7).strokeBorder(selected ? Color.clear : Color.secondary.opacity(0.35)))
-            .foregroundStyle(selected ? Color.black.opacity(0.85) : Color.primary)
+            .foregroundStyle(selected ? Color.white : Color.primary)
             .opacity(configuration.isPressed ? 0.7 : 1)
     }
 }

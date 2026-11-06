@@ -7,6 +7,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
+        AppAppearance.stored.apply()
         NSApp.activate()
         DevHarness.startIfRequested(model)
     }
@@ -48,7 +49,45 @@ struct DMLXApp: App {
     }
 }
 
+/// Settings → General → Appearance. "System" follows macOS.
+enum AppAppearance: String, CaseIterable, Identifiable {
+    case system, light, dark
+    static let key = "appearance"
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .system: "System"
+        case .light: "Light"
+        case .dark: "Dark"
+        }
+    }
+    static var stored: AppAppearance {
+        AppAppearance(rawValue: UserDefaults.standard.string(forKey: key) ?? "") ?? .system
+    }
+    @MainActor func apply() {
+        switch self {
+        case .system: NSApp.appearance = nil
+        case .light: NSApp.appearance = NSAppearance(named: .aqua)
+        case .dark: NSApp.appearance = NSAppearance(named: .darkAqua)
+        }
+    }
+}
+
 enum Theme {
-    static let accent = Color(red: 0.91, green: 0.64, blue: 0.24)
+    /// Brand colors from docs/brand/README.md ("Lake"). Each has a light and a dark version.
+    private static func adaptive(light: UInt32, dark: UInt32) -> Color {
+        func ns(_ hex: UInt32) -> NSColor {
+            NSColor(srgbRed: CGFloat(hex >> 16 & 0xff) / 255, green: CGFloat(hex >> 8 & 0xff) / 255,
+                    blue: CGFloat(hex & 0xff) / 255, alpha: 1)
+        }
+        return Color(nsColor: NSColor(name: nil) { appearance in
+            appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? ns(dark) : ns(light)
+        })
+    }
+    /// The sun in the logo.
+    static let logo = adaptive(light: 0x2f6fa3, dark: 0x7db7e8)
+    /// Buttons, links and selection. In dark mode it is deeper than the logo blue so that white
+    /// text on a prominent button stays readable.
+    static let accent = adaptive(light: 0x2f6fa3, dark: 0x3a84cf)
     static let corner: CGFloat = 12
 }

@@ -227,7 +227,7 @@ struct ComposerView: View {
                                 .font(.body.weight(.semibold))
                                 .frame(width: 28, height: 28)
                                 .background(Circle().fill(canSend ? Theme.accent : Color.secondary.opacity(0.25)))
-                                .foregroundStyle(canSend ? Color.black.opacity(0.85) : Color.secondary)
+                                .foregroundStyle(canSend ? Color.white : Color.secondary)
                         }
                         .buttonStyle(.plain)
                         .disabled(!canSend)
