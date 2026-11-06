@@ -210,3 +210,84 @@ def test_cached_encodings_are_evaluated_when_encoding_ends(tmp_path):
 
     # Settled before the guard frees the text encoder, with the new encoding already in the cache.
     assert settled and settled[0] == 1
+
+
+class PositionalEncodePipe(Pipe):
+    """A pipeline with its own encode method that takes the prompt positionally (Boogu)."""
+
+    def _encode_instruction(self, prompt):
+        return self.text_encoder(mx.array([float(len(prompt))]))
+
+    def generate_image(self, seed, prompt, num_inference_steps, width, height):
+        self.encoded = self._encode_instruction(prompt)
+        return super().generate_image(seed, prompt, num_inference_steps, width, height)
+
+
+class PositionalEncodeAdapter(Adapter):
+    family = {**Adapter.family, "pipelines": {"t2i": PositionalEncodePipe}, "encode": "_encode_instruction"}
+
+
+def test_an_encode_method_with_a_positional_prompt_is_cached(tmp_path):
+    PositionalEncodeAdapter.loaded = []
+    adapter = PositionalEncodeAdapter(_parse(SPEC), tmp_path)
+    adapter.generate(_request(), Hooks(adapter))
+    adapter.loaded.clear()
+
+    hooks = Hooks(adapter)
+    adapter.generate(_request(), hooks)
+
+    assert "+encode" not in hooks.events
+    assert "text_encoder" not in adapter.loaded
+    assert adapter.embed_cache_stats()["hits"] >= 1
+
+
+def test_a_streamed_block_keeps_its_block_type():
+    from dmlx.adapters.streaming import StreamedBlock, stand_in
+
+    class DualBlock(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.width = 3
+
+    block = DualBlock()
+    proxy = stand_in(block, SimpleNamespace(keys=lambda prefix: []), "blocks.0.", None, None)
+    # Iris picks each block's call by type.
+    assert isinstance(proxy, DualBlock) and isinstance(proxy, StreamedBlock)
+    assert proxy.width == 3 and "width" not in proxy.parameters()
+    assert type(stand_in(DualBlock(), SimpleNamespace(keys=lambda p: []), "b.1.", None, None)) is type(proxy)
+
+
+def test_a_family_minimum_size_generates_larger_and_scales_down(tmp_path):
+    from dmlx.adapters.mflux_family import _at_least
+
+    assert _at_least(512, 512, 640) == (640, 640)
+    assert _at_least(512, 768, 640) == (640, 960)
+    assert _at_least(1024, 1024, 640) == (1024, 1024)
+    assert _at_least(512, 512, None) == (512, 512)
+
+    class MinSideAdapter(Adapter):
+        family = {**Adapter.family, "min_side": 128}
+
+    MinSideAdapter.loaded = []
+    adapter = MinSideAdapter(_parse(SPEC), tmp_path)
+    generated = []
+    inner = adapter._generate
+    adapter._generate = lambda req, w, h: generated.append((w, h)) or inner(req, w, h)
+    image = adapter.generate(_request(), Hooks(adapter))  # asks for 64 x 64
+    assert generated == [(128, 128)] and image.size == (64, 64)
+
+
+def test_a_family_can_set_the_tiled_decode_tile_size(tmp_path):
+    # Krea 2's VAE needs 6.1 GB per 512 px tile; 256 px tiles need 3.3 GB and look the same.
+    class SmallTiles(Adapter):
+        family = {**Adapter.family, "decode_tile_size": 256}
+
+    SmallTiles.loaded = []
+    adapter = SmallTiles(_parse(SPEC), tmp_path)
+    adapter.set_decode_mode("tiled")
+    assert adapter.pipe.tiling_config.vae_decode_tile_size == 256
+    adapter.set_decode_mode("full")
+    assert adapter.pipe.tiling_config is None
+    plain = _adapter(tmp_path)
+    plain.set_decode_mode("tiled")
+    assert plain.pipe.tiling_config.vae_decode_tile_size == 512

@@ -23,6 +23,9 @@ from dmlx.registry import GB, ModelSpec
 
 log = logging.getLogger("dmlx.memory")
 
+# Parts smaller than this are not checked after a free (the measurement is too noisy).
+FREE_CHECK_MIN_BYTES = 256 * 1024**2
+
 STRATEGIES = ("eager", "phase_free", "sequential", "streamed")
 # Headroom must exceed a strategy's peak need by this factor before we pick it (spec §8 regimes):
 # keeping more resident is only worth it when there is clearly room for it.
@@ -189,10 +192,18 @@ class MemoryManager:
     def free(self, model_id: str, name: str) -> None:
         with self._lock:
             adapter = self._adapters.get(model_id)
-            self._resident.pop((model_id, name), None)
+            resident = self._resident.pop((model_id, name), None)
         if adapter is not None:
+            before = mx.get_active_memory()
             adapter.free_component(name)
-            log.info("freed %s/%s", model_id, name)
+            dropped = before - mx.get_active_memory()
+            log.info("freed %s/%s (%.2f GB)", model_id, name, dropped / GB)
+            expected = resident.bytes if resident else 0
+            if expected > FREE_CHECK_MIN_BYTES and dropped < expected / 2:
+                # Something still holds the weights (a lazy array, a cache): the guard's
+                # accounting no longer matches memory, so the next phase may not fit.
+                log.warning("freeing %s/%s released %.2f GB of %.2f GB; something still holds its weights",
+                            model_id, name, dropped / GB, expected / GB)
 
     def unload_model(self, model_id: str) -> None:
         for r in [r for r in list(self._resident.values()) if r.model_id == model_id]:

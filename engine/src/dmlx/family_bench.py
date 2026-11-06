@@ -29,6 +29,8 @@ def add_parser(sub) -> None:
     p.add_argument("--edit", action="store_true", help="also measure an edit with one reference image")
     p.add_argument("--steps", type=int, default=None, help="fewer steps for speed; memory does not depend on them")
     p.add_argument("--prompt", default="A small wooden rowboat on a still mountain lake at golden hour, 35mm film photo")
+    p.add_argument("--strategy", default="sequential", choices=["sequential", "streamed"],
+                   help="streamed: check what the streamed strategy keeps per phase (the spec numbers come from sequential)")
     p.add_argument("--out", default=None, help="write the raw measurements as JSON")
     p.add_argument("--from-json", default=None, help="recompute the spec numbers from an earlier --out file")
     p.set_defaults(func=run)
@@ -75,17 +77,17 @@ class _PhasePeaks:
         guard.before_phase, guard.after_phase, guard._choose_decode = before, after, choose
 
 
-def _job(engine, model, size, decode_mode, prompt, task="t2i", image_ids=None, steps=None) -> dict:
+def _job(engine, model, size, decode_mode, prompt, task="t2i", image_ids=None, steps=None, strategy="sequential") -> dict:
     peaks = _PhasePeaks(decode_mode)
     try:
         job = engine.submit(task=task, prompt=prompt, model=model, size=f"{size}x{size}", seed=7,
-                            image_ids=image_ids, steps=steps, strategy="sequential", force=True)
+                            image_ids=image_ids, steps=steps, strategy=strategy, force=True)
         job.finished.wait()
     finally:
         peaks.close()
     if job.status != "done":
         raise SystemExit(f"{model} {task} {size}: {job.error}")
-    row = {"task": task, "size": size, "decode_mode": decode_mode, "phases_gb": {k: round(v, 3) for k, v in peaks.peaks.items()},
+    row = {"task": task, "size": size, "decode_mode": decode_mode, "strategy": strategy, "peak_gb": job.report.get("peak_mlx_gb"), "phases_gb": {k: round(v, 3) for k, v in peaks.peaks.items()},
            "timings": job.report.get("timings"), "result_id": job.result_ids[0]}
     print(json.dumps(row), flush=True)
     return row
@@ -98,11 +100,12 @@ def _per_mp(rows, phase) -> float:
 
 
 def _numbers(rows: list[dict], low: str) -> dict:
-    t2i = [r for r in rows if r["task"] == "t2i" and r["decode_mode"] == low]
+    t2i = [r for r in rows if r["task"] == "t2i"]
+    # Denoise does not depend on the decode mode, so every run counts (they vary by up to ~25%).
     return {
         "activation_gb_per_mp": _up(_per_mp(t2i, "denoise")),
-        "decode_gb_per_mp": _up(_per_mp([r for r in rows if r["decode_mode"] == "full"], "decode")),
-        f"decode_{low}_gb_per_mp": _up(_per_mp(t2i, "decode")),
+        "decode_gb_per_mp": _up(_per_mp([r for r in t2i if r["decode_mode"] == "full"], "decode")),
+        f"decode_{low}_gb_per_mp": _up(_per_mp([r for r in t2i if r["decode_mode"] == low], "decode")),
         "encode_gb_measured": round(max(r["phases_gb"].get("encode", 0.0) for r in rows), 2),
     }
 
@@ -136,8 +139,8 @@ def run(args) -> None:
     sizes = [int(s) for s in args.sizes.split(",")]
     rows = []
     for size in sizes:
-        rows.append(_job(engine, args.model, size, low, args.prompt, steps=args.steps))
-        rows.append(_job(engine, args.model, size, "full", args.prompt, steps=args.steps))
+        rows.append(_job(engine, args.model, size, low, args.prompt, steps=args.steps, strategy=args.strategy))
+        rows.append(_job(engine, args.model, size, "full", args.prompt, steps=args.steps, strategy=args.strategy))
     t2i = [r for r in rows if r["decode_mode"] == low]
     numbers = _numbers(rows, low)
     if args.edit and spec.supports("edit"):

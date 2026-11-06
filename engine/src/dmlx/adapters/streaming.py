@@ -173,7 +173,7 @@ class StreamedBlock(nn.Module):
         self, block: nn.Module, index: TensorIndex, prefix: str, bits: int | None,
         reader: _ReadAhead, check=None,
     ):
-        super().__init__()
+        nn.Module.__init__(self)  # not super(): in a stand_in() subclass the next class is the block's own
         # Kept outside the module tree so the parent's parameters() never sees an unloaded block.
         object.__setattr__(self, "_block", block)
         object.__setattr__(self, "_prefix", prefix)
@@ -215,6 +215,18 @@ class StreamedBlock(nn.Module):
         finally:
             self._block.update(self._skeleton, strict=False)
         return out
+
+
+_STREAMED_TYPES: dict[type, type] = {}
+
+
+def stand_in(block: nn.Module, *args, **kwargs) -> StreamedBlock:
+    """A StreamedBlock that is also an instance of the block's class: some models pick the call by
+    type (Iris: `isinstance(block, IrisDualStreamBlock)`)."""
+    cls = type(block)
+    if cls not in _STREAMED_TYPES:
+        _STREAMED_TYPES[cls] = type(f"Streamed{cls.__name__}", (StreamedBlock, cls), {})
+    return _STREAMED_TYPES[cls](block, *args, **kwargs)
 
 
 class SkippedLayer(nn.Module):
@@ -275,7 +287,7 @@ def make_streamed(
         replaced = []
         for i, block in enumerate(stack):
             if i < stop:
-                replaced.append(StreamedBlock(block, index, f"{name}.{i}.", bits, reader, check=check))
+                replaced.append(stand_in(block, index, f"{name}.{i}.", bits, reader, check=check))
                 streamed.append(replaced[-1])
             else:
                 replaced.append(SkippedLayer())

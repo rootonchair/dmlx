@@ -238,7 +238,7 @@ uses simple rules to route messages. For more data, refer to
 | Qwen Image 2.1 Base (4-bit) | generate, edit, a maximum of 10 images in a set order | Qwen Research License (non-commercial) | ~10.6 GB | Experimental; best for exact words in the image; ~4 min per image; needs ~9.5 GB of free memory |
 
 **Settings → Models → Add Model…** shows community versions of the supported families (FLUX.2 Klein
-4B/9B, FLUX.3 Klein, Z-Image Turbo/base, Qwen Image 2.1 Base, ERNIE Image Turbo, MOSS Image). It also
+4B/9B, FLUX.3 Klein, Z-Image Turbo/base, Qwen Image 2.1 Base, ERNIE Image Turbo, MOSS Image, Boogu Image Turbo, Iris 3B Turbo, Krea 2 Turbo). It also
 accepts any Hugging Face repo in mflux format. One adapter runs all of these families from mflux's own
 model classes, so a new mflux family needs a table entry and a memory measurement
 ([`docs/benchmarks/families.md`](docs/benchmarks/families.md)).

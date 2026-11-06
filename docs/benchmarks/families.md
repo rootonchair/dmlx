@@ -1,6 +1,6 @@
 # Model families on the generic adapter (task 15, Nov 2026)
 
-Machine: Apple M5, 24 GB, macOS 26.5, mflux 0.23.0. All models are 4-bit packs from mflux-community.
+Machine: Apple M5, 24 GB, macOS 26.5, mflux 0.23.0 (0.24.0 from the Nov 6 sections). All models are 4-bit packs from mflux-community.
 Prompt "a red fox sitting in fresh snow, morning light" (edits: "make it night with a full moon, keep the
 fox the same"), seed 7, 512 px unless stated.
 
@@ -95,3 +95,95 @@ Working memory above the resident weights (bench-family, 1024 px):
 |---|---|---|---|---|---|
 | FLUX.3 Klein | +1.06 GB | +1.52 GB | +1.31 GB | +1.31 GB | 1.2 / 1.4 / 1.4, reference factor 0.5 |
 | MOSS Image | +0.86 GB | — | +7.04 GB | +2.02 GB | 1.0 / 7.4 / 2.3 |
+
+## Boogu Image Turbo (8 steps, Nov 6)
+
+Boogu keeps its text encoder (Qwen3-VL's language model) in `mllm/`. Specs now carry a part's folder
+(`subdir`) when it differs from the part's name; the catalog takes it from mflux's weight definition.
+
+| Run, 512 px | Peak MLX | Denoise | Turn | Image vs mflux |
+|---|---|---|---|---|
+| mflux `BooguImage`, all parts loaded | 13.25 GB | — | 55.4 s | reference |
+| Generic adapter, sequential | 6.96 GB | 39.7 s | 42.9 s | identical (max diff 0) |
+| Generic adapter, streamed | 3.14 GB | 40.4 s | 43.5 s | identical (max diff 0) |
+
+A second run of the same prompt skipped the text encoder (prompt cache hit). Denoise takes about 5 s per
+step at 512 px and about 25 s at 1024 px, so a 1024 px image takes about 3.5 minutes.
+
+Working memory above the resident weights (bench-family, 1024 px): denoise +2.41 to +3.05 GB (two runs),
+decode +8.60 GB full and +2.98 GB tiled (the FLUX.1 VAE's tiles are a fixed size, so tiled decode needs the
+same at 512 px). Spec: activation 3.3, decode 9.1, tiled 3.3 GB per MP. Parts: text encoder 4.41 GB,
+transformer 5.99 GB, VAE 0.15 GB; streamed, 0.59 and 1.13 GB stay resident. At 1024 px the planner needs
+8.2 GB for sequential and 3.4 GB for streamed.
+
+`bench-family` now takes the denoise peak from every run, not only the tiled-decode runs: denoise does
+not depend on the decode mode, and the two 1024 px runs differed by 25%. The earlier families' numbers do
+not change.
+
+## mflux 0.24 (Nov 6)
+
+The pin moved from 0.23 (`a3b21fca`) to 0.24.0 (`8a7fd0a4`, 6 commits; Pillow 13). The commits change the
+FLUX.2 VAE, MOSS, the Qwen 2.1 text encoders and Z-Image's attention. Every image is identical to 0.23
+(max difference 0): FLUX.2 Klein t2i and edit, sequential and streamed; Z-Image sequential and streamed;
+Qwen Image 2.1 t2i and edit; MOSS sequential. The peaks did not change.
+
+## Iris 3B Turbo (4 steps, Nov 6)
+
+Iris has no VAE: the transformer makes pixels, so its spec has a text encoder and a transformer only. Its
+transformer picks each block's call by type (`isinstance(block, IrisDualStreamBlock)`), so streamed
+blocks are now subclasses of their block's class.
+
+| Run, 512 px | Peak MLX | Turn | Image vs mflux |
+|---|---|---|---|
+| mflux `Iris`, all parts loaded | 5.79 GB | 3.9 s | reference |
+| Generic adapter, sequential | 3.73 GB | 7.7 s (3.7 s with the prompt cached) | identical (max diff 0) |
+| Generic adapter, streamed | 1.28 GB | 6.5 s | identical (max diff 0) |
+
+At 512 px and below Iris's images break into blocks, in mflux too; 640 px and up are clean. The family sets
+`min_side: 640`: smaller requests are generated at 640 px and scaled down (512 px: 8.8 s, 1.34 GB).
+
+At 1024 px a turn takes about 17 s. Working memory above the resident weights (bench-family, 1024 px):
+denoise +1.01 to +1.25 GB, decode (unpacking the pixels) +0.02 GB. Spec: activation 1.4, decode 0.1 GB per
+MP. Parts: text encoder 2.11 GB, transformer 2.59 GB; streamed, 0.31 and 0.48 GB stay resident. At 1024 px
+the planner needs 4.1 GB for sequential and 2.0 GB for streamed.
+
+## Krea 2 Turbo (8 steps, Nov 6)
+
+Krea 2 keeps its transformer's shards at the repo root, so its spec has `subdir: ""` for the transformer;
+the catalog reads tensor names from the root too. Its 8 GB text encoder is never quantized (mflux:
+quantizing it hurts the conditioning). Its own prompt-cache check comes after it reads the text encoder, so
+the family caches `_encode_prompts` itself; without that a repeated prompt still loaded the encoder.
+
+| Run, 512 px | Peak MLX | Turn | Image vs mflux |
+|---|---|---|---|
+| mflux `Krea2`, all parts loaded | 20.80 GB | 46.7 s | reference |
+| Generic adapter, sequential | 7.98 GB | 41.3 s | identical (max diff 0) |
+| Generic adapter, streamed, 512 px tiles | 5.48 GB | 35.5 s | mean 0.30/255; identical to sequential with `MLX_DISABLE_COMPILE=1` |
+| Generic adapter, streamed, 256 px tiles | 3.88 GB | 35.8 s | — |
+
+**The decode.** Its VAE (Qwen Image's) needs 6.1 GB per 512 px tile, at 512 px as at 1024 px, so tiling saved
+nothing. With 256 px tiles (`decode_tile_size: 256`) the decode needs 3.32 GB at 1024 px and takes 7.1 s
+instead of 5.4 s. Against the one-piece decode of the same latents: mean 0.29/255, 99% of pixels within
+3/255, the worst row 1.7/255 and the worst column 1.0/255 on average; no seam is visible.
+
+Working memory above the resident weights (bench-family, 1024 px): denoise +1.67 GB, decode +9.73 GB full,
++3.32 GB tiled. Spec: activation 1.8, decode 10.3, tiled 3.5 GB per MP. A 1024 px image takes about 2.5
+minutes (17 s per step). Parts: text encoder 7.49 GB, transformer 6.72 GB, VAE 0.47 GB; streamed, 1.10 and
+0.80 GB stay resident. At 1024 px the planner needs 11.6 GB for sequential and 5.2 GB for streamed.
+
+## Small images count as 1 MP in the planner (Nov 6)
+
+The planner scaled every per-MP number down with the image, but working memory stops shrinking below about
+1 MP. At 512 px it reserved less than every family measured:
+
+| Family, 512 px | denoise measured / reserved | low-memory decode measured / reserved |
+|---|---|---|
+| ERNIE Image Turbo | 1.03 / 0.39 GB | 0.44 / 0.37 GB |
+| FLUX.3 Klein | 0.79 / 0.31 GB | 0.44 / 0.37 GB |
+| MOSS Image | 0.46 / 0.26 GB | 2.02 / 0.60 GB |
+| Boogu Image Turbo | 1.14 / 0.87 GB | 2.98 / 0.87 GB |
+| Iris 3B Turbo | 1.12 / 0.37 GB | 0.01 / 0.03 GB |
+| Krea 2 Turbo (512 px tiles) | 1.02 / 0.52 GB | 6.11 / 0.52 GB |
+
+`bench-family` already counts sizes under 1 MP as 1 MP when it derives the numbers; the planner now does
+the same (`registry._megapixels`), so every row above is covered. Sizes of 1 MP and more are unchanged.

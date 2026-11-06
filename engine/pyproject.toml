@@ -11,8 +11,8 @@ license = "Apache-2.0"
 dependencies = [
     "fastapi>=0.146.0",
     "huggingface-hub>=1.33.0",
-    "mflux @ git+https://github.com/mflux-community/mflux.git@a3b21fcaa88726b2267bd42bfc2e2d722f7d5a47",
-    "pillow>=12.3,<13",
+    "mflux @ git+https://github.com/mflux-community/mflux.git@8a7fd0a486635f670ef90e02efe1c051ed3f133c",
+    "pillow>=13,<14",
     "python-multipart>=0.0.32",
     "pyyaml>=6.0.3",
     "sse-starlette>=3.5.0",

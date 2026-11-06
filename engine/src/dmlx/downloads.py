@@ -32,7 +32,7 @@ def local_path(spec: ModelSpec) -> Path | None:
     for name, component in spec.components.items():
         if component.external:
             continue
-        comp = path / name
+        comp = path / component.folder
         if not any(comp.glob("*.safetensors")):
             return None
         index = comp / "model.safetensors.index.json"
@@ -47,12 +47,12 @@ def fill_component_sizes(spec: ModelSpec, path: Path) -> None:
     for name, comp in spec.components.items():
         if comp.external:
             continue
-        on_disk = sum(f.stat().st_size for f in (path / name).glob("*.safetensors"))
+        on_disk = sum(f.stat().st_size for f in (path / comp.folder).glob("*.safetensors"))
         comp.size = max(comp.size, on_disk)
         if comp.stream and on_disk:
             from dmlx.adapters.streaming import stream_peak_bytes
 
-            comp.stream_size = stream_peak_bytes(path / name, comp.stream)
+            comp.stream_size = stream_peak_bytes(path / comp.folder, comp.stream)
     spec.local_path = path
 
 

@@ -12,7 +12,7 @@ import json
 import re
 import struct
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import yaml
 
@@ -108,6 +108,52 @@ FAMILIES = {
         "decode_tiled_gb_per_mp": 1.4,
         "agent_note": "New images and edits with up to 3 images; about 2 minutes per 1024 px image "
         "(4 for an edit), slower than FLUX.2 Klein.",
+    },    "boogu-image": {
+        "adapter": "mflux.boogu",
+        "tasks": ["t2i"],
+        "max_references": 0,
+        "match": ("boogu-image",),
+        "variants": [{"when": "turbo", "config": "boogu_image_turbo", "name": "Boogu Image Turbo",
+                      "defaults": {"steps": 8, "guidance": 1.0}}],
+        "stream": {"text_encoder": ["auto"], "transformer": ["auto"]},
+        # Measured 2026-11-06 at 1024 px: denoise +3.05 GB, decode +8.60 GB full, +2.98 GB tiled
+        # (the FLUX.1 VAE's tiles are a fixed size, so tiled decode is the same at 512 px).
+        "activation_gb_per_mp": 3.3,
+        "decode_gb_per_mp": 9.1,
+        "decode_tiled_gb_per_mp": 3.3,
+        "agent_note": "New images only; slow (about 3.5 minutes at 1024 px, 45 seconds at 512 px); "
+        "photographic, good at text in English and Chinese.",
+    },
+    "krea2": {
+        "adapter": "mflux.krea2",
+        "tasks": ["t2i"],
+        "max_references": 0,
+        "match": ("krea-2-",),
+        "variants": [{"when": "turbo", "config": "krea2", "name": "Krea 2 Turbo",
+                      "defaults": {"steps": 8, "guidance": 1.0}}],
+        "stream": {"text_encoder": ["auto"], "transformer": ["auto"]},
+        # Measured 2026-11-06 at 1024 px: denoise +1.67 GB, decode +9.73 GB full. Its VAE (Qwen Image's)
+        # needs 6.1 GB per 512 px tile, so the adapter decodes in 256 px tiles: +3.32 GB.
+        "activation_gb_per_mp": 1.8,
+        "decode_gb_per_mp": 10.3,
+        "decode_tiled_gb_per_mp": 3.5,
+        "agent_note": "New images only; about 2.5 minutes at 1024 px; strong photographic realism.",
+    },
+    "iris": {
+        "adapter": "mflux.iris",
+        "tasks": ["t2i"],
+        "max_references": 0,
+        "match": ("iris-3b",),
+        "variants": [{"when": "turbo", "config": "iris_3b", "name": "Iris 3B Turbo",
+                      "defaults": {"steps": 4, "guidance": 1.0}}],
+        "stream": {"text_encoder": ["auto"], "transformer": ["auto"]},
+        # Measured 2026-11-06 at 1024 px: denoise +1.01 to +1.25 GB. No VAE: the transformer outputs
+        # pixels, so the decode phase only unpacks them (+0.02 GB).
+        "activation_gb_per_mp": 1.4,
+        "decode_gb_per_mp": 0.1,
+        "decode_tiled_gb_per_mp": 0.1,
+        "agent_note": "New images only; fast (about 20 seconds at 1024 px); a small 3B model, "
+        "simpler detail than the larger models.",
     },
 }
 
@@ -136,6 +182,8 @@ class Inspection:
     size_bytes: int
     defaults: dict
     activation_gb_per_mp: float
+    subdirs: dict[str, str] = field(default_factory=dict)  # part -> folder, where they differ
+    parts: tuple[str, ...] = COMPONENTS  # the parts the weight definition has (Iris: no VAE)
 
     def as_dict(self) -> dict:
         return {
@@ -182,6 +230,9 @@ class Inspection:
             "reference_activation_factor": family.get("reference_activation_factor", 0.75),
             **{k: family[k] for k in ("decode_gb_per_mp", "decode_tiled_gb_per_mp", "decode_banded_gb_per_mp") if k in family},
         }
+        data["components"] = {n: c for n, c in data["components"].items() if n in self.parts}
+        for name, subdir in self.subdirs.items():
+            data["components"][name]["subdir"] = subdir
         if family.get("agent_note"):
             data["agent_note"] = family["agent_note"]
         if family.get("negative_prompt"):
@@ -218,10 +269,12 @@ def _remote_header(repo: str, filename: str) -> dict:
 
 def _tensor_names(repo: str, files: dict[str, int], component: str) -> tuple[list[str], dict]:
     """Tensor names of a component (from its index, or a shard header) and one shard's metadata."""
-    shards = sorted(f for f in files if f.startswith(f"{component}/") and f.endswith(".safetensors"))
+    # `component` is the part's folder; "" is the repo root (Krea 2 keeps its transformer there).
+    shards = sorted(f for f in _subdir_files(files, component) if f.endswith(".safetensors"))
     if not shards:
-        raise InspectError(f"This repo has no {component.replace('_', ' ')} weights, so it is not a full model.")
-    index = f"{component}/model.safetensors.index.json"
+        name = component.replace("_", " ") or "transformer"
+        raise InspectError(f"This repo has no {name} weights, so it is not a full model.")
+    index = f"{component}/model.safetensors.index.json" if component else "model.safetensors.index.json"
     header = _remote_header(repo, shards[0])
     if index in files:
         names = list(json.loads(_get(repo, index)).get("weight_map", {}))
@@ -349,8 +402,10 @@ def _detect_generic(repo: str, files: dict[str, int], card_license: str | None, 
         names = ", ".join(v["name"] for v in family["variants"])
         raise InspectError(f"dMLX runs {names} from this family; this version is not supported yet.")
     definition = weight_definition(family["adapter"], variant["config"])
-    missing, size, transformer_dir = [], 0, None
+    missing, size, transformer_dir, subdirs = [], 0, None, {}
     for component in definition.get_components():
+        if component.hf_subdir.strip("/") != component.name:
+            subdirs[component.name] = component.hf_subdir.strip("/")
         shards = [f for f in _subdir_files(files, component.hf_subdir) if f.endswith(".safetensors")]
         if not shards:
             missing.append(component.name.replace("_", " "))
@@ -362,7 +417,7 @@ def _detect_generic(repo: str, files: dict[str, int], card_license: str | None, 
             missing.append("tokenizer")
     if missing:
         raise InspectError(f"This repo is missing its {' and '.join(missing)}, so dMLX cannot run it on its own.")
-    _names, meta = _tensor_names(repo, files, transformer_dir or "transformer")
+    _names, meta = _tensor_names(repo, files, "transformer" if transformer_dir is None else transformer_dir)
     if not meta.get("mflux_version"):
         raise InspectError(
             "This repo is not in mflux's format. Use an mflux version of the model "
@@ -384,6 +439,8 @@ def _detect_generic(repo: str, files: dict[str, int], card_license: str | None, 
         size_bytes=size,
         defaults={**variant["defaults"], "width": 1024, "height": 1024},
         activation_gb_per_mp=family["activation_gb_per_mp"],
+        subdirs=subdirs,
+        parts=tuple(c.name for c in definition.get_components()),
     )
 
 

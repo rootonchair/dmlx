@@ -48,6 +48,8 @@ _M = "mflux.models"
 #   after_load     {part: fn(module)} run after a part loads
 #   banded_decode  the VAE supports dMLX's banded decode (FLUX.2 VAE)
 #   skip_from      {part: {stack: first unused layer}} never read while streaming
+#   decode_tile_size  pixels per tile in the tiled decode (default 512)
+#   min_side       smaller requests are generated at this size and scaled down (Iris breaks up below 640 px)
 FAMILIES: dict[str, dict] = {
     "mflux.flux2_klein": {
         "initializer": f"{_M}.flux2.flux2_initializer:Flux2Initializer",
@@ -93,6 +95,32 @@ FAMILIES: dict[str, dict] = {
         },
         "config": "flux3_image_klein",
     },
+    "mflux.boogu": {
+        "initializer": f"{_M}.boogu.boogu_initializer:BooguInitializer",
+        "weights": f"{_M}.boogu.weights.boogu_weight_definition:BooguWeightDefinition",
+        "pipelines": {"t2i": f"{_M}.boogu.variants.txt2img.boogu_image:BooguImage"},
+        "config": "boogu_image_turbo",
+        "encode": "_encode_instruction",
+    },
+    # Krea 2 keeps its transformer's shards at the repo root (the spec's subdir is "").
+    "mflux.krea2": {
+        "initializer": f"{_M}.krea2.krea2_initializer:Krea2Initializer",
+        "weights": f"{_M}.krea2.weights.krea2_weight_definition:Krea2WeightDefinition",
+        "pipelines": {"t2i": f"{_M}.krea2.variants.txt2img.krea2:Krea2"},
+        "config": "krea2",
+        # Its own cache check comes after it reads the text encoder, which would load it.
+        "encode": "_encode_prompts",
+        "decode_tile_size": 256,
+    },
+    # Iris has no VAE: the transformer works in pixels, so its spec has no vae part.
+    "mflux.iris": {
+        "initializer": f"{_M}.iris.iris_initializer:IrisInitializer",
+        "weights": None,
+        "pipelines": {"t2i": f"{_M}.iris.variants.txt2img.iris:Iris"},
+        "config": "iris_3b",
+        # At 512 px its images fall apart into blocks (the same in mflux); 640 px is clean.
+        "min_side": 640,
+    },
 }
 
 
@@ -107,6 +135,15 @@ def _call(fn, **available):
     """Call an mflux helper with the arguments its signature names (they differ per family)."""
     names = list(inspect.signature(fn).parameters)
     return fn(**{name: available[name] for name in names if name in available})
+
+
+def _at_least(width: int, height: int, min_side: int | None) -> tuple[int, int]:
+    """The size to generate at: scaled up (keeping the aspect ratio, multiples of 16) so the
+    shorter side reaches `min_side`."""
+    if not min_side or min(width, height) >= min_side:
+        return width, height
+    scale = min_side / min(width, height)
+    return (-(-int(width * scale) // 16) * 16, -(-int(height * scale) // 16) * 16)
 
 
 class _PromptCache(OrderedDict):
@@ -171,6 +208,7 @@ class MfluxFamilyAdapter(_MfluxAdapterBase):
             weights = self.family.get("weights")
             self.weight_definition = _load(weights) if weights else self.initializer.weight_definition(self.model_config)
         self.supports_banded_decode = bool(self.family.get("banded_decode"))
+        self.decode_tile_size = self.family.get("decode_tile_size")
         self.stream_skip_from = self.family.get("skip_from", {})
         super().__init__(spec, path)
         # `stream: [auto]` in the spec: stream every block stack the part has.
@@ -278,12 +316,12 @@ class MfluxFamilyAdapter(_MfluxAdapterBase):
         """Wrap an encode method with the prompt cache; free the text side as soon as it is done."""
         adapter = self
 
-        def encode(pipe, *, prompt, negative_prompt=None, guidance=None, **kwargs):
+        def encode(pipe, prompt, negative_prompt=None, guidance=None, **kwargs):
             key = (prompt, negative_prompt, guidance is not None and guidance > 1.0, parent.__name__)
             cache = adapter.prompt_cache
             if key in cache:
                 return cache[key]
-            value = parent(pipe, prompt=prompt, negative_prompt=negative_prompt, guidance=guidance, **kwargs)
+            value = _call(parent, self=pipe, prompt=prompt, negative_prompt=negative_prompt, guidance=guidance, **kwargs)
             mx.eval([v for _, v in tree_flatten(value) if isinstance(v, mx.array)])
             cache[key] = value
             if adapter._current_hooks is not None:
@@ -308,14 +346,21 @@ class MfluxFamilyAdapter(_MfluxAdapterBase):
         return self.prompt_cache.has_prompt(prompt)
 
     def _run(self, req: GenRequest) -> Image.Image:
+        width, height = _at_least(req.width, req.height, self.family.get("min_side"))
+        image = self._generate(req, width, height)
+        if (width, height) != (req.width, req.height):
+            image = image.resize((req.width, req.height), Image.Resampling.LANCZOS)
+        return image
+
+    def _generate(self, req: GenRequest, width: int, height: int) -> Image.Image:
         pipe = self.pipes["edit"] if req.image_paths and "edit" in self.pipes else self.pipes["t2i"]
         accepted = inspect.signature(pipe.generate_image).parameters
         kwargs = {
             "seed": req.seed,
             "prompt": req.prompt,
             "num_inference_steps": req.steps,
-            "width": req.width,
-            "height": req.height,
+            "width": width,
+            "height": height,
         }
         if req.guidance is not None and "guidance" in accepted:
             kwargs["guidance"] = req.guidance

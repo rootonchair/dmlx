@@ -314,10 +314,15 @@ def test_low_memory_decode_only_when_tight(make_engine, client_for):
     roomy_engine.memory.total = 64 * GB
     roomy = client_for(roomy_engine)
     assert _gen(roomy).json()["dmlx"]["decode_mode"] == "full"
-    tight = client_for(make_engine(headroom_gb=4.0))
+    def large_spec():
+        spec = fake_spec("fake-a")
+        spec.activation_gb_per_mp, spec.decode_gb_per_mp, spec.decode_tiled_gb_per_mp = 0.4, 0.8, 0.4
+        return spec
+
+    tight = client_for(make_engine(specs=[large_spec()], headroom_gb=4.0))
     body = _gen(tight, size="2048x2048").json()["dmlx"]  # full decode would need ~3.4 GB * margin
     assert body["strategy"] == "sequential" and body["decode_mode"] == "tiled"
-    banded_spec = fake_spec("fake-a")
+    banded_spec = large_spec()
     banded_spec.decode_banded_gb_per_mp = 0.2
     body = _gen(client_for(make_engine(specs=[banded_spec], headroom_gb=4.0)), size="2048x2048").json()["dmlx"]
     assert body["decode_mode"] == "banded"

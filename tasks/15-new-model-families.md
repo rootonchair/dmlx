@@ -1,6 +1,6 @@
 # 15 · New model families faster
 
-**Status:** Done for ERNIE Image Turbo, MOSS Image and FLUX.3 Klein (2026-11-02). More families open below.
+**Status:** Done for ERNIE Image Turbo, MOSS Image, FLUX.3 Klein (2026-11-02), Boogu Image Turbo, Iris 3B Turbo and Krea 2 Turbo (2026-11-06). More families open below.
 
 ## Why
 dMLX runs three families in mflux format (FLUX.2 Klein, Z-Image, Qwen Image 2.1). Draw Things already ships
@@ -119,16 +119,26 @@ FLUX.2 Klein 512 px gives identical images before and after, sequential and stre
       prompt encoding kept the text encoder alive; the adapter now evaluates cached encodings when the
       encode phase ends (FLUX.3 peak 4.83 → 3.70 GB, MOSS 6.94 → 4.37 GB at 512 px).
 - [x] `stream: [auto]`: the adapter finds the stacks from the module, the planner from the weight index.
+- [x] Boogu Image Turbo (2026-11-06): identical to mflux's pipeline; parts in another folder (`mllm/`) are
+      named in the spec (`subdir`); encode methods that take the prompt positionally are cached.
+- [x] The guard logs a warning when freeing a part releases less than half of its size.
+- [x] mflux 0.24 (Pillow 13): every family's images identical to 0.23.
+- [x] Iris 3B Turbo: no VAE (the spec lists only the parts the weight definition has); streamed blocks keep
+      their block's type; `min_side: 640` because Iris breaks up at 512 px.
+- [x] Krea 2 Turbo: transformer at the repo root (`subdir: ""`); 256 px decode tiles (6.1 → 3.3 GB).
+- [x] The planner counts sizes under 1 MP as 1 MP, as `bench-family` does: at 512 px it reserved less than
+      every family measured (Krea 2's decode: 0.5 GB reserved, 6.1 GB measured).
 
 Component roles (design point 4) turned out not to be needed for these families: specs already give each
 part a phase, and Boogu's `mllm` is only a folder name. They come back with Ideogram 4 (two transformers)
-and Iris (no VAE).
+and with families whose roles differ from the three names.
 
 ## Still open
-- [ ] The guard trusts `free_component`. Check active memory after a free and log when it does not drop,
-      so a leak like the one above shows up in any family.
-- [ ] Update to mflux 0.24 (check for API changes), then Iris (no VAE).
-- [ ] Boogu, FIBO (JSON prompts), Krea 2 (root shards, 16 GB), Ideogram 4 (two transformers, license).
+- [ ] FIBO and Ideogram 4 need JSON prompts: task 17. Krea 2 Raw, Iris base, ERNIE base: base versions
+      (more steps, real guidance) are not offered yet.
+- [ ] Other VAEs may also need smaller tiles: check the tiled decode at 512 px against 1024 px per family.
+- [ ] `mflux-community/flux-1-krea-dev-*` is reported as "a FLUX.2 model, but not a Klein size"; FLUX.1 repos
+      should get their own message.
 - [ ] Re-measure FLUX.2 Klein's and Z-Image's full decode with `bench-family` (mflux's block decoder made
       the old 8.6 / 6.7 GB per MP spikes much smaller); only Macs with 32 GB or more use full decode.
 

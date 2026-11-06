@@ -147,6 +147,7 @@ def test_suggestions_keep_supported_families_only(monkeypatch):
         "mflux-community/flux-3-image-klein-mflux-q4",
         "mflux-community/qwen-image-2-1-controlnet-union-mflux-q4",
         "mflux-community/krea-2-turbo-mflux-q4",
+        "mflux-community/ideogram-4-mflux-q4",
     ]
 
     class Api:
@@ -155,7 +156,7 @@ def test_suggestions_keep_supported_families_only(monkeypatch):
 
     monkeypatch.setattr(huggingface_hub, "HfApi", Api)
     monkeypatch.setattr(catalog, "_suggestions", None)
-    assert [s["repo"] for s in catalog.suggestions()] == [repos[0], repos[1], repos[3]]
+    assert [s["repo"] for s in catalog.suggestions()] == [repos[0], repos[1], repos[3], repos[5]]
     monkeypatch.setattr(catalog, "_suggestions", None)
 
 
@@ -176,6 +177,46 @@ def test_detects_a_generic_family_from_its_weight_definition(remote):
     assert found.tasks == ["t2i", "edit"] and not found.permissive_license
     assert spec["adapter"] == "mflux.flux3_klein" and spec["agent_note"]
     assert spec["components"]["transformer"]["stream"] == ["auto"]
+
+
+def test_a_part_in_another_folder_keeps_its_folder_in_the_spec(remote, tmp_path):
+    from dmlx import downloads, registry
+
+    remote([], {"mflux_version": "0.23.0", "quantization_level": "4"})
+    files = {"transformer/0.safetensors": 6_000_000_000, "vae/0.safetensors": 160_000_000,
+             "mllm/0.safetensors": 4_700_000_000, "mllm/tokenizer.json": 1000}
+    found = catalog.detect("mflux-community/boogu-image-turbo-mflux-q4", files, "apache-2.0")
+    data = found.to_spec_data()
+
+    assert found.name == "Boogu Image Turbo (4-bit)"
+    assert data["components"]["text_encoder"]["subdir"] == "mllm"
+    assert "subdir" not in data["components"]["transformer"]
+    spec = registry._parse(data)
+    assert spec.components["text_encoder"].folder == "mllm"
+    import mlx.core as mx
+
+    for name in files:
+        (tmp_path / name).parent.mkdir(exist_ok=True)
+        if name.endswith(".safetensors"):
+            mx.save_safetensors(str(tmp_path / name), {"layers.0.w": mx.zeros((4,))})
+    downloads.fill_component_sizes(spec, tmp_path)
+    assert spec.components["text_encoder"].size == (tmp_path / "mllm/0.safetensors").stat().st_size
+
+
+def test_a_transformer_at_the_repo_root_is_found(monkeypatch):
+    # Krea 2 keeps its transformer's shards at the repo root.
+    read = []
+    monkeypatch.setattr(catalog, "_remote_header", lambda repo, name: read.append(name) or {
+        "__metadata__": {"mflux_version": "0.24.0", "quantization_level": "4"}})
+    monkeypatch.setattr(catalog, "_get", lambda repo, name, byte_range=None: b'{"weight_map": {}}')
+    files = {"0.safetensors": 4_000_000_000, "model.safetensors.index.json": 100,
+             "text_encoder/0.safetensors": 8_000_000_000, "tokenizer/tokenizer.json": 1000,
+             "vae/0.safetensors": 250_000_000}
+    found = catalog.detect("mflux-community/krea-2-turbo-mflux-q4", files, "krea-2-community-license")
+
+    assert found.name == "Krea 2 Turbo (4-bit)" and not found.permissive_license
+    assert read == ["0.safetensors"]
+    assert found.to_spec_data()["components"]["transformer"]["subdir"] == ""
 
 
 def test_a_generic_family_needs_every_part_and_its_tokenizer(remote):

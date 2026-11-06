@@ -258,7 +258,7 @@ struct ModelsSettings: View {
                     ModelRow(model: m, removable: true)
                 }
                 HStack {
-                    Text("Add models such as FLUX.2 Klein, FLUX.3 Klein, Z-Image, Qwen Image 2.1, ERNIE Image or MOSS Image from Hugging Face.")
+                    Text("Add models such as FLUX.2 Klein, FLUX.3 Klein, Z-Image, Qwen Image 2.1, ERNIE Image, MOSS Image, Boogu Image, Iris or Krea 2 from Hugging Face.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                     Spacer()

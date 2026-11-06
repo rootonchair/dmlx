@@ -189,6 +189,8 @@ class _MfluxAdapterBase:
     def has_embedding(self, prompt: str) -> bool:
         return False
 
+    decode_tile_size: int | None = None  # pixels per tile in the tiled decode; None: mflux's 512
+
     def set_decode_mode(self, mode: str) -> None:
         """full: one piece. tiled: mflux tiles. banded: exact low-memory decode (FLUX.2 VAE only)."""
         from mflux.models.common.vae.tiling_config import TilingConfig
@@ -196,7 +198,8 @@ class _MfluxAdapterBase:
         if mode == "banded" and not self.supports_banded_decode:
             mode = "tiled"
         # The same config also tiles the VAE encode of edit sources; keep that whenever memory is tight.
-        config = {"full": None, "tiled": TilingConfig(), "banded": TilingConfig(vae_decode_tiles_per_dim=None)}[mode]
+        tiled = TilingConfig(vae_decode_tile_size=self.decode_tile_size) if self.decode_tile_size else TilingConfig()
+        config = {"full": None, "tiled": tiled, "banded": TilingConfig(vae_decode_tiles_per_dim=None)}[mode]
         for pipe in self.pipes.values():
             pipe.tiling_config = config
         vae = self._module("vae")

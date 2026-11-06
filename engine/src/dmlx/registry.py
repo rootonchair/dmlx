@@ -23,6 +23,18 @@ class ComponentSpec:
     stream: list[str] = field(default_factory=list)  # block stacks that can be streamed from disk
     stream_size: int = 0  # weights resident while streaming (non-block part + largest block)
     external: bool = False  # loaded by the adapter from a smaller auxiliary checkpoint
+    subdir: str | None = None  # the part's folder in the repo when it is not the part's name (Boogu: mllm)
+
+    @property
+    def folder(self) -> str:
+        return self.name if self.subdir is None else self.subdir
+
+
+def _megapixels(width: int, height: int) -> float:
+    """Megapixels for memory estimates. Below 1 MP the working memory stops shrinking (fixed costs,
+    and VAE tiles of a fixed size: Krea 2's decode needs 6.1 GB at 512 px and at 1024 px), and the
+    per-MP numbers are measured that way (`dmlx bench-family`), so small sizes count as 1 MP."""
+    return max(width * height / 1_000_000, 1.0)
 
 
 @dataclass
@@ -71,7 +83,7 @@ class ModelSpec:
 
     def activation_bytes(self, width: int, height: int, references: int = 0) -> int:
         """Peak working memory of the cheapest safe path: denoise, or a low-memory decode, whichever is larger."""
-        megapixels = (width * height) / 1_000_000
+        megapixels = _megapixels(width, height)
         # Reference images add their tokens to the sequence. Measured with one reference at 1024x1024
         # (bf16 throughout): 1.45x the working memory of a plain generation; 0.75 per image keeps margin.
         denoise = self.activation_gb_per_mp * megapixels * (
@@ -84,7 +96,7 @@ class ModelSpec:
             "tiled": self.decode_tiled_gb_per_mp,
             "banded": self.decode_banded_gb_per_mp or self.decode_tiled_gb_per_mp,
         }[mode]
-        return int(per_mp * (width * height) / 1_000_000 * GB)
+        return int(per_mp * _megapixels(width, height) * GB)
 
     @property
     def size(self) -> int:
@@ -122,6 +134,7 @@ def _parse(data: dict) -> ModelSpec:
             stream=list(c.get("stream", [])),
             size=int(float(c.get("size_gb", 0)) * GB),
             external=bool(c.get("external", False)),
+            subdir=c.get("subdir"),
         )
         for name, c in data["components"].items()
     }
