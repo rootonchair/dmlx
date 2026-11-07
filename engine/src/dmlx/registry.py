@@ -64,6 +64,7 @@ class ModelSpec:
     license_acceptance_id: str | None = None
     agent_note: str = ""  # what the planning agent should know when it picks a model for a message
     user_added: bool = False  # added from the app; stored in the user's models folder and removable
+    download_size: int = 0  # the repo's files on Hugging Face, for showing the size before the model is downloaded
     local_path: Path | None = field(default=None, repr=False)
     capabilities: dict[str, CapabilitySpec] = field(default_factory=dict)
 
@@ -102,6 +103,15 @@ class ModelSpec:
     def size(self) -> int:
         return sum(c.size for c in self.components.values())
 
+    @property
+    def listed_size(self) -> int:
+        """On disk once downloaded; before that, the repo's download size plus the parts it shares with other
+        models (external), so the first-run setup can show the total."""
+        if self.local_path is not None or not self.download_size:
+            return self.size
+        external = sum(c.size for c in self.components.values() if c.external)
+        return max(self.size, self.download_size + external)
+
     def as_dict(self) -> dict:
         return {
             "id": self.id,
@@ -119,7 +129,7 @@ class ModelSpec:
             "repo": self.repo,
             "user_added": self.user_added,
             "defaults": self.defaults,
-            "size_gb": round(self.size / GB, 2) if self.size else None,
+            "size_gb": round(self.listed_size / GB, 2) if self.listed_size else None,
             "capabilities": {name: capability.as_dict() for name, capability in self.capabilities.items()},
         }
 
@@ -166,6 +176,7 @@ def _parse(data: dict) -> ModelSpec:
         license_acceptance_id=data.get("license_acceptance_id"),
         agent_note=str(data.get("agent_note", "")),
         user_added=bool(data.get("user_added", False)),
+        download_size=int(float(data.get("download_gb", 0)) * GB),
         capabilities=parse_capabilities(data.get("capabilities"), tasks, max_references),
     )
 

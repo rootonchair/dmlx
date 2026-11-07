@@ -8,7 +8,7 @@ import SwiftUI
 ///
 /// Script: {"out": "/dir", "steps": [{"newSession": true}, {"send": "a boat"}, {"waitIdle": 300},
 ///          {"snapshot": "name"}, {"variation": true}, {"attachFile": "/path.png"}, {"draft": "text"}, {"sleep": 1},
-///          {"onboarding": true|false}, {"onboardingStep": "welcome"|"setup"}, {"settings": true}, {"selectSession": 0}, {"renderChat": "name"},
+///          {"onboarding": true|false}, {"onboardingStep": "welcome"|"setup"}, {"onboardingDownload": true} (presses Download), {"settings": true}, {"selectSession": 0}, {"renderChat": "name"},
 ///          {"modelChoice": "auto"|"<model id>"}, {"logPreview": true},
 ///          {"windowSize": [w, h]}, {"measure": true}, {"fakeSessions": n},
 ///          {"ask": {"message": "…", "question": "…"}} (as if the agent asked), {"planning": "message"} (as if just sent; "" clears), {"waitRouted": 60},
@@ -123,6 +123,7 @@ enum DevHarness {
         if let path = step["attachFile"] as? String { model.attach(files: [URL(fileURLWithPath: path)]) }
         if let name = step["onboardingStep"] as? String, let value = OnboardingStep(rawValue: name) { model.onboardingStep = value }
         if let show = step["onboarding"] as? Bool { model.showOnboarding = show }
+        if step["onboardingDownload"] != nil { model.harnessOnboardingDownload += 1 }
         if step["settings"] != nil { showSettings(model) }
         if let tab = step["settingsTab"] as? String { model.settingsTab = tab }
         if let name = step["appearance"] as? String, let a = AppAppearance(rawValue: name) {

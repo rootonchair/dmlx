@@ -216,6 +216,7 @@ private struct OnboardingSetup: View {
             footer(mac: mac, enoughSpace: enoughSpace)
         }
         .task { await pollAgent() }
+        .onChange(of: app.harnessOnboardingDownload) { requestDownloads() }
         .sheet(item: $licenseModel) { m in
             ModelLicenseView(model: m) {
                 ModelLicenseAcceptance.accept(m)

@@ -8,7 +8,7 @@ A small agent on your Mac plans each message.
 
 **You can use your Mac while dMLX works.**
 
-> **Status: v0.1 beta 2.** dMLX makes only images (it generates and edits them). Video is planned.
+> **Status: v0.1 beta 3.** dMLX makes only images (it generates and edits them). Video is planned.
 > The app is not notarized yet.
 > Refer to the [release notes](docs/RELEASE_NOTES.md) and the [known issues](docs/KNOWN_ISSUES.md).
 

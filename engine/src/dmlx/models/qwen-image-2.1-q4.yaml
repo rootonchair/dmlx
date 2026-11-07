@@ -22,6 +22,8 @@ capabilities:
     inputs:
       image: { min: 1, max: 10, ordered: true }
     prompt: { positive: true, negative: true }
+# Download size (GiB) of the repo files, shown before the model is downloaded.
+download_gb: 5.13
 min_ram_gb: 16
 components:
   # Qwen3.5-0.8B + the zen-image-edit fusion adapter replaces Qwen3-VL-8B.

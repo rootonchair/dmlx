@@ -666,6 +666,17 @@ final class AppModel {
     func send(_ text: String? = nil) {
         let message = (text ?? draft).trimmingCharacters(in: .whitespacesAndNewlines)
         guard !message.isEmpty else { return }
+        // No image model yet (for example right after "Continue in Background"): nothing could make the image,
+        // and the engine would hold the message with no workflow to choose. Keep it in the box and say why.
+        if !models.isEmpty, !models.contains(where: \.downloaded) {
+            if let loading = models.first(where: { $0.download.status == "downloading" }) {
+                let percent = Int((loading.download.progress * 100).rounded())
+                return show("Not sent yet: \(loading.name) is still downloading (\(percent)%). Send it when the download is done.")
+            }
+            onboardingStep = .setup
+            showOnboarding = true
+            return show("Not sent: download an image model first.")
+        }
         if let planning = planningMessage { return show("Not sent yet: “\(planning)” is still being planned.") }
         guard !isGeneratingHere else { return show("Not sent: wait for the image to finish, or stop it.") }
         if let pending = pendingRoute, let question = pendingAsk, promptAssistantInstalled {
@@ -806,6 +817,8 @@ final class AppModel {
     /// Dev harness only: the state right after the agent asked `question` about `message`.
     /// Dev harness only: shows a message as being planned, as right after Send.
     func harnessPlanning(_ message: String?) { planningMessage = message }
+    /// Dev harness: each change presses the first-run setup's Download button.
+    var harnessOnboardingDownload = 0
 
     func harnessAsk(message: String, question: String) {
         pendingRoute = PendingRoute(

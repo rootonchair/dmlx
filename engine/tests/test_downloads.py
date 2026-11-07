@@ -78,3 +78,20 @@ def test_download_skips_adapter_managed_external_component(monkeypatch, tmp_path
 
     assert state.status == "done" and state.total == 200
     assert downloaded == ["transformer/model.safetensors"]
+
+
+def test_listed_size_before_and_after_download():
+    """Before a model is downloaded its size comes from the spec (repo files plus external parts), so the
+    first-run setup can show the total; once downloaded, the size on disk is used."""
+    from dmlx.registry import GB, Registry
+
+    flux = Registry.load_builtin().get("flux2-klein-4b")
+    assert flux.local_path is None
+    assert flux.as_dict()["size_gb"] == 4.3
+
+    qwen = Registry.load_builtin().get("qwen-image-2.1-q4")
+    assert qwen.as_dict()["size_gb"] == round(5.13 + 2.4, 2)  # repo files plus the shared text encoder
+
+    flux.local_path = Path("/downloaded")
+    flux.components["transformer"].size = 3 * GB
+    assert flux.as_dict()["size_gb"] == 3.0

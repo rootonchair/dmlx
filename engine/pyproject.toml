@@ -1,6 +1,6 @@
 [project]
 name = "dmlx"
-version = "0.1.0b2"
+version = "0.1.0b3"
 description = "Local image generation server for Apple Silicon (MLX)"
 readme = "README.md"
 authors = [

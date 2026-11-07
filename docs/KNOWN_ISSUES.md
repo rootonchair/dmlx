@@ -1,4 +1,4 @@
-# Known issues — v0.1 beta 2
+# Known issues — v0.1 beta 3
 
 | Area | Issue | Workaround / plan |
 |---|---|---|

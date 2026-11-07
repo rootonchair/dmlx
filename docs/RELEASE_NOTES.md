@@ -1,3 +1,42 @@
+# dMLX v0.1.0-beta3
+
+A guided first start, six more image models, and a new look.
+
+## Highlights
+
+- **First-run setup.** On first start dMLX recommends an image model and an agent model for your Mac's
+  memory, shows the total download, and checks that there is enough free disk space. You can change either
+  model, or skip the agent. While the models download you can continue in the background; you can start
+  as soon as the image model is ready. The setup shows each model's size before it is downloaded, and a
+  message sent before the image model is ready stays in the box, with the download's progress.
+- **More image models.** Settings → Models → Add Model now offers ERNIE Image Turbo, MOSS Image, FLUX.3
+  Klein, Boogu Image Turbo, Iris 3B Turbo and Krea 2 Turbo. Every family runs through one adapter and
+  gives the same images as mflux's own pipelines. Some of these take minutes per image.
+- **New look.** The Still Water logo and app icon, blue colors, and **Settings → General → Appearance**:
+  System, Light or Dark.
+- **Crop / Draw.** Erasing paint on the canvas now matches the exported image. The agent knows what a
+  prepared (marked) image is, and each edit is labeled with the image it was made from.
+- **Chat.** A chat opens at the latest message, and it scrolls to a message being planned and to the
+  agent's question.
+- **Memory.** Sizes under 1 MP are planned as 1 MP, so small images no longer reserve too little memory.
+  The text encoder is freed when encoding ends (lower peaks for FLUX.3 and MOSS).
+- **mflux 0.24.**
+
+## Requirements
+
+Apple Silicon, macOS 15+, 16 GB memory or more. About 7–11 GB of disk for the image model and the agent.
+
+## Install
+
+Open the `.dmg` and drag dMLX onto the Applications folder (a `.zip` of the same app is also attached), then
+right-click → Open the first time (beta builds are not notarized). The first-run setup downloads the models.
+
+## Known issues
+
+See [Known issues](KNOWN_ISSUES.md).
+
+---
+
 # dMLX v0.1.0-beta2
 
 Adds a planning agent: a small vision-language model on your Mac reads every message, looks at the
