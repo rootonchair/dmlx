@@ -302,6 +302,14 @@ public struct PromptAssistantStatus: Codable, Hashable, Sendable {
     /// The model the agent runs on, and every model it can run on.
     public var selected: String?
     public var models: [Model]?
+    /// Where the agent runs: "local", or a service ("anthropic", "openai", "ollama", "openai-compatible").
+    public var provider: Provider?
+
+    public struct Provider: Codable, Hashable, Sendable {
+        public var kind: String
+        public var model: String?
+        public var base_url: String?
+    }
 
     public var isDownloading: Bool { download.status == "downloading" }
 

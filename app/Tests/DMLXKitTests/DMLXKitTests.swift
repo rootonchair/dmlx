@@ -336,3 +336,68 @@ final class EditorTests: XCTestCase {
         XCTAssertGreaterThan(rendered.colorAt(x: 50, y: 80)?.redComponent ?? 0, 0.9)
     }
 }
+
+final class ModelGroupTests: XCTestCase {
+    private func engineModel(_ id: String, repo: String, group: String, name: String, bits: Int?, downloaded: Bool,
+                             tasks: [String] = ["t2i", "edit"], license: String = "apache-2.0") throws -> EngineModel {
+        let json: [String: Any] = [
+            "id": id, "name": name, "license": license, "tasks": tasks, "max_references": 3, "min_ram_gb": 16,
+            "downloaded": downloaded, "resident": false, "pinned": false, "fits_this_mac": true, "repo": repo,
+            "download": ["status": "idle", "total_bytes": 0, "done_bytes": 0, "progress": 0],
+            "group": group, "group_name": name, "quantization": bits as Any,
+        ]
+        return try JSONDecoder().decode(EngineModel.self, from: JSONSerialization.data(withJSONObject: json))
+    }
+
+    private func suggestion(_ repo: String, group: String, name: String, bits: Int?, downloads: Int = 1) -> CatalogSuggestion {
+        CatalogSuggestion(repo: repo, downloads: downloads, group: group, group_name: name, quantization: bits,
+                          tasks: ["t2i", "edit"], license: "other", permissive_license: false, fits_this_mac: true)
+    }
+
+    func testBuildsOfOneModelAreOneGroupWithTheEnginesBuildsMarked() throws {
+        let klein = try engineModel("flux2-klein-4b", repo: "mflux-community/flux2-klein-4b-mflux-q4",
+                                    group: "flux-2-klein-4b", name: "FLUX.2 Klein 4B", bits: 4, downloaded: true)
+        let suggestions = [
+            suggestion("mflux-community/flux2-klein-4b-mflux-q8", group: "flux-2-klein-4b", name: "FLUX.2 Klein 4B", bits: 8, downloads: 5),
+            suggestion("mflux-community/flux2-klein-4b-mflux-q4", group: "flux-2-klein-4b", name: "FLUX.2 Klein 4B", bits: 4, downloads: 9),
+            suggestion("mflux-community/flux2-klein-4b-mflux-bf16", group: "flux-2-klein-4b", name: "FLUX.2 Klein 4B", bits: nil),
+            suggestion("mflux-community/flux2-klein-9b-mflux-q4", group: "flux-2-klein-9b", name: "FLUX.2 Klein 9B", bits: 4),
+        ]
+        let groups = ModelCatalog.groups(models: [klein], suggestions: suggestions)
+        XCTAssertEqual(groups.map(\.id), ["flux-2-klein-4b", "flux-2-klein-9b"])
+        let first = groups[0]
+        XCTAssertEqual(first.variants.map(\.quantization), [4, 8, nil])  // smallest first, full size last
+        XCTAssertEqual(first.defaultVariant?.model?.id, "flux2-klein-4b")
+        XCTAssertEqual(first.license, "apache-2.0")  // the engine's license wins over the card's
+        XCTAssertTrue(first.isDownloaded)
+        XCTAssertEqual(first.downloads, 15)
+        XCTAssertEqual(groups[1].defaultVariant?.quantization, 4)
+        XCTAssertFalse(groups[1].isAdded)
+    }
+
+    func testAnEngineBuildReplacesACatalogBuildOfTheSameBitsAndUnlistedModelsComeLast() throws {
+        let qwen = try engineModel("qwen-image-2.1-q4", repo: "OsaurusAI/Qwen-Image-2.1-mflux-4bit",
+                                   group: "qwen-image-2-1-base", name: "Qwen Image 2.1 Base", bits: 4, downloaded: false,
+                                   license: "qwen-research")
+        let zimage = try engineModel("z-image-turbo", repo: "mflux-community/z-image-turbo-mflux-q4",
+                                     group: "z-image-turbo", name: "Z-Image Turbo", bits: 4, downloaded: false, tasks: ["t2i"])
+        let suggestions = [
+            suggestion("mflux-community/qwen-image-2-1-mflux-q4", group: "qwen-image-2-1-base", name: "Qwen Image 2.1 Base", bits: 4),
+            suggestion("mflux-community/qwen-image-2-1-mflux-q8", group: "qwen-image-2-1-base", name: "Qwen Image 2.1 Base", bits: 8),
+        ]
+        let groups = ModelCatalog.groups(models: [qwen, zimage], suggestions: suggestions)
+        XCTAssertEqual(groups.map(\.id), ["qwen-image-2-1-base", "z-image-turbo"])
+        XCTAssertEqual(groups[0].variants.map(\.repo), ["OsaurusAI/Qwen-Image-2.1-mflux-4bit", "mflux-community/qwen-image-2-1-mflux-q8"])
+        XCTAssertEqual(groups[0].defaultVariant?.model?.id, "qwen-image-2.1-q4")
+        XCTAssertFalse(groups[1].supports(.edit))
+    }
+
+    func testWithoutA4BitBuildTheDefaultIsTheNextLargerOne() {
+        let group = ModelCatalog.groups(models: [], suggestions: [
+            suggestion("a/m-q3", group: "m", name: "M", bits: 3),
+            suggestion("a/m-bf16", group: "m", name: "M", bits: nil),
+            suggestion("a/m-q6", group: "m", name: "M", bits: 6),
+        ])[0]
+        XCTAssertEqual(group.defaultVariant?.repo, "a/m-q6")
+    }
+}

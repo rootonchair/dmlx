@@ -21,7 +21,7 @@ from dmlx.intelligence.base import IntelligenceError
 from dmlx.intelligence.openai_compatible import OpenAICompatibleProvider
 from dmlx.intelligence.local_llm import LocalLLMDecisionProvider
 from dmlx.memory import GB, InsufficientMemory, JobGuard, MemoryManager
-from dmlx.prompting import OpenAICompatiblePromptProvider, agent, local_vlm
+from dmlx.prompting import OpenAICompatiblePromptProvider, agent, local_vlm, remote_agent
 from dmlx.registry import ModelSpec, Registry
 from dmlx.results import ResultStore
 from dmlx.routing import WorkflowRouter
@@ -103,7 +103,7 @@ def selected_assistant_model() -> str:
     # Nothing picked yet: the default for this Mac, unless only another model is already downloaded.
     default = local_vlm.default_model(sysmem.total_memory())
     if local_vlm.locate(default) is None:
-        return next((m for m in local_vlm.MODELS if local_vlm.locate(m) is not None), default)
+        return next((m.id for m in local_vlm.MODELS.values() if m.listed and local_vlm.locate(m.id) is not None), default)
     return default
 
 
@@ -332,20 +332,32 @@ class Engine:
         explicit_count = len(attachments)
         has_current = bool(safe_state["current_result_id"])
         available: set[str] = set()
+        # The user's model choice: one model for everything (`selected_model`), or one per workflow
+        # (`selected_models`, e.g. {"image.generate": "z-image-turbo"}); workflows without one are on Auto.
         selected_model = str(state.get("selected_model", "")).strip() or None
-        if selected_model:
-            try:
-                selected_specs = [self.registry.get(selected_model)]
-            except KeyError as exc:
-                raise RequestError("unknown_model", str(exc), 404) from exc
-        else:
-            selected_specs = [spec for spec in self.registry.all() if spec.auto_select]
-        for spec in selected_specs:
+        per_operation = state.get("selected_models") or {}
+        if not isinstance(per_operation, dict):
+            raise RequestError("invalid_route", "selected_models must map workflows to model ids.", 422)
+        chosen: dict[str, str] = {}
+        try:
+            if selected_model:
+                spec = self.registry.get(selected_model)
+                chosen = {operation: spec.id for operation in spec.capabilities}
+            for operation, model_id in per_operation.items():
+                if str(model_id or "").strip():
+                    chosen[str(operation)] = self.registry.get(str(model_id).strip()).id
+        except KeyError as exc:
+            raise RequestError("unknown_model", str(exc), 404) from exc
+        for spec in self.registry.all():
             if not self.is_downloaded(spec):
                 continue
-            if selected_model is None and spec.min_ram_gb > self.memory.total / GB + 0.5:
-                continue
+            auto = spec.auto_select and spec.min_ram_gb <= self.memory.total / GB + 0.5
             for operation, capability in spec.capabilities.items():
+                if operation in chosen:
+                    if chosen[operation] != spec.id:
+                        continue
+                elif selected_model or not auto:
+                    continue
                 constraint = capability.inputs.get("image")
                 input_count = explicit_count if explicit_count else (1 if has_current and constraint else 0)
                 if constraint:
@@ -362,8 +374,11 @@ class Engine:
         # image model, and may ask instead of guessing when the message is not a request for a picture.
         note = None
         if state.get("plan") and self.prompt_assistant is not None and candidates:
-            # With Auto (no model chosen), the agent may pick the image model per message.
-            models = None if selected_model else self._model_choices(candidates, explicit_count, has_current)
+            # On Auto, the agent may pick the image model per message; only for workflows on Auto, since a
+            # model the user chose is not the agent's to change.
+            models = None if selected_model else {
+                op: choices for op, choices in self._model_choices(candidates, explicit_count, has_current).items()
+                if op not in chosen}
             planned, note = self._plan(safe_state, candidates, wait=bool(state.get("wait")), models=models)
             if planned is not None:
                 return planned
@@ -1219,6 +1234,8 @@ class Engine:
     def _fits_beside_job(self) -> bool:
         """Big Macs: the agent and the running image job fit in memory together, with the reserve kept.
         Measured beside Klein: replies identical, the plan ~3x slower and the image ~1.7x (docs/benchmarks/agent-models.md)."""
+        if not getattr(self.prompt_assistant, "uses_accelerator", True):
+            return True  # an agent on a service the user chose uses no memory on this Mac
         return self.memory.total >= 32 * GB and self.prompt_assistant.need_bytes <= self.memory.headroom()
 
     def _release_assistant(self) -> None:
@@ -1296,10 +1313,15 @@ class Engine:
         assistant = self.prompt_assistant
         models = []
         for model in local_vlm.MODELS.values():
+            if not model.listed and model.id != selected:
+                continue
             state = self.downloader.state(prompt_assistant_spec(model.id).id).as_dict()
             models.append({**model.as_dict(), "installed": local_vlm.locate(model.id) is not None, "download": state})
         current = next(m for m in models if m["id"] == selected)
+        remote = assistant.status() if isinstance(assistant, remote_agent.RemoteAgent) else None
         return {
+            # Where the agent runs: on this Mac, or on a service the user chose (no key here).
+            "provider": remote and {k: remote[k] for k in ("kind", "model", "base_url")} or {"kind": "local"},
             # The selected model, in the shape the app has always read.
             "repo": current["repo"], "revision": current["revision"], "license": current["license"],
             "installed": assistant is not None, "size_gb": current["size_gb"],
@@ -1313,11 +1335,52 @@ class Engine:
         model_id = model_id or selected_assistant_model()
 
         def done(_spec=None, *_args) -> None:
-            if model_id == selected_assistant_model():
+            # A finished download does not take over from an agent on a service the user chose.
+            if model_id == selected_assistant_model() and not isinstance(self.prompt_assistant, remote_agent.RemoteAgent):
                 self.prompt_assistant = _prompt_assistant_from_disk(model_id)
 
         self.downloader.start(prompt_assistant_spec(model_id), on_done=done)
         return self.prompt_assistant_status()
+
+    # -- an agent on a service the user chose ---------------------------------------------------------
+    @staticmethod
+    def _remote_config(body: dict) -> remote_agent.RemoteConfig:
+        def text(key: str) -> str:
+            value = body.get(key)
+            return value.strip() if isinstance(value, str) else ""
+        return remote_agent.RemoteConfig(text("kind"), text("model"), text("base_url"), text("api_key"))
+
+    def set_agent_provider(self, body: dict) -> dict:
+        """Run the agent on this Mac ({"kind": "local"}) or on a service: {"kind", "model", "base_url",
+        "api_key", "test"}. With "test", one small request checks the key and address before switching."""
+        if body.get("kind") == "local":
+            with self._accelerator_lock:
+                self.prompt_assistant = _prompt_assistant_from_disk()
+            return self.prompt_assistant_status()
+        try:
+            assistant = remote_agent.RemoteAgent(self._remote_config(body))
+        except ValueError as exc:
+            raise RequestError("invalid_agent", str(exc), 422) from exc
+        if body.get("test"):
+            try:
+                assistant.test()
+            except IntelligenceError as exc:
+                raise RequestError("agent_unreachable", str(exc), 502) from exc
+        with self._accelerator_lock:
+            if self.prompt_assistant is not None:
+                self.prompt_assistant.unload()
+            self.prompt_assistant = assistant
+        return self.prompt_assistant_status()
+
+    def agent_service_models(self, body: dict) -> dict:
+        """The models a service offers, for the setup's model menu."""
+        try:
+            probe = remote_agent.RemoteAgent(self._remote_config({**body, "model": body.get("model") or "-"}))
+            return {"models": probe.models()}
+        except ValueError as exc:
+            raise RequestError("invalid_agent", str(exc), 422) from exc
+        except IntelligenceError as exc:
+            raise RequestError("agent_unreachable", str(exc), 502) from exc
 
     def select_prompt_assistant(self, model_id: str) -> dict:
         """Switch the agent to another model; it is used from the next message once downloaded."""

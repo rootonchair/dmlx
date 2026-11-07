@@ -65,6 +65,7 @@ class ModelSpec:
     agent_note: str = ""  # what the planning agent should know when it picks a model for a message
     user_added: bool = False  # added from the app; stored in the user's models folder and removable
     download_size: int = 0  # the repo's files on Hugging Face, for showing the size before the model is downloaded
+    aliases: list[str] = field(default_factory=list)  # ids of added models of the same repo it replaces
     local_path: Path | None = field(default=None, repr=False)
     capabilities: dict[str, CapabilitySpec] = field(default_factory=dict)
 
@@ -131,7 +132,15 @@ class ModelSpec:
             "defaults": self.defaults,
             "size_gb": round(self.listed_size / GB, 2) if self.listed_size else None,
             "capabilities": {name: capability.as_dict() for name, capability in self.capabilities.items()},
+            **self.grouping(),
+            **({"aliases": list(self.aliases)} if self.aliases else {}),
         }
+
+    def grouping(self) -> dict:
+        """The model this is a build of (one entry per model in the app), and its bits."""
+        from dmlx.catalog import group  # catalog imports this module
+
+        return group(self.repo, self.quantization)
 
 
 def _parse(data: dict) -> ModelSpec:
@@ -184,6 +193,7 @@ def _parse(data: dict) -> ModelSpec:
 class Registry:
     def __init__(self, specs: list[ModelSpec]):
         self._specs = {s.id: s for s in specs}
+        self._aliases = {alias: s.id for s in specs for alias in s.aliases}
 
     @classmethod
     def load_builtin(cls, extra_dir: Path | None = None) -> "Registry":
@@ -192,14 +202,22 @@ class Registry:
             if entry.name.endswith(".yaml"):
                 specs.append(_parse(yaml.safe_load(entry.read_text())))
         builtin = {s.id for s in specs}
+        by_repo = {s.repo.lower(): s for s in specs}
         if extra_dir and extra_dir.is_dir():
             for path in sorted(extra_dir.glob("*.yaml")):
                 try:
                     spec = _parse(yaml.safe_load(path.read_text()))
                 except Exception:  # a hand-edited or truncated file must not stop the engine
                     continue
-                if spec.id not in builtin:
-                    specs.append(spec)
+                if spec.id in builtin:
+                    continue
+                # A model added from the app that dMLX now ships (same repo): the built-in one replaces it,
+                # and requests for the added id go to it.
+                replacing = by_repo.get(spec.repo.lower())
+                if replacing is not None:
+                    replacing.aliases.append(spec.id)
+                    continue
+                specs.append(spec)
         return cls(specs)
 
     def add(self, spec: ModelSpec) -> None:
@@ -210,12 +228,12 @@ class Registry:
 
     def get(self, model_id: str) -> ModelSpec:
         try:
-            return self._specs[model_id]
+            return self._specs[self._aliases.get(model_id, model_id)]
         except KeyError:
             raise KeyError(f"Unknown model '{model_id}'. Known: {', '.join(self._specs)}") from None
 
     def __contains__(self, model_id: str) -> bool:
-        return model_id in self._specs
+        return model_id in self._specs or model_id in self._aliases
 
     def all(self) -> list[ModelSpec]:
         return list(self._specs.values())

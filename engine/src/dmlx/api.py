@@ -190,7 +190,18 @@ def create_app(engine: Engine | None = None, token: str | None = None) -> FastAP
         except Exception as exc:
             raise RequestError("catalog_unavailable", f"Could not reach Hugging Face: {exc}", 502) from exc
         added = {s.repo.lower() for s in engine.registry.all()}
-        return {"data": [{**r, "added": r["repo"].lower() in added} for r in repos]}
+        total_gb = engine.memory.total / 1024**3
+        return {"data": [{**r, "added": r["repo"].lower() in added,
+                          "fits_this_mac": r.get("min_ram_gb", 16) <= total_gb + 0.5} for r in repos]}
+
+    @app.post("/admin/catalog/sizes", dependencies=[Depends(auth)])
+    async def catalog_sizes(request: Request):
+        """Download sizes of a few repos (a model's versions), before anything is downloaded."""
+        from dmlx import catalog
+
+        body = await _json_or_empty(request)
+        repos = [str(r) for r in body.get("repos") or [] if isinstance(r, str)][:16]
+        return {"sizes": await asyncio.to_thread(catalog.repo_sizes, repos)}
 
     @app.post("/admin/models/inspect", dependencies=[Depends(auth)])
     async def inspect_model(request: Request):
@@ -226,6 +237,18 @@ def create_app(engine: Engine | None = None, token: str | None = None) -> FastAP
         if not isinstance(model, str):
             raise RequestError("invalid_request", "Send {\"model\": \"<id>\"}.", 422)
         return await asyncio.to_thread(engine.select_prompt_assistant, model)
+
+    @app.post("/admin/prompt-assistant/provider", dependencies=[Depends(auth)])
+    async def set_agent_provider(request: Request):
+        body = await request.json()
+        if not isinstance(body, dict):
+            raise RequestError("invalid_request", "Send {\"kind\": \"local\"} or a service.", 422)
+        return await asyncio.to_thread(engine.set_agent_provider, body)
+
+    @app.post("/admin/prompt-assistant/provider/models", dependencies=[Depends(auth)])
+    async def agent_service_models(request: Request):
+        body = await request.json()
+        return await asyncio.to_thread(engine.agent_service_models, body if isinstance(body, dict) else {})
 
     @app.get("/admin/memory", dependencies=[Depends(auth)])
     async def memory():

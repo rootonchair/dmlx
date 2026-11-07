@@ -9,6 +9,7 @@ authors = [
 requires-python = ">=3.13"
 license = "Apache-2.0"
 dependencies = [
+    "anthropic>=1",
     "fastapi>=0.146.0",
     "huggingface-hub>=1.33.0",
     "mflux @ git+https://github.com/mflux-community/mflux.git@8a7fd0a486635f670ef90e02efe1c051ed3f133c",

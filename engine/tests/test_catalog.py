@@ -233,3 +233,78 @@ def test_unsupported_versions_of_a_generic_family_are_named():
     with pytest.raises(catalog.InspectError, match="ERNIE Image Turbo"):
         catalog.detect("mflux-community/ernie-image-base-mflux-q4", GENERIC_FILES, None)
     assert catalog.label("mflux-community/flux-3-image-klein-mflux-q8") == "FLUX.3 Klein · 8-bit"
+
+
+@pytest.mark.parametrize("repo,group,name,bits", [
+    ("mflux-community/flux2-klein-4b-mflux-q4", "flux-2-klein-4b", "FLUX.2 Klein 4B", 4),
+    ("mflux-community/flux2-klein-4b-mflux-bf16", "flux-2-klein-4b", "FLUX.2 Klein 4B", None),
+    ("mflux-community/flux2-klein-9b-mflux-q8", "flux-2-klein-9b", "FLUX.2 Klein 9B", 8),
+    # Base and KV checkpoints run differently (slower; faster edits), so they are models of their own.
+    ("mflux-community/flux-2-klein-base-4b-mflux-q6", "flux-2-klein-base-4b", "FLUX.2 Klein Base 4B", 6),
+    ("mflux-community/flux2-klein-9b-kv-mflux-q4", "flux-2-klein-9b-kv", "FLUX.2 Klein 9B KV", 4),
+    ("OsaurusAI/Qwen-Image-2.1-mflux-4bit", "qwen-image-2-1-base", "Qwen Image 2.1 Base", 4),
+    ("mflux-community/qwen-image-2-1-mflux-q3", "qwen-image-2-1-base", "Qwen Image 2.1 Base", 3),
+    ("mflux-community/flux-3-image-klein-mflux-q5", "flux-3-klein", "FLUX.3 Klein", 5),
+])
+def test_builds_of_one_model_share_a_group(repo, group, name, bits):
+    assert catalog.group(repo) == {"group": group, "group_name": name, "quantization": bits}
+
+
+def test_group_falls_back_to_the_specs_bits():
+    assert catalog.group("someone/flux2-klein-4b-mlx", 4)["quantization"] == 4
+
+
+def test_suggestions_say_what_each_build_is(monkeypatch):
+    from types import SimpleNamespace
+
+    import huggingface_hub
+
+    card = SimpleNamespace(to_dict=lambda: {"license": "other", "license_name": "flux-non-commercial-license"})
+
+    class Api:
+        def list_models(self, **_):
+            return [SimpleNamespace(id="mflux-community/flux2-klein-9b-mflux-q8", downloads=3, card_data=card),
+                    SimpleNamespace(id="mflux-community/z-image-turbo-mflux-q4", downloads=2, card_data=None)]
+
+    monkeypatch.setattr(huggingface_hub, "HfApi", Api)
+    monkeypatch.setattr(catalog, "_suggestions", None)
+    klein, zimage = catalog.suggestions()
+    monkeypatch.setattr(catalog, "_suggestions", None)
+    assert klein["group"] == "flux-2-klein-9b" and klein["quantization"] == 8
+    assert klein["tasks"] == ["t2i", "edit"] and klein["license"] == "flux-non-commercial-license"
+    assert klein["permissive_license"] is False and klein["min_ram_gb"] == 16
+    assert zimage["tasks"] == ["t2i"] and zimage["license"] == "unknown"
+
+
+def test_repo_sizes_read_the_file_list_once(monkeypatch):
+    from types import SimpleNamespace
+
+    import huggingface_hub
+
+    calls = []
+
+    class Api:
+        def model_info(self, repo, files_metadata=False):
+            calls.append(repo)
+            if repo.endswith("missing"):
+                raise RuntimeError("404")
+            return SimpleNamespace(siblings=[SimpleNamespace(rfilename="transformer/0.safetensors", size=2 * 1024**3),
+                                             SimpleNamespace(rfilename="README.md", size=10)])
+
+    monkeypatch.setattr(huggingface_hub, "HfApi", Api)
+    monkeypatch.setattr(catalog, "_sizes", {})
+    assert catalog.repo_sizes(["a/q4", "a/missing"]) == {"a/q4": 2.0}
+    assert catalog.repo_sizes(["a/q4"]) == {"a/q4": 2.0} and calls.count("a/q4") == 1
+
+
+def test_a_shipped_model_replaces_an_added_one_of_the_same_repo(tmp_path, monkeypatch, remote):
+    monkeypatch.setenv("DMLX_HOME", str(tmp_path))
+    remote(_names(double=5, single=20))
+    added = catalog.save_spec(catalog.detect("mflux-community/flux2-klein-4b-mflux-q4", FILES, "apache-2.0"))
+    assert added.id != "flux2-klein-4b"
+    registry = Registry.load_builtin(extra_dir=tmp_path / "models")
+    assert [s.id for s in registry.all()].count("flux2-klein-4b") == 1 and added.id not in [s.id for s in registry.all()]
+    assert registry.get(added.id).id == "flux2-klein-4b" and added.id in registry
+    listed = registry.get("flux2-klein-4b").as_dict()
+    assert listed["aliases"] == [added.id]
+    assert listed["group"] == "flux-2-klein-4b" and listed["quantization"] == 4

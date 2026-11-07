@@ -180,6 +180,20 @@ If the agent is not sure, it asks one short question. You can answer the questio
 request. After you send a message, the chat shows it with **Planning…**. The app never discards the
 message. You can continue to type.
 
+**Where the agent runs.** By default the agent runs on your Mac. In the first-run setup, or in **Settings →
+Intelligence → Agent**, you can use an AI service that you already have instead:
+
+| Service | What you need | Notes |
+|---|---|---|
+| Claude (Anthropic) | An API key | Opus 5.5, Sonnet 5.5 or Haiku 5.5. Anthropic charges your account. |
+| ChatGPT (OpenAI) | An API key (a ChatGPT subscription is not an API key) | Pick a model from your account's list. OpenAI charges your account. |
+| Ollama | Ollama on this Mac | Free. Pick a model that can see images. |
+| Other service | Its address, and a key if it needs one | Any service with an OpenAI-compatible API, for example LM Studio or OpenRouter. |
+
+With a service, your messages and the images in the chat go to that service to plan each message. The
+images are still made on your Mac. The app keeps the API key in the macOS Keychain; the engine keeps it in
+memory only. Before it saves your choice, the app sends one small test request.
+
 The agent makes its decisions from its instructions and tools, not from fixed rules in the code. The code
 only refuses a request that cannot run, for example an image that does not exist or an edit with no image.
 
@@ -192,7 +206,6 @@ only refuses a request that cannot run, for example an image that does not exist
 | Agent model | Download | Peak memory | Per message | Notes |
 |---|---|---|---|---|
 | Qwen3-VL 8B | 5.8 GB | 6.2 GB | ~7 s | Default for 24 GB and more |
-| Qwen3.5 9B | 6.0 GB | 6.8 GB | ~7.5 s | Best result on the routing eval |
 | Ministral 3 3B | 2.8 GB | 4.2 GB | ~5.5 s | Default for less than 24 GB |
 | Qwen3-VL 4B | 3.1 GB | 3.7 GB | ~3.5 s | Uses the least memory; seldom examines older images |
 

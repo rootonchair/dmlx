@@ -407,7 +407,9 @@ def test_the_user_picks_the_agent_model(make_engine, client_for, tmp_path, monke
     from dmlx import sysmem
 
     assert status["selected"] == local_vlm.default_model(sysmem.total_memory())
-    assert {m["id"] for m in status["models"]} == set(local_vlm.MODELS)
+    listed = {m.id for m in local_vlm.MODELS.values() if m.listed}
+    assert {m["id"] for m in status["models"]} == listed
+    assert "qwen3.5-9b-mlx-4bit" not in listed  # never ahead of Qwen3-VL 8B, so no longer offered
     assert client.post("/admin/prompt-assistant/select", json={"model": "no-such-model"}).status_code == 404
 
     small = "qwen3-vl-4b-instruct-4bit"
@@ -424,6 +426,14 @@ def test_the_user_picks_the_agent_model(make_engine, client_for, tmp_path, monke
     assert json.loads((tmp_path / "prompt-assistant.json").read_text()) == {"model": small}
     from dmlx.engine import selected_assistant_model
     assert selected_assistant_model() == small  # kept for the next launch
+
+
+def test_an_unlisted_agent_still_works_for_whoever_picked_it(make_engine, client_for, tmp_path):
+    (tmp_path / "prompt-assistant.json").write_text(json.dumps({"model": "qwen3.5-9b-mlx-4bit"}))
+    status = client_for(make_engine()).get("/admin/prompt-assistant").json()
+
+    assert status["selected"] == "qwen3.5-9b-mlx-4bit"
+    assert "qwen3.5-9b-mlx-4bit" in {m["id"] for m in status["models"]}
 
 
 def test_smaller_macs_default_to_a_smaller_agent():

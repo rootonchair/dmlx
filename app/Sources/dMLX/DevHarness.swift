@@ -8,13 +8,14 @@ import SwiftUI
 ///
 /// Script: {"out": "/dir", "steps": [{"newSession": true}, {"send": "a boat"}, {"waitIdle": 300},
 ///          {"snapshot": "name"}, {"variation": true}, {"attachFile": "/path.png"}, {"draft": "text"}, {"sleep": 1},
-///          {"onboarding": true|false}, {"onboardingStep": "welcome"|"setup"}, {"onboardingDownload": true} (presses Download), {"guideNext": "chat"|"image"} (the tip's Next; DMLX_RESET_TIPS=1 shows the guide again), {"settings": true}, {"selectSession": 0}, {"renderChat": "name"},
-///          {"modelChoice": "auto"|"<model id>"}, {"logPreview": true},
+///          {"onboarding": true|false}, {"onboardingStep": "welcome"|"setup"}, {"onboardingDownload": true} (presses Download or Start Creating), {"agentService": {"service": "ollama", "model": "…"}}, {"guideNext": "chat"|"image"} (the tip's Next; DMLX_RESET_TIPS=1 shows the guide again), {"settings": true}, {"selectSession": 0}, {"renderChat": "name"},
+///          {"modelChoice": "auto"|"<model id>"} (both tasks), {"generateModel": "…"}, {"editModel": "…"}, {"logPreview": true},
 ///          {"windowSize": [w, h]}, {"measure": true}, {"fakeSessions": n},
 ///          {"ask": {"message": "…", "question": "…"}} (as if the agent asked), {"planning": "message"} (as if just sent; "" clears), {"waitRouted": 60},
 ///          {"flags": "label"} (logs whether this or another chat is making an image, and a waiting message),
 ///          {"appearance": "system"|"light"|"dark"}, {"settingsTab": "intelligence"} (with {"settings": true}, which hosts SettingsView in its own window), {"closeSettings": true},
-///          {"capture": "name", "window": "main"|"settings"} (the real window through screencapture, native
+///          {"addModel": ""|"<group>"} (Add Model over Settings → Models), {"openModelMenu": "name", "keys": [125]},
+///          {"capture": "name", "window": "main"|"settings"|"settingsSheet"} (the real window through screencapture, native
 ///          controls included; needs Screen Recording for the launching terminal),
 ///          {"quit": true}]}
 @MainActor
@@ -76,7 +77,9 @@ enum DevHarness {
         }
         if let name = step["renderChat"] as? String { renderChat(model, name: name, out: out) }
         if let text = step["draft"] as? String { model.draft = text }
-        if let choice = step["modelChoice"] as? String { model.modelChoice = choice }
+        if let choice = step["modelChoice"] as? String { model.setModelChoice(choice) }
+        if let choice = step["generateModel"] as? String { model.setModelChoice(choice, for: [.t2i]) }
+        if let choice = step["editModel"] as? String { model.setModelChoice(choice, for: [.edit]) }
         if let name = step["aspect"] as? String, let aspect = Aspect(rawValue: name) { model.aspect = aspect }
         // The "Try anyway" button on the latest image turn (a job refused for memory).
         if step["tryAnyway"] != nil, let t = model.latestImageTurn, t.current?.errorMessage != nil {
@@ -100,7 +103,7 @@ enum DevHarness {
             window.orderFrontRegardless()
             addModelWindow = window
         }
-        if step["logPreview"] != nil { log("preview [\(model.modelChoice)] \(model.draft.isEmpty ? "(empty)" : model.draft): \(model.routePreview)") }
+        if step["logPreview"] != nil { log("preview [\(model.generateChoice)|\(model.editChoice)] \(model.draft.isEmpty ? "(empty)" : model.draft): \(model.routePreview)") }
         if let text = step["planning"] as? String { model.harnessPlanning(text.isEmpty ? nil : text) }
         if let ask = step["ask"] as? [String: String], let message = ask["message"], let question = ask["question"] {
             model.harnessAsk(message: message, question: question)
@@ -124,6 +127,9 @@ enum DevHarness {
         if let name = step["onboardingStep"] as? String, let value = OnboardingStep(rawValue: name) { model.onboardingStep = value }
         if let show = step["onboarding"] as? Bool { model.showOnboarding = show }
         if step["onboardingDownload"] != nil { model.harnessOnboardingDownload += 1 }
+        if let agent = step["agentService"] as? [String: String], let service = AgentService(rawValue: agent["service"] ?? "") {
+            model.harnessAgent = AgentChoice(service: service, model: agent["model"] ?? "", address: agent["address"] ?? "")
+        }
         if step["guideLog"] != nil {
             log("guide ready=\(GuideState.ready) hasImage=\(GuideState.hasImage) chat=\(Guide.shared.chat.currentTip?.id ?? "-") image=\(Guide.shared.image.currentTip?.id ?? "-") t2i=\(model.defaultModel(for: .t2i)?.id ?? "-") onboarding=\(model.showOnboarding)")
         }
@@ -138,6 +144,79 @@ enum DevHarness {
             a.apply()
         }
         if step["closeSettings"] != nil { settingsWindow()?.close() }
+        // With Settings → Models open: Add Model, at the top ("") or at one model's versions ("flux-2-klein-9b").
+        if let group = step["addModel"] as? String { model.harnessAddModel = group }
+        // {"openModelMenu": "name", "keys": [125, 124]}: opens the composer's model menu, presses the keys (key
+        // codes: 125 down, 124 right) while it is open, and captures the screen around the main window.
+        // Logs the composer's model menu as AppKit built it: titles, check marks and submenus.
+        if step["dumpModelMenu"] != nil, let content = mainWindow()?.contentView {
+            func find(_ view: NSView) -> NSPopUpButton? {
+                // The aspect menu is the other one in the composer ("Square · 1024²").
+                if let popup = view as? NSPopUpButton, !(popup.accessibilityLabel() ?? "").contains("²") { return popup }
+                for sub in view.subviews { if let hit = find(sub) { return hit } }
+                return nil
+            }
+            if let popup = find(content), let menu = popup.menu {
+                func lines(_ menu: NSMenu, _ indent: String) -> [String] {
+                    menu.items.flatMap { item -> [String] in
+                        if let sub = item.submenu { sub.delegate?.menuNeedsUpdate?(sub); sub.delegate?.menuWillOpen?(sub); sub.update() }
+                        let mark = item.state == .on ? "✓ " : "  "
+                        let line = item.isSeparatorItem ? "\(indent)──" : "\(indent)\(mark)\(item.title)\(item.badge.map { "  [\($0.stringValue)]" } ?? "")\(item.isEnabled ? "" : " (disabled)")"
+                        return [line] + (item.submenu.map { lines($0, indent + "    ") } ?? [])
+                    }
+                }
+                // SwiftUI builds the items when the menu opens: open it, read it while it tracks, close it.
+                let timer = Timer(timeInterval: 0.6, repeats: false) { _ in
+                    log("model menu \"\(popup.accessibilityLabel() ?? popup.title)\":\n" + lines(menu, "  ").joined(separator: "\n"))
+                    menu.cancelTracking()
+                }
+                RunLoop.main.add(timer, forMode: .common)
+                popup.performClick(nil)
+            } else {
+                var found: [String] = []
+                func walk(_ v: NSView) {
+                    if String(describing: type(of: v)).contains("Popup") {
+                        var chain: [String] = []
+                        var c: AnyClass? = type(of: v)
+                        while let k = c { chain.append(String(describing: k)); c = class_getSuperclass(k) }
+                        found.append("\(chain.prefix(4).joined(separator: "<")) id=\(v.accessibilityIdentifier()) label=\(v.accessibilityLabel() ?? "-") items=\(v.menu?.items.count ?? -1) popupItems=\((v as? NSPopUpButton)?.numberOfItems ?? -1)")
+                    }
+                    v.subviews.forEach(walk)
+                }
+                walk(content)
+                log("dumpModelMenu: menu not found; \(found.joined(separator: " | "))")
+            }
+        }
+        // Draws one window in-process (works while the screen is locked, unlike capture).
+        if let name = step["snapshotWindow"] as? String {
+            let window: NSWindow? = switch step["window"] as? String {
+            case "settings": settingsWindow()
+            case "settingsSheet": settingsWindow()?.attachedSheet ?? NSApp.windows.first { $0.isSheet && $0.isVisible }
+            default: mainWindow()
+            }
+            if let view = window?.contentView, let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) {
+                // cacheDisplay leaves out the window's own background (vibrancy): draw it under the content.
+                view.cacheDisplay(in: view.bounds, to: rep)
+                let image = NSImage(size: view.bounds.size)
+                image.lockFocus()
+                view.effectiveAppearance.performAsCurrentDrawingAppearance {
+                    NSColor.windowBackgroundColor.setFill()
+                    NSRect(origin: .zero, size: view.bounds.size).fill()
+                }
+                rep.draw(in: NSRect(origin: .zero, size: view.bounds.size), from: .zero, operation: .sourceOver,
+                         fraction: 1, respectFlipped: true, hints: nil)
+                image.unlockFocus()
+                guard let tiff = image.tiffRepresentation, let png = NSBitmapImageRep(data: tiff)?
+                    .representation(using: .png, properties: [:]) else { return }
+                try? png.write(to: out.appendingPathComponent("\(name).png"))
+                log("snapshotWindow \(name) \(Int(view.bounds.width))x\(Int(view.bounds.height))")
+            } else {
+                log("snapshotWindow \(name): no window")
+            }
+        }
+        if let name = step["openModelMenu"] as? String {
+            openMenu(labeled: "Models", in: mainWindow(), keys: step["keys"] as? [Int] ?? [], name: name, out: out)
+        }
         if step["openEditor"] != nil, let t = model.latestImageTurn { model.openEditor(t.id) }
         if step["closeEditor"] != nil { model.closeEditor() }
         // {"editorDoc": {"tool": "Paint", "crop": [x, y, w, h], "paint": [[[x, y], ...]], "erase": [[[x, y], ...]],
@@ -169,6 +248,7 @@ enum DevHarness {
         if let name = step["capture"] as? String {
             let window: NSWindow? = switch step["window"] as? String {
             case "settings": settingsWindow()
+            case "settingsSheet": settingsWindow()?.attachedSheet  // Add Model over Settings → Models
             case "sheet": mainWindow()?.attachedSheet  // the Crop / Draw editor
             case "addModel": addModelWindow
             default: mainWindow()
@@ -281,6 +361,64 @@ enum DevHarness {
     private static func mainWindow() -> NSWindow? {
         NSApp.windows.filter { $0.isVisible && $0 !== settingsWindow() && $0 !== addModelWindow && $0.sheetParent == nil }
             .max { $0.frame.width < $1.frame.width }
+    }
+
+    /// Opens a SwiftUI menu (an NSPopUpButton underneath) found by its accessibility label, captures the
+    /// screen around the window while the menu tracks, then closes it.
+    private static func openMenu(labeled label: String, in window: NSWindow?, keys: [Int], name: String, out: URL) {
+        guard let window, let content = window.contentView else { return log("openMenu: no window") }
+        func find(_ view: NSView) -> NSView? {
+            if view.accessibilityLabel() == label || (view as? NSPopUpButton)?.accessibilityLabel() == label { return view }
+            for sub in view.subviews { if let hit = find(sub) { return hit } }
+            return nil
+        }
+        guard let button = find(content) else {
+            var classes: [String] = []
+            func walk(_ v: NSView) {
+                if v is NSButton || v.accessibilityLabel() != nil { classes.append("\(type(of: v))[\(v.accessibilityLabel() ?? "-")]") }
+                v.subviews.forEach(walk)
+            }
+            walk(content)
+            return log("openMenu: no view labeled \(label); candidates: \(classes.prefix(60).joined(separator: ", "))")
+        }
+        log("openMenu: \(type(of: button))")
+        NSApp.activate(ignoringOtherApps: true)
+        window.makeKeyAndOrderFront(nil)
+        let file = out.appendingPathComponent("\(name).png")
+        let shot = Process()
+        shot.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
+        let f = window.frame
+        let top = (NSScreen.screens.first?.frame.maxY ?? f.maxY) - f.maxY
+        shot.arguments = ["-x", "-T", "2", "-R\(Int(f.minX)),\(Int(top)),\(Int(f.width)),\(Int(f.height))", file.path]
+        try? shot.run()
+        for (i, code) in keys.enumerated() {
+            let timer = Timer(timeInterval: 0.6 + Double(i) * 0.4, repeats: false) { _ in
+                for type in [CGEventType.keyDown, .keyUp] {
+                    CGEvent(keyboardEventSource: nil, virtualKey: CGKeyCode(code), keyDown: type == .keyDown)?.post(tap: .cghidEventTap)
+                }
+            }
+            RunLoop.main.add(timer, forMode: .common)
+        }
+        let close = Timer(timeInterval: 3.2, repeats: false) { _ in
+            (button as? NSPopUpButton)?.menu?.cancelTracking()
+            // Escape closes any SwiftUI menu that is not an NSPopUpButton.
+            for type in [CGEventType.keyDown, .keyUp] {
+                CGEvent(keyboardEventSource: nil, virtualKey: 53, keyDown: type == .keyDown)?.post(tap: .cghidEventTap)
+            }
+        }
+        RunLoop.main.add(close, forMode: .common)
+        if let popup = button as? NSPopUpButton { popup.performClick(nil) } else {
+            let point = button.convert(NSPoint(x: button.bounds.midX, y: button.bounds.midY), to: nil)
+            let screen = window.convertPoint(toScreen: point)
+            let y = (NSScreen.screens.first?.frame.maxY ?? 0) - screen.y
+            for type in [CGEventType.leftMouseDown, .leftMouseUp] {
+                CGEvent(mouseEventSource: nil, mouseType: type, mouseCursorPosition: CGPoint(x: screen.x, y: y),
+                        mouseButton: .left)?.post(tap: .cghidEventTap)
+            }
+        }
+        RunLoop.main.run(until: Date().addingTimeInterval(3.6))
+        shot.waitUntilExit()
+        log("openMenu capture \(file.path) status \(shot.terminationStatus)")
     }
 
     /// The window as it is on screen, through screencapture (ImageRenderer cannot draw native controls).

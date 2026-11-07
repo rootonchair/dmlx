@@ -216,6 +216,8 @@ class Inspection:
             "auto_select": family.get("auto_select", True),
             "experimental": family.get("experimental", False),
             "user_added": True,
+            # Shown as the size before the model is downloaded.
+            "download_gb": round(self.size_bytes / 1024**3, 2),
             "components": {
                 "text_encoder": {
                     "phase": "encode",
@@ -509,6 +511,45 @@ def label(repo: str) -> str:
     return f"{title} · {precision}" if precision else title
 
 
+def quantization_of(repo: str) -> int | None:
+    """The bits of a build from its repo name (`-q4`, `-4bit`); None for full precision or unknown."""
+    tokens = re.split(r"[^a-z0-9]+", repo.split("/")[-1].lower())
+    for token in tokens:
+        match = re.fullmatch(r"q(\d)|(\d)bit", token)
+        if match:
+            return int(match.group(1) or match.group(2))
+    return None
+
+
+def group(repo: str, quantization: int | None = None) -> dict:
+    """The model a repo is one build of, so the app can show one entry per model (family and size, e.g.
+    "FLUX.2 Klein 4B") with its builds (4-bit, 8-bit, full size) as versions of it. Base (undistilled)
+    and KV checkpoints are separate models: they run differently (much slower, or faster edits), while
+    the builds of one model differ only in download size and quality."""
+    name = label(repo).split(" · ")[0]
+    bits = quantization_of(repo)
+    return {
+        "group": _slug(name),
+        "group_name": name,
+        "quantization": bits if bits is not None else quantization,
+    }
+
+
+def family_of(repo: str) -> str | None:
+    """The supported family of a repo, from its name alone."""
+    family_id = _generic_family(repo)
+    if family_id:
+        return family_id
+    lowered = repo.lower()
+    if _is_qwen_21(repo):
+        return "qwen-image-2.1"
+    if "klein" in lowered:
+        return "flux2-klein"
+    if "z-image" in lowered:
+        return "z-image"
+    return None
+
+
 
 _SUGGESTION_TTL = 3600.0
 _suggestions: tuple[float, list[dict]] | None = None
@@ -522,7 +563,8 @@ def suggestions() -> list[dict]:
     from huggingface_hub import HfApi
 
     out = []
-    for model in HfApi().list_models(author="mflux-community", limit=500, sort="downloads"):
+    models = HfApi().list_models(author="mflux-community", limit=500, sort="downloads", expand=["downloads", "cardData"])
+    for model in models:
         lowered = model.id.lower()
         if "controlnet" in lowered or "lora" in lowered:
             continue
@@ -532,6 +574,45 @@ def suggestions() -> list[dict]:
                 continue
         elif not ("klein" in lowered or "z-image" in lowered or (_is_qwen_21(model.id) and "turbo" not in lowered)):
             continue
-        out.append({"repo": model.id, "label": label(model.id), "downloads": getattr(model, "downloads", None) or 0})
+        family = FAMILIES[family_of(model.id) or "flux2-klein"]
+        card = model.card_data.to_dict() if getattr(model, "card_data", None) else {}
+        license_id = str(card.get("license_name") or card.get("license") or "unknown").lower()
+        out.append({
+            "repo": model.id,
+            "label": label(model.id),
+            "downloads": getattr(model, "downloads", None) or 0,
+            **group(model.id),
+            "tasks": list(family["tasks"]),
+            "license": license_id,
+            "permissive_license": license_id in _PERMISSIVE,
+            "min_ram_gb": family.get("min_ram_gb", 16),
+        })
     _suggestions = (time.monotonic(), out)
     return out
+
+
+_sizes: dict[str, float] = {}
+
+
+def repo_sizes(repos: list[str]) -> dict[str, float]:
+    """Download size (GiB) of each repo's weights, read from its file list (nothing is downloaded).
+    Repos that cannot be read are left out; sizes are kept for the engine's lifetime."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    from huggingface_hub import HfApi
+
+    def size(repo: str) -> tuple[str, float | None]:
+        try:
+            info = HfApi().model_info(repo, files_metadata=True)
+        except Exception:
+            return repo, None
+        total = sum(s.size or 0 for s in info.siblings or [] if s.rfilename.endswith(".safetensors"))
+        return repo, round(total / 1024**3, 2) if total else None
+
+    wanted = [r for r in dict.fromkeys(repos) if r not in _sizes][:16]
+    if wanted:
+        with ThreadPoolExecutor(max_workers=6) as pool:
+            for repo, gb in pool.map(size, wanted):
+                if gb is not None:
+                    _sizes[repo] = gb
+    return {r: _sizes[r] for r in repos if r in _sizes}

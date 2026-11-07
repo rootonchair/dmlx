@@ -35,6 +35,8 @@ class AgentModel:
     license: str
     size_gb: float  # weights on disk
     note: str = ""
+    # False: kept working for anyone who already chose it, but no longer offered.
+    listed: bool = True
 
     def as_dict(self) -> dict:
         return {"id": self.id, "name": self.name, "repo": self.repo, "revision": self.revision,
@@ -48,13 +50,15 @@ MODELS: dict[str, AgentModel] = {m.id: m for m in (
                "Recommended for 24 GB and up · about 8 s per message"),
     AgentModel("qwen3.5-9b-mlx-4bit", "Qwen3.5 9B", "mlx-community/Qwen3.5-9B-MLX-4bit",
                "938d8919941c6e7efd3c7150eff7fe9d12afa631", "apache-2.0", 5.95,
-               "Best at finding older images · about 10 s per message"),
+               "Nearly as good as Qwen3-VL 8B · about 10 s per message",
+               # Never ahead of Qwen3-VL 8B (35/36 vs 36/36, 8/8 vs 8/8), and larger and slower.
+               listed=False),
     AgentModel("ministral-3-3b-instruct-2512-4bit", "Ministral 3 3B", "mlx-community/Ministral-3-3B-Instruct-2512-4bit",
                "a962dcb09eee4169c890e544c9eb938f1113fdee", "apache-2.0", 2.75,
-               "Recommended for 16 GB · looks back through the chat when it needs to"),
+               "Recommended for 16 GB · about 6 s per message"),
     AgentModel("qwen3-vl-4b-instruct-4bit", "Qwen3-VL 4B", "mlx-community/Qwen3-VL-4B-Instruct-4bit",
                "2fd8dacbdb8f1e54b8c005f081ec5bf79c56376b", "apache-2.0", 3.09,
-               "Least memory · does not look back, so it can edit the wrong older image"),
+               "Least memory and fastest · makes more mistakes"),
 )}
 DEFAULT_MODEL = "qwen3-vl-8b-instruct-4bit"
 SMALL_MAC_MODEL = "ministral-3-3b-instruct-2512-4bit"  # the default under 24 GB: 4.2 GB peak instead of 6.2 GB
@@ -190,36 +194,15 @@ def parse_reply(text: str, *, supports_negative: bool) -> tuple[str, str | None]
     raise IntelligenceError("The prompt assistant returned no prompt.")
 
 
-class LocalVLMPromptProvider:
-    """Lazy and unloaded after every use, so it never sits beside an image model."""
+class ChatPromptProvider:
+    """Prompt rewriting on top of `chat`, shared by the local agent and the remote ones (remote_agent.py)."""
 
-    uses_accelerator = True
+    name = "chat"
+    _lock: threading.RLock
+    _cache: OrderedDict
 
-    def __init__(
-        self, model_path: Path,
-        loader: Callable[[Path], tuple[object, object]] | None = None,
-        generator: Callable[[object, object, list[dict], list], str] | None = None,
-        model: AgentModel | None = None,
-    ):
-        self.model_path = Path(model_path)
-        self.model = model or MODELS[DEFAULT_MODEL]
-        self.name = f"local-vlm:{self.model.id}@{self.model.revision[:7]}"
-        self.weights_bytes = weights_bytes(self.model_path)
-        self._loader = loader or self._default_loader
-        self._generator = generator or self._default_generator
-        self._model = None
-        self._processor = None
-        self._lock = threading.RLock()
-        self._cache: OrderedDict[tuple, CompiledPrompt] = OrderedDict()
-
-    @property
-    def resident(self) -> bool:
-        return self._model is not None
-
-    @property
-    def need_bytes(self) -> int:
-        """Free memory a call needs now: its working memory, plus the weights unless they are loaded."""
-        return ACTIVATION_BYTES + (0 if self.resident else self.weights_bytes)
+    def chat(self, messages: list[dict], images: list) -> str:  # pragma: no cover - implemented by subclasses
+        raise NotImplementedError
 
     def cached(self, text: str, *, operation: str, supports_negative: bool, images: list[Path]) -> CompiledPrompt | None:
         return self._cache.get(self._key(text, operation, supports_negative, images))
@@ -251,6 +234,42 @@ class LocalVLMPromptProvider:
                 self._cache.popitem(last=False)
             return compiled
 
+    @staticmethod
+    def _key(text: str, operation: str, supports_negative: bool, images: list[Path]) -> tuple:
+        return (operation, text, supports_negative, tuple(_digest(Path(p)) for p in images))
+
+
+class LocalVLMPromptProvider(ChatPromptProvider):
+    """Lazy and unloaded after every use, so it never sits beside an image model."""
+
+    uses_accelerator = True
+
+    def __init__(
+        self, model_path: Path,
+        loader: Callable[[Path], tuple[object, object]] | None = None,
+        generator: Callable[[object, object, list[dict], list], str] | None = None,
+        model: AgentModel | None = None,
+    ):
+        self.model_path = Path(model_path)
+        self.model = model or MODELS[DEFAULT_MODEL]
+        self.name = f"local-vlm:{self.model.id}@{self.model.revision[:7]}"
+        self.weights_bytes = weights_bytes(self.model_path)
+        self._loader = loader or self._default_loader
+        self._generator = generator or self._default_generator
+        self._model = None
+        self._processor = None
+        self._lock = threading.RLock()
+        self._cache: OrderedDict[tuple, CompiledPrompt] = OrderedDict()
+
+    @property
+    def resident(self) -> bool:
+        return self._model is not None
+
+    @property
+    def need_bytes(self) -> int:
+        """Free memory a call needs now: its working memory, plus the weights unless they are loaded."""
+        return ACTIVATION_BYTES + (0 if self.resident else self.weights_bytes)
+
     def chat(self, messages: list[dict], images: list) -> str:
         """One reply from the model, loading it if needed; it stays loaded until `unload`."""
         with self._lock:
@@ -277,10 +296,6 @@ class LocalVLMPromptProvider:
     def status(self) -> dict:
         return {"kind": "local-vlm", "name": self.name, "model": self.model.id, "resident": self.resident,
                 "weights_gb": round(self.weights_bytes / 1024**3, 2)}
-
-    @staticmethod
-    def _key(text: str, operation: str, supports_negative: bool, images: list[Path]) -> tuple:
-        return (operation, text, supports_negative, tuple(_digest(Path(p)) for p in images))
 
     @staticmethod
     def _feed(item):

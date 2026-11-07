@@ -150,7 +150,8 @@ public final class EngineClient: @unchecked Sendable {
     public func routeWorkflow(
         message: String, currentResultId: String?, currentPrompt: String?, attachments: [String],
         attachmentNotes: [String: String] = [:],
-        history: [RoutingHistoryItem] = [], selectedModel: String? = nil, plan: Bool = false, wait: Bool = false
+        history: [RoutingHistoryItem] = [], selectedModel: String? = nil, selectedModels: [String: String] = [:],
+        plan: Bool = false, wait: Bool = false
     ) async throws -> WorkflowDecision {
         var body: [String: Any] = [
             "message": message, "attachments": attachments,
@@ -164,6 +165,8 @@ public final class EngineClient: @unchecked Sendable {
         if let currentResultId { body["current_result_id"] = currentResultId }
         if let currentPrompt { body["current_prompt"] = currentPrompt }
         if let selectedModel { body["selected_model"] = selectedModel }
+        // The model the user chose per workflow ("image.generate", "image.edit"); the others are on Auto.
+        if !selectedModels.isEmpty { body["selected_models"] = selectedModels }
         return try await send(try request("v1/workflows/route", method: "POST", json: body), as: WorkflowDecision.self)
     }
 
@@ -189,6 +192,29 @@ public final class EngineClient: @unchecked Sendable {
         return try await send(try request("admin/prompt-assistant/pull", method: "POST", json: body), as: PromptAssistantStatus.self)
     }
 
+    /// Runs the agent on this Mac (kind "local") or on a service the user chose. With `test`, the engine
+    /// first sends one small request, so a wrong key or address fails here instead of on a message.
+    public func setAgentProvider(kind: String, model: String = "", baseURL: String = "", apiKey: String = "",
+                                 test: Bool = false) async throws -> PromptAssistantStatus {
+        var body: [String: Any] = ["kind": kind]
+        if kind != "local" {
+            body["model"] = model
+            body["base_url"] = baseURL
+            body["api_key"] = apiKey
+            body["test"] = test
+        }
+        return try await send(try request("admin/prompt-assistant/provider", method: "POST", json: body),
+                              as: PromptAssistantStatus.self)
+    }
+
+    /// The models an OpenAI-compatible service offers (ChatGPT, Ollama, others).
+    public func agentServiceModels(kind: String, baseURL: String, apiKey: String) async throws -> [AgentServiceModel] {
+        struct List: Decodable { var models: [AgentServiceModel] }
+        let body: [String: Any] = ["kind": kind, "base_url": baseURL, "api_key": apiKey]
+        return try await send(try request("admin/prompt-assistant/provider/models", method: "POST", json: body),
+                              as: List.self).models
+    }
+
     /// Makes the agent run on another model from the next message.
     public func selectPromptAssistant(model: String) async throws -> PromptAssistantStatus {
         try await send(try request("admin/prompt-assistant/select", method: "POST", json: ["model": model]),
@@ -203,6 +229,12 @@ public final class EngineClient: @unchecked Sendable {
     public func catalogSuggestions() async throws -> [CatalogSuggestion] {
         struct List: Decodable { var data: [CatalogSuggestion] }
         return try await send(try request("admin/catalog/suggestions"), as: List.self).data
+    }
+
+    /// Download sizes (GB) of a model's versions, before anything is downloaded.
+    public func catalogSizes(repos: [String]) async throws -> [String: Double] {
+        struct Sizes: Decodable { var sizes: [String: Double] }
+        return try await send(try request("admin/catalog/sizes", method: "POST", json: ["repos": repos]), as: Sizes.self).sizes
     }
 
     public func inspect(repo: String) async throws -> ModelInspection {
@@ -326,5 +358,17 @@ public struct SSEParser: Sendable {
             return event
         }
         return nil
+    }
+}
+
+/// A model an agent service offers, as the engine lists it for the setup: recommended ones first.
+public struct AgentServiceModel: Decodable, Hashable, Identifiable, Sendable {
+    public var id: String
+    public var name: String
+    public var line: String?
+    public var recommended: Bool
+
+    public init(id: String, name: String, line: String? = nil, recommended: Bool = false) {
+        self.id = id; self.name = name; self.line = line; self.recommended = recommended
     }
 }

@@ -500,3 +500,25 @@ def test_generation_evicts_local_router_and_reports_status(make_engine):
     assert job.finished.wait(5)
     assert job.status == "done"
     assert provider.unloads == 1
+
+
+def test_a_model_chosen_for_one_workflow_leaves_the_other_on_auto(make_engine, client_for):
+    research = fake_spec("research-model", tasks=("t2i",))
+    research.auto_select = False
+    provider = FakeProvider("image.edit", 0.9)
+    engine = make_engine(specs=[fake_spec("fake-a"), research])
+    engine.router = WorkflowRouter(provider)
+    client = client_for(engine)
+    body = {"message": "change it", "current_result_id": "img_1"}
+
+    chosen = client.post("/v1/workflows/route", json={
+        **body, "selected_models": {"image.generate": "research-model"}}).json()
+    assert chosen["intent"] == "image.edit"
+    assert set(provider.calls[-1][1]) == {"image.generate", "image.edit"}
+
+    # The legacy single choice still limits routing to that model's workflows.
+    only = client.post("/v1/workflows/route", json={**body, "selected_model": "research-model"}).json()
+    assert only["intent"] == "image.generate" and only["provider"] == "deterministic"
+
+    unknown = client.post("/v1/workflows/route", json={**body, "selected_models": {"image.edit": "nope"}})
+    assert unknown.status_code == 404

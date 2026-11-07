@@ -193,8 +193,8 @@ struct IntelligenceSettings: View {
                     .foregroundStyle(.secondary)
             }
             Section("Agent") {
-                PromptAssistantRow()
-                Text("Runs on this Mac and looks at your images. It decides what each message asks for and rewrites every edit into a detailed description, which instruction-based editors follow far better than a short command. Larger models plan better but need more memory; it is loaded only while it works. Without it, edits run as written.")
+                AgentWhereSettings()
+                Text("The agent looks at your images, decides what each message asks for, and rewrites every edit into a detailed description, which image editors follow far better than a short command. On this Mac, larger models plan better but need more memory; the agent is loaded only while it works.")
                     .font(.caption).foregroundStyle(.secondary)
             }
             Section("Prompt enhancement") {
@@ -258,44 +258,59 @@ struct IntelligenceSettings: View {
     }
 }
 
+/// Settings → Models: the model for each task, then one card per model (like `ollama list`: the versions you
+/// have), with Download, progress and Remove per version. Other versions and models are added from the catalog.
 struct ModelsSettings: View {
     @Environment(AppModel.self) private var model
-    @State private var adding = false
+    @State private var adding: AddModelRequest?
+
+    /// Recommended first, then the models on this Mac, then the rest (built in, not downloaded).
+    private var groups: [ModelGroup] {
+        ModelCatalog.groups(models: model.models, suggestions: []).sorted { a, b in
+            let rank = { (g: ModelGroup) in g.id == ModelHints.recommendedGroup ? 0 : g.isDownloaded ? 1 : 2 }
+            return (rank(a), a.name) < (rank(b), b.name)
+        }
+    }
 
     var body: some View {
-        @Bindable var model = model
         ScrollView {
-            VStack(spacing: 10) {
-                if model.choosableModels.count > 1 {
-                    Picker("Model", selection: $model.modelChoice) {
-                        Text("Auto").tag("auto")
-                        ForEach(model.choosableModels) { m in Text(m.name).tag(m.id) }
-                    }
-                    .help("Also in the message box. Auto uses one model for new images and edits, which keeps follow-ups fastest.")
-                    .padding(.bottom, 6)
+            VStack(alignment: .leading, spacing: 12) {
+                if model.hasModelChoice {
+                    TaskModelChoices()
+                        .padding(.bottom, 4)
                 }
-                ForEach(model.models) { m in
-                    ModelRow(model: m, removable: true)
-                }
-                HStack {
-                    Text("Add models such as FLUX.2 Klein, FLUX.3 Klein, Z-Image, Qwen Image 2.1, ERNIE Image, MOSS Image, Boogu Image, Iris or Krea 2 from Hugging Face.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                HStack(alignment: .firstTextBaseline) {
+                    Text("Your Models").font(.headline)
+                        .accessibilityAddTraits(.isHeader)
                     Spacer()
-                    Button("Add Model…") { adding = true }
+                    Button("Add Model…") { adding = AddModelRequest() }
                         .disabled(!model.isEngineRunning)
                 }
-                .padding(.top, 4)
                 if model.models.isEmpty {
                     Text("Waiting for the engine…").foregroundStyle(.secondary)
                 }
+                ForEach(groups) { group in
+                    ModelGroupCard(group: group) { adding = AddModelRequest(group: group.id) }
+                }
+                Text("More models, such as FLUX.3 Klein, ERNIE Image, Krea 2 or Iris, are in Add Model.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
+            .padding(.horizontal, 4)
+            .padding(.bottom, 8)
         }
         .task { await model.refreshModels() }
-        .sheet(isPresented: $adding) {
-            AddModelView().environment(model)
+        .sheet(item: $adding) { request in
+            AddModelView(initialGroup: request.group).environment(model)
         }
+        .onChange(of: model.harnessAddModel) { adding = model.harnessAddModel.map { AddModelRequest(group: $0.isEmpty ? nil : $0) } }
     }
+}
+
+/// Opens Add Model, at one model's versions or at the top.
+struct AddModelRequest: Identifiable {
+    var id = UUID()
+    var group: String?
 }
 
 struct MemorySettings: View {
@@ -355,6 +370,74 @@ struct EngineSettings: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
             .background(.quaternary.opacity(0.3), in: RoundedRectangle(cornerRadius: 8))
+        }
+    }
+}
+
+/// Settings → Intelligence → Agent: on this Mac (its models), or on an AI service the user has.
+struct AgentWhereSettings: View {
+    @Environment(AppModel.self) private var app
+    @State private var useService = false
+    @State private var service: AgentService = .anthropic
+    @State private var model = AgentService.claudeModels[0].id
+    @State private var address = ""
+    @State private var apiKey = ""
+    @State private var status = ""
+    @State private var working = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Picker("Where the agent runs", selection: $useService) {
+                Text("On this Mac").tag(false)
+                Text("On your AI service").tag(true)
+            }
+            .pickerStyle(.segmented)
+
+            if useService {
+                AgentServiceForm(service: $service, model: $model, address: $address, apiKey: $apiKey)
+            } else {
+                PromptAssistantRow()
+            }
+
+            HStack {
+                if useService || app.agentChoice.service != .local {
+                    Button(useService ? "Use \(service.title)" : "Use the Agent on This Mac") { apply() }
+                        .disabled(working || !app.isEngineRunning)
+                }
+                if working { ProgressView().controlSize(.small) }
+                Text(currentLine).font(.caption).foregroundStyle(.secondary)
+            }
+            if !status.isEmpty { Text(status).font(.caption).foregroundStyle(status.hasPrefix("Could not") ? .red : .secondary) }
+        }
+        .onAppear {
+            let choice = app.agentChoice
+            useService = choice.service != .local
+            if useService {
+                service = choice.service
+                model = choice.model
+                address = choice.address
+                apiKey = AgentKeyStore.load(choice.service)
+            }
+        }
+    }
+
+    private var currentLine: String {
+        let choice = app.agentChoice
+        return choice.service == .local ? "Now: on this Mac" : "Now: \(choice.service.title) · \(choice.model)"
+    }
+
+    private func apply() {
+        working = true
+        status = ""
+        let choice = useService ? AgentChoice(service: service, model: model, address: address) : AgentChoice()
+        _Concurrency.Task {
+            defer { working = false }
+            do {
+                try await app.connectAgent(choice, apiKey: apiKey, test: useService)
+                status = useService ? "Connected. The agent now plans on \(service.title)." : "The agent runs on this Mac again."
+            } catch {
+                status = "Could not use \(service.title): \(error.localizedDescription)"
+            }
         }
     }
 }

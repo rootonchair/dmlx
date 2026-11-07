@@ -116,11 +116,21 @@ private struct OnboardingSetup: View {
     @State private var started = false
     @State private var error: String?
     @State private var licenseModel: EngineModel?
+    // The agent on an AI service instead of this Mac (AgentServiceForm.swift).
+    @State private var useService = false
+    @State private var service: AgentService = .anthropic
+    @State private var serviceModel = AgentService.claudeModels[0].id
+    @State private var serviceAddress = ""
+    @State private var serviceKey = ""
+    @State private var connecting = false
+    @State private var connected = false
 
-    /// Image models this Mac can run and Auto can pick, recommended one first.
+    /// Image models this Mac can run, recommended one first. Only models that both make and edit images:
+    /// the chat is built on "now change this", so a new-images-only model (Z-Image Turbo) would leave every
+    /// edit with nothing to run it. Those stay available in Settings → Models.
     private var imageChoices: [EngineModel] {
-        let fitting = app.models.filter { $0.fits_this_mac && $0.autoSelectable && $0.supports(.t2i) }
-        let preferred = ["flux2-klein-4b", "z-image-turbo"]
+        let fitting = app.models.filter { $0.fits_this_mac && $0.supports(.t2i) && $0.supports(.edit) }
+        let preferred = ["flux2-klein-4b"]
         return fitting.sorted { a, b in
             (preferred.firstIndex(of: a.id) ?? 99, a.name) < (preferred.firstIndex(of: b.id) ?? 99, b.name)
         }
@@ -134,23 +144,39 @@ private struct OnboardingSetup: View {
     }
 
     private var needsImage: Bool { !(image?.downloaded ?? true) }
-    private var needsAgent: Bool { useAgent && !(agentModel?.installed ?? true) }
+    private var needsAgent: Bool { !useService && useAgent && !(agentModel?.installed ?? true) }
+    private var serviceReady: Bool {
+        !serviceModel.trimmingCharacters(in: .whitespaces).isEmpty
+            && (!service.needsKey || !serviceKey.isEmpty)
+            && (!service.takesAddress || !(serviceAddress.isEmpty ? service.defaultAddress : serviceAddress).isEmpty)
+    }
     private var downloadGB: Double {
         (needsImage ? image?.size_gb ?? 0 : 0) + (needsAgent ? agentModel?.size_gb ?? 0 : 0)
     }
     private var downloading: Bool {
-        image?.download.status == "downloading" || (useAgent && agentModel?.isDownloading == true)
+        image?.download.status == "downloading" || (!useService && useAgent && agentModel?.isDownloading == true)
     }
     private var imageReady: Bool { image?.downloaded ?? false }
+
+    /// The agent model suggested for this Mac's memory (as the engine's own default).
+    private func recommendedAgent(_ mac: ThisMac) -> String {
+        mac.memoryGB >= 24 ? "qwen3-vl-8b-instruct-4bit" : "ministral-3-3b-instruct-2512-4bit"
+    }
+
+    private var choicesLocked: Bool { started && downloading }
+
+    @State private var choicesHeight: CGFloat = 480
+    /// Room for the choices: the screen, less the title, the footer and the sheet's margins.
+    private var maxChoicesHeight: CGFloat { max(300, (NSScreen.main?.visibleFrame.height ?? 800) - 320) }
 
     var body: some View {
         let mac = ThisMac(app)
         let enoughSpace = mac.freeGB.map { $0 > downloadGB + 2 } ?? true
-        VStack(alignment: .leading, spacing: 20) {
+        VStack(alignment: .leading, spacing: 22) {
             VStack(alignment: .leading, spacing: 6) {
-                Text("Recommended for this Mac")
+                Text("Choose your models")
                     .font(.system(size: 26, weight: .regular, design: .serif))
-                Text("dMLX needs an image model. The agent is optional, but it makes the chat work much better: it reads your messages and images and decides what to do.")
+                Text("We picked what suits this Mac. You can change both later in Settings.")
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -162,61 +188,92 @@ private struct OnboardingSetup: View {
                 }
             }
 
-            if let image {
-                card(
-                    title: "Image model", name: image.name,
-                    detail: "\(image.supports(.edit) ? "Makes and edits images" : "Makes images") · \(licenseName(image.license)) · \(gb(image.size_gb))",
-                    downloaded: image.downloaded, progress: image.download.status == "downloading" ? image.download.progress : nil,
-                    failure: image.download.status == "error" ? image.download.error : nil
-                ) {
-                    Menu("Change") {
-                        ForEach(imageChoices) { m in
-                            Button { imageId = m.id } label: {
-                                Text("\(m.name) · \(gb(m.size_gb))\(m.downloaded ? " · downloaded" : "")")
-                            }
-                        }
-                    }
-                    .menuStyle(.borderlessButton)
-                    .fixedSize()
-                    .disabled(started && downloading)
-                }
-            }
-
-            if let agentModel {
-                card(
-                    title: "Agent", name: agentModel.name,
-                    detail: ([licenseName(agentModel.license), String(format: "%.1f GB", agentModel.size_gb)] + (agentModel.note.isEmpty ? [] : [agentModel.note])).joined(separator: " · "),
-                    downloaded: agentModel.installed, progress: agentModel.isDownloading ? agentModel.download.progress : nil,
-                    failure: agentModel.download.status == "error" ? agentModel.download.error : nil,
-                    dimmed: !useAgent
-                ) {
-                    HStack(spacing: 10) {
-                        Menu("Change") {
-                            ForEach(agentChoices) { m in
-                                Button { agentId = m.id } label: {
-                                    Text("\(m.name) · \(String(format: "%.1f GB", m.size_gb))\(m.installed ? " · downloaded" : "")")
+            // The choices scroll only when the sheet would not fit the screen (a 13-inch Mac, more models).
+            ScrollView {
+                VStack(alignment: .leading, spacing: 22) {
+                    if let image {
+                        VStack(alignment: .leading, spacing: 10) {
+                            sectionHeader("Image model", "Makes the pictures, on this Mac.")
+                            VStack(spacing: 6) {
+                                ForEach(Array(imageChoices.enumerated()), id: \.element.id) { index, m in
+                                    ChoiceRow(
+                                        name: m.name, hint: ModelHints.image(m), size: gb(m.size_gb),
+                                        recommended: index == 0 && imageChoices.count > 1,
+                                        // No license badge: the license dialog before the download says it.
+                                        tag: nil,
+                                        state: .init(downloaded: m.downloaded, status: m.download.status,
+                                                     progress: m.download.progress, error: m.download.error),
+                                        selected: m.id == image.id
+                                    ) { imageId = m.id }
+                                    .disabled(choicesLocked)
                                 }
                             }
                         }
-                        .menuStyle(.borderlessButton)
-                        .fixedSize()
-                        .disabled(!useAgent || (started && downloading))
-                        if !agentModel.installed {
-                            Toggle("Download the agent", isOn: $useAgent)
-                                .toggleStyle(.switch)
-                                .controlSize(.small)
-                                .labelsHidden()
-                                .disabled(started && downloading)
-                                .help("Without the agent, dMLX routes messages with simple rules.")
+                    }
+
+                    VStack(alignment: .leading, spacing: 10) {
+                        HStack(alignment: .firstTextBaseline) {
+                            sectionHeader("Agent", "Reads your messages and images, and decides what to do.")
+                            Spacer()
+                            if !useService, let agentModel, !agentModel.installed || !useAgent {
+                                Toggle("Download the agent", isOn: $useAgent)
+                                    .toggleStyle(.switch)
+                                    .controlSize(.mini)
+                                    .font(.callout)
+                                    .disabled(choicesLocked)
+                                    .help("Without the agent, dMLX routes messages with simple rules.")
+                            }
+                        }
+                        HStack(spacing: 8) {
+                            PlaceCard(symbol: "laptopcomputer", title: "On this Mac",
+                                      detail: Text("Private and free"), selected: !useService) { useService = false }
+                            PlaceCard(symbol: "cloud", title: "Your AI service",
+                                      detail: serviceStatus, selected: useService) { useService = true }
+                        }
+                        .disabled(choicesLocked)
+
+                        if useService {
+                            AgentServiceForm(service: $service, model: $serviceModel, address: $serviceAddress, apiKey: $serviceKey)
+                                .padding(14)
+                                .background(ChoiceRow.fill, in: RoundedRectangle(cornerRadius: 10))
+                                .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(.separator))
+                                .onChange(of: "\(service.rawValue)|\(serviceModel)|\(serviceAddress)|\(serviceKey)") { connected = false }
+                        } else {
+                            let recommended = recommendedAgent(mac)
+                            VStack(spacing: 6) {
+                                ForEach(agentChoices.sorted { ($0.id == recommended ? 0 : 1) < ($1.id == recommended ? 0 : 1) }) { m in
+                                    ChoiceRow(
+                                        name: m.name, hint: ModelHints.agent(m), size: gb(m.size_gb),
+                                        recommended: m.id == recommended && agentChoices.count > 1, tag: nil,
+                                        state: .init(downloaded: m.installed, status: m.download.status,
+                                                     progress: m.download.progress, error: m.download.error),
+                                        selected: m.id == agentModel?.id
+                                    ) { agentId = m.id }
+                                    .disabled(!useAgent || choicesLocked)
+                                }
+                            }
+                            .opacity(useAgent ? 1 : 0.5)
                         }
                     }
                 }
+                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { choicesHeight = $0 }
             }
+            .scrollBounceBehavior(.basedOnSize)
+            .frame(height: min(choicesHeight, maxChoicesHeight))
 
             footer(mac: mac, enoughSpace: enoughSpace)
         }
         .task { await pollAgent() }
-        .onChange(of: app.harnessOnboardingDownload) { requestDownloads() }
+        .onAppear { restoreChoice() }
+        // Dev harness: the main button (Download, or Start Creating), and filling in an agent service.
+        .onChange(of: app.harnessOnboardingDownload) { downloadGB > 0 ? proceed { requestDownloads() } : proceed { finish() } }
+        .onChange(of: app.harnessAgent) {
+            guard let choice = app.harnessAgent else { return }
+            useService = true
+            service = choice.service
+            serviceModel = choice.model
+            serviceAddress = choice.address
+        }
         .sheet(item: $licenseModel) { m in
             ModelLicenseView(model: m) {
                 ModelLicenseAcceptance.accept(m)
@@ -224,6 +281,24 @@ private struct OnboardingSetup: View {
                 startDownloads()
             }
         }
+    }
+
+    /// The AI service card's second line: what it is, or how the connection check went.
+    private var serviceStatus: Text {
+        if connecting { return Text("Connecting…") }
+        if connected && useService {
+            return Text("\(Image(systemName: "checkmark.circle.fill")) Connected").foregroundStyle(.green)
+        }
+        return Text("Claude, ChatGPT, Ollama…")
+    }
+
+    private func sectionHeader(_ title: String, _ detail: String) -> some View {
+        VStack(alignment: .leading, spacing: 1) {
+            Text(title).font(.headline)
+            Text(detail).font(.callout).foregroundStyle(.secondary)
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.isHeader)
     }
 
     @ViewBuilder
@@ -249,64 +324,71 @@ private struct OnboardingSetup: View {
                 Spacer()
                 if downloadGB > 0 && !(started && downloading) {
                     Button("Set Up Later", action: finish)
-                    Button("Download \(gb(downloadGB))") { requestDownloads() }
+                    Button("Download \(gb(downloadGB))") { proceed { requestDownloads() } }
                         .keyboardShortcut(.defaultAction)
                         .buttonStyle(.borderedProminent)
-                        .disabled(!enoughSpace || image == nil || !app.isEngineRunning)
+                        .disabled(!enoughSpace || image == nil || !app.isEngineRunning || connecting || (useService && !serviceReady))
                 } else if !imageReady {
                     Button("Continue in Background", action: finish)
                         .keyboardShortcut(.defaultAction)
                 } else {
-                    Button("Start Creating", action: finish)
+                    Button("Start Creating") { proceed { finish() } }
                         .keyboardShortcut(.defaultAction)
                         .buttonStyle(.borderedProminent)
+                        .disabled(connecting || (useService && !serviceReady))
                 }
             }
         }
-    }
-
-    private func card<Accessory: View>(title: String, name: String, detail: String, downloaded: Bool,
-                                       progress: Double?, failure: String?, dimmed: Bool = false,
-                                       @ViewBuilder accessory: () -> Accessory) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .firstTextBaseline) {
-                Text(title.uppercased())
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
-                    .tracking(0.6)
-                Spacer()
-                accessory()
-            }
-            HStack(alignment: .center, spacing: 12) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(name).font(.headline)
-                    Text(detail).font(.caption).foregroundStyle(.secondary)
-                }
-                Spacer()
-                if let progress {
-                    ProgressView(value: progress).frame(width: 130)
-                    Text("\(Int(progress * 100))%").font(.caption).monospacedDigit().foregroundStyle(.secondary)
-                } else if downloaded {
-                    Label("Downloaded", systemImage: "checkmark.circle.fill")
-                        .foregroundStyle(.green)
-                        .font(.callout)
-                } else if dimmed {
-                    Text("Off").font(.callout).foregroundStyle(.secondary)
-                }
-            }
-            if let failure {
-                Text("Download failed: \(failure)").font(.caption).foregroundStyle(.red).lineLimit(2)
-            }
-        }
-        .padding(14)
-        .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 12))
-        .opacity(dimmed ? 0.55 : 1)
     }
 
     private func spaceLine(mac: ThisMac, enoughSpace: Bool) -> String {
         guard let free = mac.freeGB else { return "Total download: \(gb(downloadGB))." }
         let base = "Total download: \(gb(downloadGB)). This Mac has \(Int(free)) GB free."
         return enoughSpace ? base + " Models are saved in your Hugging Face cache." : base + " Free up some space, or pick smaller models."
+    }
+
+    /// With an AI service chosen, check it first (one small request): a wrong key or address shows here.
+    /// Back on this Mac, the agent runs locally again.
+    private func proceed(_ next: @escaping () -> Void) {
+        error = nil
+        rememberImageChoice()
+        guard useService else {
+            if app.agentChoice.service != .local {
+                _Concurrency.Task { try? await app.connectAgent(AgentChoice(), apiKey: "", test: false) }
+            }
+            return next()
+        }
+        if connected { return next() }
+        connecting = true
+        let choice = AgentChoice(service: service, model: serviceModel, address: serviceAddress)
+        _Concurrency.Task {
+            defer { connecting = false }
+            do {
+                try await app.connectAgent(choice, apiKey: serviceKey, test: true)
+                connected = true
+                next()
+            } catch {
+                self.error = "Could not use \(service.title): \(error.localizedDescription)"
+            }
+        }
+    }
+
+    private func restoreChoice() {
+        let choice = app.agentChoice
+        guard choice.service != .local else { return }
+        useService = true
+        service = choice.service
+        serviceModel = choice.model
+        serviceAddress = choice.address
+        serviceKey = AgentKeyStore.load(choice.service)
+        connected = app.promptAssistantInstalled
+    }
+
+    /// The picked image model becomes the model menu's choice, so it is the one that runs (Auto never
+    /// picks a slow, research-only model like Qwen Image 2.1 by itself). The recommended one stays on Auto.
+    private func rememberImageChoice() {
+        guard let image else { return }
+        app.setModelChoice(image.id == imageChoices.first?.id ? "auto" : image.id, for: [.t2i, .edit])
     }
 
     private func requestDownloads() {
@@ -321,7 +403,7 @@ private struct OnboardingSetup: View {
         started = true
         error = nil
         if needsImage, let image { app.download(image) }
-        guard useAgent, let target = agentModel?.id else { return }
+        guard !useService, useAgent, let target = agentModel?.id else { return }
         _Concurrency.Task {
             do {
                 guard let client = app.client else { return }
@@ -348,93 +430,6 @@ private struct OnboardingSetup: View {
     }
 
     private func gb(_ value: Double?) -> String { String(format: "%.1f GB", value ?? 0) }
-    private func licenseName(_ license: String) -> String { license.lowercased() == "apache-2.0" ? "Apache-2.0" : license }
-}
-
-struct ModelRow: View {
-    @Environment(AppModel.self) private var app
-    let model: EngineModel
-    var removable = false
-    @State private var confirmRemove = false
-    @State private var showLicense = false
-
-    var role: String {
-        model.supports(.edit) ? "Creates and edits images" : "Creates images"
-    }
-
-    var body: some View {
-        HStack(alignment: .center, spacing: 12) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(model.name).font(.headline)
-                Text("\(role) · \(model.license) · \(sizeText)")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            Spacer()
-            if model.downloaded {
-                Label("Downloaded", systemImage: "checkmark.circle.fill")
-                    .foregroundStyle(.green)
-                    .font(.callout)
-                if removable {
-                    Button("Remove…") { confirmRemove = true }
-                        .controlSize(.small)
-                }
-            } else if model.download.status == "downloading" {
-                VStack(alignment: .trailing, spacing: 4) {
-                    ProgressView(value: model.download.progress).frame(width: 140)
-                    Text(String(format: "%.1f of %.1f GB", Double(model.download.done_bytes) / 1e9, Double(model.download.total_bytes) / 1e9))
-                        .font(.caption2)
-                        .monospacedDigit()
-                        .foregroundStyle(.secondary)
-                }
-            } else {
-                VStack(alignment: .trailing, spacing: 4) {
-                    HStack(spacing: 6) {
-                        Button("Download") {
-                            if model.requiresLicenseAcceptance && !ModelLicenseAcceptance.hasAccepted(model) {
-                                showLicense = true
-                            } else {
-                                app.download(model)
-                            }
-                        }
-                        if removable && model.isUserAdded {
-                            Button("Remove") { app.remove(model) }.controlSize(.small)
-                        }
-                    }
-                    if let error = model.download.error {
-                        Text(error).font(.caption2).foregroundStyle(.red).lineLimit(2)
-                    }
-                }
-            }
-        }
-        .padding(12)
-        .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 10))
-        .confirmationDialog(removeTitle, isPresented: $confirmRemove, titleVisibility: .visible) {
-            Button(model.isUserAdded ? "Remove and Delete Files" : "Delete Files", role: .destructive) { app.remove(model) }
-        } message: {
-            Text(removeMessage)
-        }
-        .sheet(isPresented: $showLicense) {
-            ModelLicenseView(model: model) {
-                ModelLicenseAcceptance.accept(model)
-                showLicense = false
-                app.download(model)
-            }
-        }
-    }
-
-    var removeTitle: String { model.isUserAdded ? "Remove \(model.name)?" : "Delete the files of \(model.name)?" }
-
-    var removeMessage: String {
-        let files = "This deletes \(sizeText) from the Hugging Face cache on this Mac. Other apps that use the same model would need to download it again."
-        return model.isUserAdded ? files : files + " \(model.name) stays in the list, and you can download it again anytime."
-    }
-
-    var sizeText: String {
-        if let gb = model.size_gb, gb > 0 { return String(format: "%.1f GB", gb) }
-        if model.download.total_bytes > 0 { return String(format: "%.1f GB", Double(model.download.total_bytes) / 1e9) }
-        return "about 5 GB"
-    }
 }
 
 enum ModelLicenseAcceptance {
@@ -459,14 +454,15 @@ struct ModelLicenseView: View {
     let onAccept: () -> Void
 
     var body: some View {
+        let license = ModelLicense.name(model.license)
         VStack(alignment: .leading, spacing: 16) {
-            Label("Research-only model", systemImage: "exclamationmark.triangle.fill")
+            Label(ModelLicense.title(model.license), systemImage: "exclamationmark.triangle.fill")
                 .font(.title2.weight(.semibold))
                 .foregroundStyle(.orange)
-            Text("\(model.name) uses the Qwen Research License. The model weights may only be used for non-commercial research or evaluation unless you obtain a separate commercial license from Qwen.")
+            Text("\(model.name) uses the \(license). \(ModelLicense.terms(model.license))")
                 .fixedSize(horizontal: false, vertical: true)
             if let value = model.license_url, let url = URL(string: value) {
-                Link("Read the Qwen Research License", destination: url)
+                Link("Read the \(license)", destination: url)
             }
             Text("By continuing, you confirm that you understand this restriction.")
                 .font(.callout)
@@ -480,5 +476,264 @@ struct ModelLicenseView: View {
         }
         .padding(24)
         .frame(width: 500)
+    }
+}
+
+/// Model licenses in plain words: a readable name, and what a restricted one allows.
+enum ModelLicense {
+    static func name(_ license: String) -> String {
+        switch license.lowercased() {
+        case "apache-2.0": "Apache 2.0 License"
+        case "mit": "MIT License"
+        case "qwen-research": "Qwen Research License"
+        case "flux-non-commercial": "FLUX Non-Commercial License"
+        default: license
+        }
+    }
+
+    private static func isResearch(_ license: String) -> Bool { license.lowercased().contains("research") }
+    private static func isNonCommercial(_ license: String) -> Bool {
+        let l = license.lowercased()
+        return l.contains("non-commercial") || l.contains("noncommercial") || l.hasSuffix("-nc")
+    }
+
+    /// A short tag for restricted models ("Research use only", "Non-commercial"), nil for open ones.
+    static func restriction(_ license: String, needsAcceptance: Bool = false) -> String? {
+        if isResearch(license) { return "Research use only" }
+        if isNonCommercial(license) { return "Non-commercial" }
+        return needsAcceptance ? "Restricted license" : nil
+    }
+
+    static func title(_ license: String) -> String {
+        if isResearch(license) { return "Research-only model" }
+        if isNonCommercial(license) { return "Non-commercial model" }
+        return "Restricted license"
+    }
+
+    static func terms(_ license: String) -> String {
+        switch license.lowercased() {
+        case "qwen-research":
+            "The model may only be used for non-commercial research or evaluation unless you obtain a separate commercial license from Qwen."
+        case "flux-non-commercial":
+            "The model may only be used for non-commercial purposes unless you obtain a separate commercial license from Black Forest Labs."
+        default:
+            isResearch(license) || isNonCommercial(license)
+                ? "The model may not be used for commercial purposes. Read the license before you download it."
+                : "Its license limits how the model may be used. Read it before you download the model."
+        }
+    }
+}
+
+/// Plain words about each model for the first-run setup and the model menus: what it is good at, not how.
+enum ModelHints {
+    static func image(_ m: EngineModel) -> String {
+        switch m.id {
+        case "flux2-klein-4b": "Fast and good at most things. Makes new images and edits yours."
+        case "flux2-klein-9b": "Sharper, more faithful images and edits than Klein 4B. Slower and larger."
+        case "z-image-turbo": "Very realistic photos, but slower. Makes new images only; it can't edit them."
+        case "qwen-image-2.1-q4": "Best at writing words in images, like posters, and careful edits. Very slow: minutes per image."
+        default: m.supports(.edit) ? "Makes new images and edits yours." : "Makes new images."
+        }
+    }
+
+    static func imageShort(_ m: EngineModel) -> String {
+        switch m.id {
+        case "flux2-klein-4b": "fast, makes and edits images (recommended)"
+        case "flux2-klein-9b": "sharper images and edits, slower, non-commercial use only"
+        case "z-image-turbo": "realistic photos, slower, new images only"
+        case "qwen-image-2.1-q4": "best at words in images, very slow, research use only"
+        default: m.supports(.edit) ? "makes and edits images" : "makes new images"
+        }
+    }
+
+    static func agent(_ m: PromptAssistantStatus.Model) -> String {
+        switch m.id {
+        case "qwen3-vl-8b-instruct-4bit": "Understands you best. Needs 24 GB of memory or more."
+        case "ministral-3-3b-instruct-2512-4bit": "Good and light. Made for Macs with 16 GB of memory."
+        case "qwen3-vl-4b-instruct-4bit": "Fastest and lightest, but gets things wrong more often."
+        default: m.note
+        }
+    }
+
+    static func agentShort(_ m: PromptAssistantStatus.Model) -> String {
+        switch m.id {
+        case "qwen3-vl-8b-instruct-4bit": "understands you best, 24 GB+"
+        case "ministral-3-3b-instruct-2512-4bit": "good and light, for 16 GB Macs"
+        case "qwen3-vl-4b-instruct-4bit": "fastest, makes more mistakes"
+        default: m.note
+        }
+    }
+}
+
+/// One choice in the first-run setup: a model with a radio mark, its hint, size and download state.
+struct ChoiceRow: View {
+    struct State {
+        var downloaded: Bool
+        var status: String
+        var progress: Double
+        var error: String?
+    }
+
+    static let fill = Color(nsColor: .controlBackgroundColor)
+
+    let name: String
+    let hint: String
+    let size: String
+    var recommended = false
+    var tag: String?
+    let state: State
+    let selected: Bool
+    let action: () -> Void
+
+    @Environment(\.isEnabled) private var isEnabled
+
+    private var downloading: Bool { state.status == "downloading" }
+    private var failure: String? { state.status == "error" ? (state.error ?? "unknown error") : nil }
+
+    var body: some View {
+        Button(action: action) {
+            HStack(alignment: .top, spacing: 12) {
+                RadioMark(selected: selected).padding(.top, 1)
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(spacing: 6) {
+                        Text(name).font(.body.weight(.semibold))
+                        if recommended { Badge(text: "Recommended", color: Theme.accent) }
+                        if let tag { Badge(text: tag, color: .orange) }
+                    }
+                    Text(hint)
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if let failure {
+                        Text("Download failed: \(failure)")
+                            .font(.caption).foregroundStyle(.red).lineLimit(2)
+                    }
+                }
+                Spacer(minLength: 8)
+                VStack(alignment: .trailing, spacing: 4) {
+                    Text(size).font(.callout).monospacedDigit().foregroundStyle(.secondary)
+                    status
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(selected ? Theme.accent.opacity(0.09) : Self.fill, in: RoundedRectangle(cornerRadius: 10))
+            .overlay(
+                RoundedRectangle(cornerRadius: 10)
+                    .strokeBorder(selected ? AnyShapeStyle(Theme.accent) : AnyShapeStyle(.separator), lineWidth: selected ? 1.5 : 1)
+            )
+            .contentShape(RoundedRectangle(cornerRadius: 10))
+        }
+        .buttonStyle(.plain)
+        .opacity(isEnabled ? 1 : 0.6)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(name)
+        .accessibilityValue(accessibilityDetail)
+        .accessibilityHint(hint)
+        .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton)
+    }
+
+    @ViewBuilder
+    private var status: some View {
+        if downloading {
+            HStack(spacing: 6) {
+                ProgressView(value: state.progress).frame(width: 64).controlSize(.small)
+                Text("\(Int(state.progress * 100))%").font(.caption).monospacedDigit().foregroundStyle(.secondary)
+            }
+        } else if failure != nil {
+            Label("Failed", systemImage: "exclamationmark.circle.fill")
+                .font(.caption).foregroundStyle(.red)
+        } else if state.downloaded {
+            HStack(spacing: 3) {
+                Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
+                Text("Downloaded").foregroundStyle(.secondary)
+            }
+            .font(.caption)
+        }
+    }
+
+    private var accessibilityDetail: String {
+        var parts = [size]
+        if recommended { parts.append("Recommended") }
+        if let tag { parts.append(tag) }
+        if downloading { parts.append("Downloading, \(Int(state.progress * 100)) percent") }
+        else if let failure { parts.append("Download failed: \(failure)") }
+        else if state.downloaded { parts.append("Downloaded") }
+        else { parts.append("Not downloaded") }
+        return parts.joined(separator: ", ")
+    }
+}
+
+/// Where the agent runs, as one of two side-by-side cards.
+struct PlaceCard: View {
+    let symbol: String
+    let title: String
+    let detail: Text
+    let selected: Bool
+    let action: () -> Void
+
+    @Environment(\.isEnabled) private var isEnabled
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 10) {
+                Image(systemName: symbol)
+                    .font(.system(size: 18))
+                    .foregroundStyle(selected ? Theme.accent : .secondary)
+                    .frame(width: 26)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(title).font(.body.weight(.semibold))
+                    detail.font(.callout).foregroundStyle(.secondary).lineLimit(1)
+                }
+                Spacer(minLength: 4)
+                RadioMark(selected: selected)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .frame(maxWidth: .infinity)
+            .background(selected ? Theme.accent.opacity(0.09) : ChoiceRow.fill, in: RoundedRectangle(cornerRadius: 10))
+            .overlay(
+                RoundedRectangle(cornerRadius: 10)
+                    .strokeBorder(selected ? AnyShapeStyle(Theme.accent) : AnyShapeStyle(.separator), lineWidth: selected ? 1.5 : 1)
+            )
+            .contentShape(RoundedRectangle(cornerRadius: 10))
+        }
+        .buttonStyle(.plain)
+        .opacity(isEnabled ? 1 : 0.6)
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(selected ? [.isButton, .isSelected] : .isButton)
+    }
+}
+
+/// A radio button's mark: a ring, filled with the accent color when selected.
+struct RadioMark: View {
+    let selected: Bool
+
+    var body: some View {
+        ZStack {
+            if selected {
+                Circle().fill(Theme.accent)
+                Circle().fill(.white).frame(width: 6, height: 6)
+            } else {
+                Circle().strokeBorder(.tertiary, lineWidth: 1.5)
+            }
+        }
+        .frame(width: 16, height: 16)
+        .accessibilityHidden(true)
+    }
+}
+
+struct Badge: View {
+    let text: String
+    let color: Color
+
+    var body: some View {
+        Text(text)
+            .font(.caption2.weight(.semibold))
+            .foregroundStyle(color)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(color.opacity(0.14), in: Capsule())
     }
 }

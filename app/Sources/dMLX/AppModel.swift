@@ -68,15 +68,27 @@ final class AppModel {
     var editorImage: NSImage?
     var editorTurnNumber = 0
     var isExportingEditor = false
-    /// "auto" or a model id; chosen from the composer's model menu (and mirrored in Settings).
-    var modelChoice: String = AppModel.savedModelChoice() {
-        didSet { UserDefaults.standard.set(modelChoice, forKey: "modelChoice") }
+    /// The model for new images and the model for edits: "auto" or a model id, each chosen in the composer's
+    /// model menu (and in Settings → Models).
+    var generateChoice: String = AppModel.savedModelChoice(.t2i) {
+        didSet { UserDefaults.standard.set(generateChoice, forKey: Self.choiceKey(.t2i)) }
+    }
+    var editChoice: String = AppModel.savedModelChoice(.edit) {
+        didSet { UserDefaults.standard.set(editChoice, forKey: Self.choiceKey(.edit)) }
     }
 
-    private static func savedModelChoice() -> String {
-        if let saved = UserDefaults.standard.string(forKey: "modelChoice") { return saved }
-        // Earlier builds kept a "model for new images" setting; carry a non-default pick over.
-        if let old = UserDefaults.standard.string(forKey: "generateModel"), old != "flux2-klein-4b" { return old }
+    private static func choiceKey(_ task: GenTask) -> String {
+        task == .edit ? "modelChoice.edit" : "modelChoice.generate"
+    }
+
+    /// Earlier builds kept one choice for both ("modelChoice"; before that "generateModel" for new images):
+    /// a model picked there becomes the choice for each task it can do (`normalizeModelChoices` sets a task it
+    /// cannot do back to Auto once the models are known).
+    private static func savedModelChoice(_ task: GenTask) -> String {
+        let defaults = UserDefaults.standard
+        if let saved = defaults.string(forKey: choiceKey(task)) { return saved }
+        if let old = defaults.string(forKey: "modelChoice") { return old }
+        if task == .t2i, let old = defaults.string(forKey: "generateModel"), old != "flux2-klein-4b" { return old }
         return "auto"
     }
 
@@ -114,6 +126,8 @@ final class AppModel {
     private var planTask: _Concurrency.Task<Void, Never>?
     /// The local prompt assistant is downloaded: sent messages are planned by it.
     var promptAssistantInstalled = false
+    /// Where the agent runs (AgentServiceForm.swift); restored when the engine starts.
+    var agentChoice = AgentChoice.load()
     private let editorStore = EditorDocumentStore.default()
     let images = ImageCache()
 
@@ -174,6 +188,7 @@ final class AppModel {
 
     private func onEngineReady() {
         scheduleRoutePreview()
+        _Concurrency.Task { [weak self] in await self?.restoreAgentChoice() }
         poller?.cancel()
         poller = _Concurrency.Task { [weak self] in
             var first = true
@@ -205,6 +220,7 @@ final class AppModel {
         guard let client else { return }
         if let list = try? await client.models() {
             models = list
+            normalizeModelChoices()
             capabilityCatalog = try? await client.capabilities()
             promptAssistantInstalled = (try? await client.promptAssistant())?.installed ?? false
             // First run, or no image model yet. Someone who finished setup without the agent is not asked again.
@@ -239,6 +255,30 @@ final class AppModel {
         return try await client.catalogSuggestions()
     }
 
+    /// The community catalog, loaded once per run for Add Model (it lists about a hundred repos).
+    private(set) var catalog: [CatalogSuggestion]?
+    private(set) var catalogError: String?
+    /// Download sizes of catalog versions, read when a model is picked in Add Model.
+    private(set) var catalogSizes: [String: Double] = [:]
+
+    func loadCatalog() async {
+        guard catalog == nil else { return }
+        do {
+            catalog = try await catalogSuggestions()
+            catalogError = nil
+        } catch {
+            catalogError = "Couldn't load the community models. You can still paste a Hugging Face link above."
+        }
+    }
+
+    func loadSizes(_ repos: [String]) async {
+        let wanted = repos.filter { catalogSizes[$0] == nil }
+        guard !wanted.isEmpty, let client else { return }
+        if let sizes = try? await client.catalogSizes(repos: wanted) {
+            catalogSizes.merge(sizes) { _, new in new }
+        }
+    }
+
     func inspectModel(_ text: String) async throws -> ModelInspection {
         guard let client else { throw EngineClientError.notRunning }
         return try await client.inspect(repo: text)
@@ -258,7 +298,9 @@ final class AppModel {
             do {
                 guard let client else { throw EngineClientError.notRunning }
                 let freed = m.isUserAdded ? try await client.removeModel(model: m.id) : try await client.deleteFiles(model: m.id)
-                if modelChoice == m.id && m.isUserAdded { modelChoice = "auto" }
+                if m.isUserAdded {
+                    for task in [GenTask.t2i, .edit] where modelChoice(for: task) == m.id { setModelChoice("auto", for: [task]) }
+                }
                 await refreshModels()
                 show(freed > 0 ? "Removed \(m.name) · freed \(String(format: "%.1f", freed)) GB" : "Removed \(m.name)")
             } catch {
@@ -290,15 +332,74 @@ final class AppModel {
 
     // MARK: model choice
 
+    func modelChoice(for task: GenTask) -> String { task == .edit ? editChoice : generateChoice }
+
+    func setModelChoice(_ id: String, for tasks: [GenTask] = [.t2i, .edit]) {
+        for task in tasks {
+            if task == .edit { editChoice = id } else { generateChoice = id }
+        }
+    }
+
+    /// A choice the models now known show to be impossible goes back to Auto: a model that cannot edit chosen
+    /// for edits (carried over from the single choice of earlier builds), or an added model that the built-in
+    /// one of the same repo replaced (its id becomes the built-in id).
+    private func normalizeModelChoices() {
+        for task in [GenTask.t2i, .edit] {
+            let id = modelChoice(for: task)
+            guard id != "auto" else { continue }
+            if let replacing = models.first(where: { $0.aliases?.contains(id) == true }) {
+                setModelChoice(replacing.supports(task) ? replacing.id : "auto", for: [task])
+            } else if let m = models.first(where: { $0.id == id }), !m.supports(task) {
+                setModelChoice("auto", for: [task])
+            }
+        }
+    }
+
     /// Every downloaded model is visible for explicit selection. Auto still uses
     /// only models that pass this Mac's safety tier.
     var choosableModels: [EngineModel] {
         models.filter(\.downloaded)
     }
 
-    /// The model the menu's choice resolves to, or nil for Auto (or a choice that is no longer available).
-    var chosenModel: EngineModel? {
-        modelChoice == "auto" ? nil : choosableModels.first(where: { $0.id == modelChoice })
+    /// The downloaded models that can do the task: only these are offered for it (Z-Image never under Edit).
+    func choosableModels(for task: GenTask) -> [EngineModel] {
+        choosableModels.filter { $0.supports(task) }
+    }
+
+    /// The composer shows its model menu when there is something to choose for either task.
+    var hasModelChoice: Bool {
+        choosableModels(for: .t2i).count > 1 || choosableModels(for: .edit).count > 1
+    }
+
+    /// The model chosen for the task, or nil for Auto (or a choice that is no longer available).
+    func chosenModel(for task: GenTask) -> EngineModel? {
+        let id = modelChoice(for: task)
+        return id == "auto" ? nil : choosableModels(for: task).first(where: { $0.id == id })
+    }
+
+    /// Both tasks on Auto.
+    var isAutoModel: Bool { chosenModel(for: .t2i) == nil && chosenModel(for: .edit) == nil }
+
+    /// The chosen model per workflow, for the engine's routing (workflows left out are on Auto).
+    var selectedModels: [String: String] {
+        var chosen: [String: String] = [:]
+        if let m = chosenModel(for: .t2i) { chosen["image.generate"] = m.id }
+        if let m = chosenModel(for: .edit) { chosen["image.edit"] = m.id }
+        return chosen
+    }
+
+    /// Part of the routing key: a hint computed for one choice is not reused after the choice changes.
+    private var selectionKey: String? {
+        let chosen = selectedModels
+        return chosen.isEmpty ? nil : chosen.keys.sorted().map { "\($0)=\(chosen[$0]!)" }.joined(separator: ",")
+    }
+
+    static func task(for operation: String) -> GenTask? {
+        switch operation {
+        case "image.generate": .t2i
+        case "image.edit": .edit
+        default: nil
+        }
     }
 
     func defaultModel(for task: GenTask) -> EngineModel? {
@@ -307,7 +408,8 @@ final class AppModel {
 
     /// On Auto, the model the agent picked for this message when it can run it; otherwise the usual choice.
     private func model(for operation: String, decision: WorkflowDecision) -> EngineModel? {
-        if chosenModel == nil, let picked = decision.model,
+        let chosen = Self.task(for: operation).flatMap { chosenModel(for: $0) }
+        if chosen == nil, let picked = decision.model,
            let model = models.first(where: { $0.id == picked && $0.downloaded }),
            capabilityCatalog?.operations[operation]?.contains(where: { $0.model == picked }) == true {
             return model
@@ -315,15 +417,23 @@ final class AppModel {
         return defaultModel(for: operation)
     }
 
+    /// The model that runs a workflow: the one chosen for its task; on Auto, the model chosen for the other
+    /// task when it can do this one too (one model for both keeps follow-ups warm), else dMLX's pick for this
+    /// Mac. Auto never picks a model that is not auto-selectable (Qwen Image 2.1) or may not fit.
     func defaultModel(for operation: String) -> EngineModel? {
         let capabilities = capabilityCatalog?.operations[operation, default: []] ?? []
-        if let chosen = chosenModel,
+        let task = Self.task(for: operation)
+        if let task, let chosen = chosenModel(for: task),
            capabilities.contains(where: { $0.model == chosen.id && $0.downloaded }) {
             return chosen
         }
         let capableIds = Set(capabilities
             .filter { $0.downloaded && $0.fits_this_mac }.map(\.model))
         let downloaded = models.filter { capableIds.contains($0.id) && $0.autoSelectable }
+        if let task, let other = chosenModel(for: task == .edit ? .t2i : .edit),
+           let same = downloaded.first(where: { $0.id == other.id }) {
+            return same
+        }
         // Auto: one model for both tasks keeps generate/edit turns warm.
         for id in ["flux2-klein-4b", "z-image-turbo"] {
             if let m = downloaded.first(where: { $0.id == id }) { return m }
@@ -331,15 +441,22 @@ final class AppModel {
         return downloaded.first
     }
 
+    /// A model's name in the model menus: the model's name, and its version when another version of the same
+    /// model is downloaded too ("FLUX.2 Klein 4B · 8-bit").
+    func menuName(_ m: EngineModel) -> String {
+        let name = m.group_name ?? m.name
+        let siblings = choosableModels.filter { $0.group != nil && $0.group == m.group }
+        return siblings.count > 1 ? "\(name) · \(ModelHints.variantName(m.quantization))" : name
+    }
+
     /// One line for the model menu: what the model does and its size.
     static func modelSummary(_ m: EngineModel) -> String {
         let does = m.supports(.edit) ? "New images and edits" : "New images only"
-        let license = m.requiresLicenseAcceptance ? " · Research-only" : ""
         let maturity = m.isExperimental ? " · Experimental" : ""
         let compatibility = m.fits_this_mac ? "" : " · May not fit this Mac"
         return m.size_gb.map {
-            "\(does) · \(String(format: "%.1f", $0)) GB\(license)\(maturity)\(compatibility)"
-        } ?? does + license + maturity + compatibility
+            "\(does) · \(String(format: "%.1f", $0)) GB\(maturity)\(compatibility)"
+        } ?? does + maturity + compatibility
     }
 
     /// Appended to the route preview when sending would swap another model out of memory.
@@ -487,7 +604,7 @@ final class AppModel {
     var routePreview: String {
         let message = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !message.isEmpty else {
-            return chosenModel == nil ? "Model picked for you" : ""  // the model menu already names the choice
+            return isAutoModel ? "Model picked for you" : ""  // the model menu already names the choice
         }
         guard routeDecisionKey == routingKey(message: message), let decision = routeDecision else {
             return isResolvingRoute ? "Determining workflow…"
@@ -498,10 +615,8 @@ final class AppModel {
             return defaultModel(for: .t2i).map { "Will generate · \($0.name)\(loadHint($0))" } ?? "No image model downloaded"
         case "image.edit":
             guard let m = defaultModel(for: .edit) else { return "No model that can edit is downloaded" }
-            // The chosen model may not edit; say which one is used instead.
-            let fallback = chosenModel.map { $0.supports(.edit) ? "" : " (\($0.name) can't edit)" } ?? ""
             let what = attachments.isEmpty ? latestImageTurn.map { "image \($0.number)" } ?? "the current image" : "the attached image\(attachments.count == 1 ? "" : "s")"
-            return "Will edit \(what) · \(m.name)\(fallback)\(loadHint(m))"
+            return "Will edit \(what) · \(m.name)\(loadHint(m))"
         case "image.upscale", "image.restore", "image.enhance":
             guard let m = defaultModel(for: decision.intent) else {
                 return "No installed executor for \(Self.operationLabel(decision.intent).lowercased())"
@@ -572,7 +687,7 @@ final class AppModel {
                 let decision = try await client.routeWorkflow(
                     message: message, currentResultId: currentResultId,
                     currentPrompt: currentPrompt, attachments: attachmentIds,
-                    history: self.routingHistory, selectedModel: self.chosenModel?.id)
+                    history: self.routingHistory, selectedModels: self.selectedModels)
                 guard !_Concurrency.Task.isCancelled,
                       self.routeRequest?.accepts(
                         context: self.routingContext(message: message), requestID: request.id) == true else { return }
@@ -598,7 +713,7 @@ final class AppModel {
         RoutingContext(
             message: message, currentResultId: latestImageTurn?.current?.resultId,
             attachmentIds: attachments.map(\.id), history: routingHistory,
-            selectedModel: chosenModel?.id)
+            selectedModel: selectionKey)
     }
 
     /// Keep routing context useful and bounded. The first few turns preserve
@@ -626,7 +741,7 @@ final class AppModel {
         let operations = capabilityCatalog?.operations.compactMap { operation, capabilities -> String? in
             let available = capabilities.contains { capability in
                 guard capability.downloaded else { return false }
-                if let chosen = chosenModel {
+                if let task = Self.task(for: operation), let chosen = chosenModel(for: task) {
                     guard capability.model == chosen.id else { return false }
                 } else {
                     guard capability.fits_this_mac else { return false }
@@ -718,7 +833,7 @@ final class AppModel {
                 let decision = try await client.routeWorkflow(
                     message: message, currentResultId: snapshot.latestResultId, currentPrompt: currentPrompt,
                     attachments: snapshot.attachmentIds, attachmentNotes: notes, history: history,
-                    selectedModel: self?.chosenModel?.id,
+                    selectedModels: self?.selectedModels ?? [:],
                     plan: planned, wait: waits)
                 guard let self, !_Concurrency.Task.isCancelled else { return }
                 self.planningMessage = nil
@@ -789,7 +904,7 @@ final class AppModel {
                     message: reply, currentResultId: pending.latestResultId,
                     currentPrompt: self?.latestImageTurn?.current?.prompt, attachments: pending.attachmentIds,
                     attachmentNotes: self?.attachmentNotes(pending.attachmentInputs) ?? [:],
-                    history: history, selectedModel: self?.chosenModel?.id, plan: true, wait: waits)
+                    history: history, selectedModels: self?.selectedModels ?? [:], plan: true, wait: waits)
                 guard let self, !_Concurrency.Task.isCancelled else { return }
                 self.planningMessage = nil
                 guard self.pendingAsk == question else { return }
@@ -819,6 +934,10 @@ final class AppModel {
     func harnessPlanning(_ message: String?) { planningMessage = message }
     /// Dev harness: each change presses the first-run setup's Download button.
     var harnessOnboardingDownload = 0
+    /// Dev harness: fills in the setup's agent service.
+    var harnessAgent: AgentChoice?
+    /// Dev harness: opens Add Model from Settings → Models ("" at the top, or at a model's versions).
+    var harnessAddModel: String?
 
     func harnessAsk(message: String, question: String) {
         pendingRoute = PendingRoute(
@@ -1189,7 +1308,12 @@ final class AppModel {
 
     func variation(_ turnId: String) {
         guard let t = turns.firstIndex(where: { $0.id == turnId }), let base = turns[t].current else { return }
-        var v = ImageVersion(prompt: base.prompt, model: base.model, task: base.task, operation: base.operation, size: base.size,
+        // A variation is the same image made again with another seed, so by the same model; if that model has
+        // been removed since, by the model chosen now for the task.
+        let operation = base.operation ?? (base.task == .edit ? "image.edit" : "image.generate")
+        let model = models.contains(where: { $0.id == base.model && $0.downloaded }) || models.isEmpty
+            ? base.model : defaultModel(for: operation)?.id ?? base.model
+        var v = ImageVersion(prompt: base.prompt, model: model, task: base.task, operation: base.operation, size: base.size,
                              sourceIds: base.sourceIds, label: "Variation", workflowRoute: base.workflowRoute,
                              mediaInputs: base.mediaInputs, workflowPrompt: base.workflowPrompt)
         v.seed = nil

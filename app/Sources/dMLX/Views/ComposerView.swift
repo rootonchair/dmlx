@@ -170,7 +170,7 @@ struct ComposerView: View {
                             .help("Size for new images (edits keep the source size)")
                             .guideTip(SizeTip.self, in: Guide.shared.chat, edge: .bottom)
 
-                            if model.choosableModels.count > 1 {
+                            if model.hasModelChoice {
                                 ModelMenu()
                             }
 
@@ -258,7 +258,7 @@ struct ComposerView: View {
             focused = true
             model.scheduleRoutePreview()
         }
-        .onChange(of: model.modelChoice) { model.scheduleRoutePreview() }
+        .onChange(of: "\(model.generateChoice)|\(model.editChoice)") { model.scheduleRoutePreview() }
     }
 
     private func pickFiles() {
@@ -304,28 +304,69 @@ struct ContextChip: View {
 }
 
 
-/// Model choice in the message box: Auto, or one downloaded model.
+/// Model choice in the message box, per task: New Images and Edits each open their list (Auto, or a
+/// downloaded model that can do the task). The label names the choice in a few words.
 struct ModelMenu: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
         Menu {
-            Picker("Model", selection: Binding(get: { model.modelChoice }, set: { model.modelChoice = $0 })) {
-                Text("Auto — picks for this Mac, one model for new images and edits").tag("auto")
-                ForEach(model.choosableModels) { m in
-                    Text("\(m.name) — \(AppModel.modelSummary(m))").tag(m.id)
+            taskMenu(.t2i)
+            taskMenu(.edit)
+            Divider()
+            SettingsLink { Text("Manage Models…") }
+                .simultaneousGesture(TapGesture().onEnded { model.settingsTab = "models" })
+        } label: {
+            Text(label).font(.caption).lineLimit(1)
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+        .help("Models for new images and for edits")
+        .accessibilityIdentifier("modelMenu")
+        .accessibilityLabel("Models")
+        .accessibilityValue("New images: \(name(for: .t2i)). Edits: \(name(for: .edit))")
+    }
+
+    private func taskMenu(_ task: GenTask) -> some View {
+        Menu {
+            Picker(Self.title(task), selection: Binding(
+                get: { model.chosenModel(for: task)?.id ?? "auto" },
+                set: { model.setModelChoice($0, for: [task]) }
+            )) {
+                Text("Auto")
+                    .badge(Text(autoHint(task)))
+                    .tag("auto")
+                ForEach(model.choosableModels(for: task)) { m in
+                    Text(model.menuName(m))
+                        .badge(Text(m.size_gb.map { String(format: "%.1f GB", $0) } ?? ""))
+                        .tag(m.id)
                 }
             }
             .pickerStyle(.inline)
             .labelsHidden()
-            Divider()
-            SettingsLink { Text("Manage models…") }
         } label: {
-            Text(model.chosenModel?.name ?? "Auto").font(.caption)
+            Text("\(Self.title(task)): \(name(for: task))")
         }
-        .menuStyle(.borderlessButton)
-        .fixedSize()
-        .help("Model for new images and edits")
-        .accessibilityLabel("Model: \(model.chosenModel?.name ?? "Auto")")
+    }
+
+    static func title(_ task: GenTask) -> String { task == .edit ? "Edits" : "New Images" }
+
+    private func name(for task: GenTask) -> String {
+        model.chosenModel(for: task).map { model.menuName($0) } ?? "Auto"
+    }
+
+    /// What Auto would run now, so the choice is never a mystery.
+    private func autoHint(_ task: GenTask) -> String {
+        model.chosenModel(for: task) == nil ? model.defaultModel(for: task).map { model.menuName($0) } ?? "" : ""
+    }
+
+    /// "Auto"; one name when one model does both; otherwise both, shortened.
+    private var label: String {
+        let generate = model.chosenModel(for: .t2i), edit = model.chosenModel(for: .edit)
+        switch (generate, edit) {
+        case (nil, nil): return "Auto"
+        case let (g?, e?) where g.id == e.id: return model.menuName(g)
+        default: return "New: \(name(for: .t2i)) · Edit: \(name(for: .edit))"
+        }
     }
 }

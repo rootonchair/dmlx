@@ -157,6 +157,13 @@ public struct EngineModel: Codable, Identifiable, Hashable, Sendable {
     public var experimental: Bool?
     public var license_url: String?
     public var license_acceptance_id: String?
+    /// Bits of this build (4 = 4-bit), nil for full size.
+    public var quantization: Int?
+    /// The model this is one build of ("flux-2-klein-4b"), and its name ("FLUX.2 Klein 4B").
+    public var group: String?
+    public var group_name: String?
+    /// Ids of added models this built-in one replaced (same repo); an old choice may name one.
+    public var aliases: [String]?
 
     public func supports(_ task: GenTask) -> Bool { tasks.contains(task.rawValue) }
     /// Added from the app (removable); built-in models can only have their files deleted.
@@ -188,5 +195,30 @@ public struct CatalogSuggestion: Codable, Hashable, Sendable, Identifiable {
     public var label: String?
     public var downloads: Int
     public var added: Bool
+    public var group: String?
+    public var group_name: String?
+    public var quantization: Int?
+    public var tasks: [String]?
+    public var license: String?
+    public var permissive_license: Bool?
+    public var fits_this_mac: Bool?
     public var id: String { repo }
+
+    public init(
+        repo: String, label: String? = nil, downloads: Int = 0, added: Bool = false, group: String? = nil,
+        group_name: String? = nil, quantization: Int? = nil, tasks: [String]? = nil, license: String? = nil,
+        permissive_license: Bool? = nil, fits_this_mac: Bool? = nil
+    ) {
+        self.repo = repo
+        self.label = label
+        self.downloads = downloads
+        self.added = added
+        self.group = group
+        self.group_name = group_name
+        self.quantization = quantization
+        self.tasks = tasks
+        self.license = license
+        self.permissive_license = permissive_license
+        self.fits_this_mac = fits_this_mac
+    }
 }
