@@ -3,47 +3,53 @@ encoding kept FLUX.3's text encoder alive after the guard had freed it)."""
 
 import logging
 
-import mlx.core as mx
-
 from dmlx.memory import MemoryManager
 
 
 class Adapter:
+    """A 300 MB part. The memory readings are simulated: CI runners have no Metal GPU, so MLX's own
+    counters do not show allocations the way a Mac does."""
+
+    PART = 300 * 1024**2
+
     def __init__(self, keep_alive: bool):
         self.keep_alive = keep_alive
-        self.part = None
-        self.held = None
+        self.loaded = False
+        self.active = 1024**3
 
     def load_component(self, name):
-        self.part = mx.zeros((300 * 1024**2 // 4,), dtype=mx.float32)  # 300 MB
-        mx.eval(self.part)
-        return self.part.nbytes
+        self.loaded = True
+        self.active += self.PART
+        return self.PART
 
     def is_loaded(self, name):
-        return self.part is not None
+        return self.loaded
 
     def free_component(self, name):
-        if self.keep_alive:
-            self.held = self.part  # like a lazy result that still references the weights
-        self.part = None
-        mx.clear_cache()
+        self.loaded = False
+        if not self.keep_alive:  # kept alive: like a lazy result that still references the weights
+            self.active -= self.PART
 
 
-def _free(keep_alive, caplog):
+def _free(keep_alive, caplog, monkeypatch):
+    from dmlx import memory
+
+    adapter = Adapter(keep_alive)
+    monkeypatch.setattr(memory.mx, "get_active_memory", lambda: adapter.active)
     manager = MemoryManager()
-    manager.register_adapter("m", Adapter(keep_alive))
+    manager.register_adapter("m", adapter)
     manager.ensure("m", "text_encoder")
     with caplog.at_level(logging.INFO, logger="dmlx.memory"):
         manager.free("m", "text_encoder")
     return [r for r in caplog.records if r.levelno == logging.WARNING]
 
 
-def test_a_clean_free_does_not_warn(caplog):
-    assert _free(False, caplog) == []
+def test_a_clean_free_does_not_warn(caplog, monkeypatch):
+    assert _free(False, caplog, monkeypatch) == []
 
 
-def test_a_free_that_releases_nothing_warns(caplog):
-    warnings = _free(True, caplog)
+def test_a_free_that_releases_nothing_warns(caplog, monkeypatch):
+    warnings = _free(True, caplog, monkeypatch)
     assert len(warnings) == 1 and "still holds" in warnings[0].getMessage()
 
 

@@ -35,6 +35,9 @@ def make_engine(tmp_path, monkeypatch):
             s.local_path = tmp_path / "models" / s.id
             s.local_path.mkdir(parents=True, exist_ok=True)
         engine = Engine(registry=Registry(specs), results=ResultStore(tmp_path / "results"))
+        # The same Mac everywhere: CI runners have 7 GB, below the fake models' 8 GB minimum. Tests about
+        # smaller Macs set this themselves.
+        engine.memory.total = 64 * GB
         if headroom_gb is not None:
             engine.memory.headroom = lambda: int(headroom_gb * GB)
         engines.append(engine)
