@@ -17,6 +17,8 @@ import SwiftUI
 ///          {"addModel": ""|"<group>"} (Add Model over Settings → Models), {"openModelMenu": "name", "keys": [125]},
 ///          {"capture": "name", "window": "main"|"settings"|"settingsSheet"} (the real window through screencapture, native
 ///          controls included; needs Screen Recording for the launching terminal),
+///          {"scroll": "top"|"bottom", "overscroll": 60} (the chat transcript, to capture a chat taller than the
+///          window in parts),
 ///          {"quit": true}]}
 @MainActor
 enum DevHarness {
@@ -255,6 +257,7 @@ enum DevHarness {
             }
             capture(name: name, window: window, out: out, region: step["region"] != nil)
         }
+        if let edge = step["scroll"] as? String { scrollChat(toTop: edge == "top", overscroll: step["overscroll"] as? Double ?? 0) }
         if let seconds = step["sleep"] as? Double { try? await _Concurrency.Task.sleep(for: .seconds(seconds)) }
         if let timeout = step["waitIdle"] as? Double {
             let deadline = Date().addingTimeInterval(timeout)
@@ -419,6 +422,27 @@ enum DevHarness {
         RunLoop.main.run(until: Date().addingTimeInterval(3.6))
         shot.waitUntilExit()
         log("openMenu capture \(file.path) status \(shot.terminationStatus)")
+    }
+
+    /// Scrolls the chat transcript (the widest scroll view in the main window) to its top or bottom, so a chat
+    /// taller than the window can be captured in parts.
+    /// `overscroll` pulls the transcript that many points past the edge, as a rubber-band scroll would, so the
+    /// first message clears the fade under the title bar.
+    private static func scrollChat(toTop: Bool, overscroll: Double) {
+        guard let content = mainWindow()?.contentView else { return log("scroll: no main window") }
+        func scrollViews(_ view: NSView) -> [NSScrollView] {
+            (view as? NSScrollView).map { [$0] } ?? [] + view.subviews.flatMap(scrollViews)
+        }
+        guard let scroll = scrollViews(content).max(by: { $0.frame.width < $1.frame.width }),
+              let document = scroll.documentView else { return log("scroll: no chat scroll view") }
+        let clip = scroll.contentView
+        let maxY = max(0, document.frame.height - clip.bounds.height)
+        let pastEdge = document.isFlipped == toTop ? -overscroll : overscroll
+        let y = (document.isFlipped == toTop ? 0 : maxY) + pastEdge
+        // setBoundsOrigin, not scroll(to:), which clamps to the document.
+        clip.setBoundsOrigin(NSPoint(x: clip.bounds.origin.x, y: y))
+        scroll.reflectScrolledClipView(clip)
+        log("scroll \(toTop ? "top" : "bottom") document=\(Int(document.frame.height)) visible=\(Int(clip.bounds.height))")
     }
 
     /// The window as it is on screen, through screencapture (ImageRenderer cannot draw native controls).
