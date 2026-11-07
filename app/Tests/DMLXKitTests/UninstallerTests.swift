@@ -31,7 +31,26 @@ final class UninstallerTests: XCTestCase {
         XCTAssertFalse(Uninstaller.isSafeToDelete(home.deletingLastPathComponent()))
         XCTAssertFalse(Uninstaller.isSafeToDelete(URL(fileURLWithPath: "/")))
         XCTAssertFalse(Uninstaller.isSafeToDelete(URL(fileURLWithPath: "/tmp")))
+        XCTAssertFalse(Uninstaller.isSafeToDelete(home.appendingPathComponent("Documents")))
+        XCTAssertFalse(Uninstaller.isSafeToDelete(home.appendingPathComponent("Library")))
         XCTAssertTrue(Uninstaller.isSafeToDelete(home.appendingPathComponent("Library/Application Support/dMLX")))
+    }
+
+    func testReportsAFolderItRefusesInsteadOfSkippingIt() {
+        let documents = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Documents")
+        guard FileManager.default.fileExists(atPath: documents.path) else { return }
+        XCTAssertThrowsError(try Uninstaller.removeFolders([documents]))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: documents.path))
+    }
+
+    func testTakesOnlyTheDefaultOrAMarkedFolderAsTheDataFolder() throws {
+        XCTAssertTrue(Uninstaller.isOwnDataFolder(Store.defaultDataDirectory()))
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("data-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        XCTAssertFalse(Uninstaller.isOwnDataFolder(folder))  // e.g. DMLX_HOME=~/Documents
+        FileManager.default.createFile(atPath: folder.appendingPathComponent(Store.dataFolderMarker).path, contents: Data())
+        XCTAssertTrue(Uninstaller.isOwnDataFolder(folder))
     }
 
     func testTheAfterQuitScriptQuotesPathsAndSkipsUnsafeOnes() {

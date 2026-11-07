@@ -47,14 +47,30 @@ public final class Store: @unchecked Sendable {
     }
 
     /// The app's data folder: DMLX_HOME when set (tests, screenshots), the same rule as the engine;
-    /// otherwise ~/Library/Application Support/dMLX.
-    public static func dataDirectory() -> URL {
-        if let home = ProcessInfo.processInfo.environment["DMLX_HOME"], !home.isEmpty {
-            return URL(fileURLWithPath: home)
-        }
-        return FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+    /// otherwise ~/Library/Application Support/dMLX. Created on first use, with the marker that lets
+    /// Uninstall delete it (see dataFolderMarker).
+    public static func dataDirectory() -> URL { preparedDataDirectory }
+
+    public static func defaultDataDirectory() -> URL {
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("dMLX")
     }
+
+    /// A file written into the data folder only when dMLX creates the folder itself, so Uninstall never
+    /// deletes a folder DMLX_HOME points at by mistake. The engine writes the same file (paths.home).
+    public static let dataFolderMarker = ".dmlx-data"
+
+    private static let preparedDataDirectory: URL = {
+        var folder = defaultDataDirectory()
+        if let home = ProcessInfo.processInfo.environment["DMLX_HOME"], !home.isEmpty {
+            folder = URL(fileURLWithPath: home)
+        }
+        if !FileManager.default.fileExists(atPath: folder.path),
+            (try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)) != nil {
+            FileManager.default.createFile(atPath: folder.appendingPathComponent(dataFolderMarker).path, contents: Data())
+        }
+        return folder
+    }()
 
     private func exec(_ sql: String) throws {
         var err: UnsafeMutablePointer<CChar>?

@@ -1626,6 +1626,14 @@ final class AppModel {
     func uninstall() {
         let bundleID = Bundle.main.bundleIdentifier ?? "io.github.dmlx.app"
         let folders = Uninstaller.folders(bundleID: bundleID)
+        let dataFolder = Store.dataDirectory()
+        guard Uninstaller.isOwnDataFolder(dataFolder) else {
+            showUninstallProblem("""
+                dMLX's data folder is set to \(dataFolder.path) (DMLX_HOME), which dMLX didn't create, so \
+                Uninstall won't delete it. Delete dMLX's files from it by hand.
+                """)
+            return
+        }
         _Concurrency.Task {
             let bytes = await _Concurrency.Task.detached { Uninstaller.size(of: folders) }.value
             let alert = NSAlert()
@@ -1644,7 +1652,13 @@ final class AppModel {
             do {
                 try Uninstaller.removeData(bundleID: bundleID, folders: folders)
             } catch {
-                showUninstallProblem("Some of dMLX's files could not be deleted: \(error.localizedDescription)")
+                // Keep the app: without it, nothing is left to remove the models. Settings and keys are
+                // already gone, so quit; opening dMLX again and choosing Uninstall retries.
+                showUninstallProblem(
+                    "Some of dMLX's files could not be deleted: \(error.localizedDescription) dMLX was not moved to the Trash. Open it again and choose Uninstall to retry, or delete the folder in Finder.",
+                    showing: dataFolder)
+                NSApp.terminate(nil)
+                return
             }
             // After the app is gone, delete what quitting writes again (settings, saved window state).
             let cleanup = Process()
@@ -1663,11 +1677,15 @@ final class AppModel {
         }
     }
 
-    private func showUninstallProblem(_ text: String) {
+    private func showUninstallProblem(_ text: String, showing folder: URL? = nil) {
         let alert = NSAlert()
         alert.messageText = "Uninstall dMLX"
         alert.informativeText = text
-        alert.runModal()
+        alert.addButton(withTitle: "OK")
+        if folder != nil { alert.addButton(withTitle: "Show in Finder") }
+        if alert.runModal() == .alertSecondButtonReturn, let folder {
+            NSWorkspace.shared.activateFileViewerSelecting([folder])
+        }
     }
 }
 

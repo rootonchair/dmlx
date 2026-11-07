@@ -20,6 +20,8 @@ public final class EngineProcess {
     private var process: Process?
     private var restarts = 0
     private var stopping = false
+    /// The restart scheduled after a crash; stop() cancels it, so Uninstall can't bring the engine back.
+    private var pendingRestart: _Concurrency.Task<Void, Never>?
     private let logURL: URL
 
     public init() {
@@ -170,14 +172,17 @@ public final class EngineProcess {
         state = .starting
         let delay = pow(2.0, Double(restarts - 1))
         logLines.append("engine exited with code \(code); restarting in \(Int(delay))s")
-        _Concurrency.Task { @MainActor in
+        pendingRestart = _Concurrency.Task { @MainActor in
             try? await _Concurrency.Task.sleep(for: .seconds(delay))
+            guard !_Concurrency.Task.isCancelled else { return }
+            self.pendingRestart = nil
             self.start()
         }
     }
 
     public func stop() {
         stopping = true
+        cancelPendingRestart()
         process?.terminate()
     }
 
@@ -185,6 +190,7 @@ public final class EngineProcess {
     /// files: Uninstall deletes the data folder right after.
     public func stopAndWait(timeout: Duration = .seconds(5)) async {
         stopping = true
+        cancelPendingRestart()
         guard let proc = process else { return }
         proc.terminate()
         let deadline = ContinuousClock.now + timeout
@@ -197,7 +203,14 @@ public final class EngineProcess {
         }
     }
 
+    private func cancelPendingRestart() {
+        pendingRestart?.cancel()
+        pendingRestart = nil
+        if process == nil, case .starting = state { state = .stopped }
+    }
+
     public func restart() {
+        cancelPendingRestart()
         restarts = 0
         if let p = process {
             stopping = false

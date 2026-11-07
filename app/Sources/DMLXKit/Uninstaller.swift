@@ -41,21 +41,36 @@ public enum Uninstaller {
         try removeFolders(folders)
     }
 
-    /// Deletes the folders that pass isSafeToDelete; see removeData.
+    /// Deletes the folders; a folder that fails isSafeToDelete is not touched and is reported as a failure.
+    /// See removeData.
     public static func removeFolders(_ folders: [URL]) throws {
         var failure: Error?
-        for folder in folders where isSafeToDelete(folder) && FileManager.default.fileExists(atPath: folder.path) {
+        for folder in folders where FileManager.default.fileExists(atPath: folder.path) {
+            guard isSafeToDelete(folder) else {
+                failure = failure ?? UninstallError.refused(folder.path)
+                continue
+            }
             do { try FileManager.default.removeItem(at: folder) } catch { failure = failure ?? error }
         }
         if let failure { throw failure }
     }
 
-    /// Refuses the home folder, its parents and anything near the root, in case DMLX_HOME points somewhere
-    /// it should not.
+    /// Refuses the home folder, its parents, its direct children (Documents, Library, …) and anything near
+    /// the root, in case DMLX_HOME points somewhere it should not.
     public static func isSafeToDelete(_ folder: URL) -> Bool {
         let path = folder.standardizedFileURL.resolvingSymlinksInPath().path
         let home = URL(fileURLWithPath: NSHomeDirectory()).standardizedFileURL.resolvingSymlinksInPath().path
-        return path.split(separator: "/").count >= 3 && !(home + "/").hasPrefix(path + "/")
+        let parent = (path as NSString).deletingLastPathComponent
+        return path.split(separator: "/").count >= 3 && !(home + "/").hasPrefix(path + "/") && parent != home
+    }
+
+    /// Whether the folder is dMLX's own data folder: the default location, or a folder holding the marker
+    /// dMLX writes only into a data folder it created itself (Store.dataDirectory, engine paths.home). A
+    /// DMLX_HOME set to a folder that already existed, such as ~/Documents, never gets the marker.
+    public static func isOwnDataFolder(_ folder: URL) -> Bool {
+        let resolved = folder.standardizedFileURL.resolvingSymlinksInPath()
+        if resolved == Store.defaultDataDirectory().standardizedFileURL.resolvingSymlinksInPath() { return true }
+        return FileManager.default.fileExists(atPath: resolved.appendingPathComponent(Store.dataFolderMarker).path)
     }
 
     /// A shell script that waits for the app to quit, then deletes what quitting writes again (settings,
@@ -68,5 +83,15 @@ public enum Uninstaller {
             defaults delete \(quoted(bundleID)) 2>/dev/null
             rm -rf \(paths) \(quoted(NSHomeDirectory() + "/Library/Preferences/\(bundleID).plist"))
             """
+    }
+}
+
+public enum UninstallError: LocalizedError {
+    case refused(String)
+
+    public var errorDescription: String? {
+        switch self {
+        case .refused(let path): "\(path) doesn't look like a folder only dMLX uses, so it was left alone."
+        }
     }
 }

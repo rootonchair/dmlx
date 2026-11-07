@@ -217,7 +217,6 @@ class Engine:
         self, registry: Registry | None = None, results: ResultStore | None = None, adapter_factory=None, router=None
     ):
         self.registry = registry or Registry.load_builtin(extra_dir=paths.models_dir())
-        downloads.adopt(self._owned_repos())
         self.results = results or ResultStore()
         self.memory = MemoryManager()
         self.downloader = downloads.Downloader()
@@ -241,14 +240,6 @@ class Engine:
         self._worker.start()
 
     # -- catalog ----------------------------------------------------------------------
-    def _owned_repos(self) -> list[str]:
-        """Every Hugging Face repo dMLX downloads: its models, the agent models, and what mflux fetches."""
-        specs = self.registry.all()
-        repos = [s.repo for s in specs] + [m.repo for m in local_vlm.MODELS.values()]
-        if any(c.external for s in specs for c in s.components.values()):
-            repos += downloads.MFLUX_AUX_REPOS
-        return repos
-
     def _resolve_local(self, spec: ModelSpec) -> Path | None:
         if spec.local_path is not None:
             return spec.local_path
@@ -584,7 +575,6 @@ class Engine:
             existing = catalog.save_spec(found)
             self.registry.add(existing)
             log.info("added model %s from %s", existing.id, existing.repo)
-        downloads.adopt([existing.repo])  # another tool may already have downloaded it: move it in
         path = self._resolve_local(existing)
         if path:
             downloads.fill_component_sizes(existing, path)
@@ -606,11 +596,27 @@ class Engine:
         with self._lock:
             self._adapters.pop(spec.id, None)
         self.memory.unregister_adapter(spec.id)
-        freed = downloads.delete_local(spec)
+        try:
+            freed = downloads.delete_local(spec)
+            if self._last_external(spec):
+                freed += downloads.delete_mflux_aux()
+        except Exception as exc:  # noqa: BLE001 - a corrupt cache, a permission error: report, don't crash
+            log.exception("could not delete the files of %s", spec.id)
+            raise RequestError("delete_failed", f"Could not delete {spec.name}'s files: {exc}", 500) from exc
         state = self.downloader.state(spec.id)
         state.status, state.done, state.error = "idle", 0, None
         log.info("deleted files of %s (%.2f GB)", spec.id, freed / GB)
         return {"model": spec.id, "freed_gb": round(freed / GB, 2)}
+
+    def _last_external(self, spec: ModelSpec) -> bool:
+        """Whether spec was the last downloaded model with an external text encoder (fetched by mflux)."""
+        if not any(c.external for c in spec.components.values()):
+            return False
+        return not any(
+            s.local_path is not None and any(c.external for c in s.components.values())
+            for s in self.registry.all()
+            if s.id != spec.id
+        )
 
     def remove_model(self, model_id: str, delete_files: bool = True) -> dict:
         """Remove a model added from the app (built-in models can only have their files deleted)."""

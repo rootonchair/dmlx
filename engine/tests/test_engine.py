@@ -461,3 +461,35 @@ def test_builtin_models_keep_their_entry_and_busy_models_are_protected(make_engi
     monkeypatch.setattr(downloads, "delete_local", lambda spec: deleted.append(spec.id) or 2 * GB)
     assert engine.delete_model_files("fake-a")["freed_gb"] == 2.0 and deleted == ["fake-a"]
     assert "fake-a" in engine.registry and engine.memory.resident_models() == set()
+
+
+def test_the_shared_text_encoder_goes_with_the_last_model_using_it(make_engine, monkeypatch):
+    from dmlx import downloads
+
+    a, b = fake_spec("fake-a"), fake_spec("fake-b", tasks=("t2i",))
+    for spec in (a, b):
+        spec.components["text_encoder"].external = True
+    engine = make_engine([a, b])
+    aux = []
+    monkeypatch.setattr(downloads, "delete_local", lambda spec: setattr(spec, "local_path", None) or 0)
+    monkeypatch.setattr(downloads, "delete_mflux_aux", lambda: aux.append(True) or GB)
+    engine.delete_model_files("fake-a")
+    assert aux == []  # fake-b still uses it
+    assert engine.delete_model_files("fake-b")["freed_gb"] == 1.0 and aux == [True]
+
+
+def test_a_failed_delete_is_reported(make_engine, monkeypatch):
+    from dmlx import downloads
+    from dmlx.engine import RequestError
+
+    engine = make_engine()
+
+    def broken(spec):
+        raise PermissionError("denied")
+
+    monkeypatch.setattr(downloads, "delete_local", broken)
+    try:
+        engine.delete_model_files("fake-a")
+        raise AssertionError("expected an error")
+    except RequestError as exc:
+        assert exc.code == "delete_failed" and "denied" in exc.message
