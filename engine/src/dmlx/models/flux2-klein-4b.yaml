@@ -3,7 +3,7 @@ name: FLUX.2 Klein 4B
 adapter: mflux.flux2_klein
 repo: mflux-community/flux2-klein-4b-mflux-q4
 quantization: 4
-agent_note: "The usual choice: fast (about 20-40 s) and good all-round for new images and edits with up to 3 images; weak at drawing exact words."
+agent_note: "Fast (about 20-40 s); good all-round for new images and edits with up to 3 images, and for drawings, art and illustration; weak at drawing exact words, and less lifelike for photos than a model made for them."
 license: apache-2.0
 tasks: [t2i, edit]
 max_references: 3

@@ -139,13 +139,18 @@ enum DevHarness {
             // Press Next on the current tip of the "chat" or "image" group.
             if let tip = (group == "image" ? Guide.shared.image : Guide.shared.chat).currentTip { Guide.shared.next(tip) }
         }
-        if step["settings"] != nil { showSettings(model) }
+        // {"settings": true}, or {"settings": {"height": 760}} for a taller window (README screenshots).
+        if let value = step["settings"] {
+            showSettings(model, height: ((value as? [String: Any])?["height"] as? Double) ?? 460)
+        }
         if let tab = step["settingsTab"] as? String { model.settingsTab = tab }
         if let name = step["appearance"] as? String, let a = AppAppearance(rawValue: name) {
             UserDefaults.standard.set(a.rawValue, forKey: AppAppearance.key)
             a.apply()
         }
         if step["closeSettings"] != nil { settingsWindow()?.close() }
+        // {"overrideRoute": "image.generate"|"image.edit"}: as if picked in the composer's workflow menu.
+        if let operation = step["overrideRoute"] as? String { model.overrideRoute(operation) }
         // With Settings → Models open: Add Model, at the top ("") or at one model's versions ("flux-2-klein-9b").
         if let group = step["addModel"] as? String { model.harnessAddModel = group }
         // {"openModelMenu": "name", "keys": [125, 124]}: opens the composer's model menu, presses the keys (key
@@ -215,6 +220,78 @@ enum DevHarness {
             } else {
                 log("snapshotWindow \(name): no window")
             }
+        }
+        // {"menuFrames": "name"}: opens the composer's model menu and captures only this app's windows (the menu
+        // included) every 0.1 s for 1.2 s; no keys are sent, so other apps are untouched.
+        // {"modelPicker": "edit"|"t2i"|"close"}: opens or closes the composer's model picker panel.
+        if let value = step["modelPicker"] as? String { model.showModelPicker = value != "close" }
+        // {"snapshotPopover": "name"}: draws the open popover's window in-process (works with the display asleep).
+        if let name = step["snapshotPopover"] as? String {
+            let popovers = NSApp.windows.filter { String(describing: type(of: $0)).contains("Popover") && $0.isVisible }
+            log("snapshotPopover: \(NSApp.windows.map { String(describing: type(of: $0)) })")
+            if let view = popovers.first?.contentView, let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) {
+                view.cacheDisplay(in: view.bounds, to: rep)
+                let image = NSImage(size: view.bounds.size)
+                image.lockFocus()
+                // The popover's material is not drawn: fill with a plain color of its appearance.
+                let dark = view.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+                (dark ? NSColor(white: 0.17, alpha: 1) : NSColor(white: 0.96, alpha: 1)).setFill()
+                NSRect(origin: .zero, size: view.bounds.size).fill()
+                rep.draw(in: NSRect(origin: .zero, size: view.bounds.size))
+                image.unlockFocus()
+                if let tiff = image.tiffRepresentation, let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) {
+                    try? png.write(to: out.appendingPathComponent("\(name).png"))
+                    log("snapshotPopover \(name) \(Int(view.bounds.width))x\(Int(view.bounds.height))")
+                }
+            }
+        }
+        // {"ownWindows": "name"}: captures each on-screen window of this app (popovers and menus included).
+        if let name = step["ownWindows"] as? String {
+            let pid = ProcessInfo.processInfo.processIdentifier
+            let infos = (CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as? [[String: Any]]) ?? []
+            for (j, info) in infos.filter({ ($0[kCGWindowOwnerPID as String] as? Int32) == pid }).enumerated() {
+                guard let wid = info[kCGWindowNumber as String] as? Int else { continue }
+                let shot = Process()
+                shot.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
+                shot.arguments = ["-x", "-o", "-l\(wid)", out.appendingPathComponent("\(name)-\(j).png").path]
+                try? shot.run()
+                shot.waitUntilExit()
+                log("ownWindows \(name)-\(j) \(info[kCGWindowBounds as String] ?? "")")
+            }
+        }
+        if let name = step["menuFrames"] as? String, let content = mainWindow()?.contentView {
+            let aspect = step["aspect"] != nil  // the size menu instead, to compare
+            func find(_ view: NSView) -> NSPopUpButton? {
+                if let popup = view as? NSPopUpButton, (popup.accessibilityLabel() ?? "").contains("²") == aspect { return popup }
+                for sub in view.subviews { if let hit = find(sub) { return hit } }
+                return nil
+            }
+            if let popup = find(content) {
+                NSApp.activate(ignoringOtherApps: true)
+                mainWindow()?.makeKeyAndOrderFront(nil)
+                let pid = ProcessInfo.processInfo.processIdentifier
+                for i in 0..<12 {
+                    let timer = Timer(timeInterval: 0.05 + Double(i) * 0.1, repeats: false) { _ in
+                        let infos = (CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as? [[String: Any]]) ?? []
+                        if let w = popup.window { log("menuFrames \(i) button at \(w.convertToScreen(popup.convert(popup.bounds, to: nil))) window \(w.frame)") }
+                        let mine = infos.filter { ($0[kCGWindowOwnerPID as String] as? Int32) == pid && ($0[kCGWindowLayer as String] as? Int ?? 0) > 0 }
+                        for (j, info) in mine.enumerated() {
+                            guard let wid = info[kCGWindowNumber as String] as? Int else { continue }
+                            let bounds = info[kCGWindowBounds as String] as? [String: Any] ?? [:]
+                            log("menuFrames \(i) window \(wid) layer \(info[kCGWindowLayer as String] ?? "-") bounds \(bounds["X"] ?? 0),\(bounds["Y"] ?? 0) \(bounds["Width"] ?? 0)x\(bounds["Height"] ?? 0)")
+                            let shot = Process()
+                            shot.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
+                            shot.arguments = ["-x", "-o", "-l\(wid)", out.appendingPathComponent("\(name)-\(i)-\(j).png").path]
+                            try? shot.run()
+                            shot.waitUntilExit()
+                        }
+                    }
+                    RunLoop.main.add(timer, forMode: .common)
+                }
+                let close = Timer(timeInterval: 1.4, repeats: false) { _ in popup.menu?.cancelTracking() }
+                RunLoop.main.add(close, forMode: .common)
+                popup.performClick(nil)
+            } else { log("menuFrames: no model menu") }
         }
         if let name = step["openModelMenu"] as? String {
             openMenu(labeled: "Models", in: mainWindow(), keys: step["keys"] as? [Int] ?? [], name: name, out: out)
@@ -343,15 +420,15 @@ enum DevHarness {
     }
 
     /// The Settings scene cannot be opened from here (showSettingsWindow: is gone); host its view instead.
-    private static func showSettings(_ model: AppModel) {
+    private static func showSettings(_ model: AppModel, height: Double = 460) {
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 620, height: 460),
+            contentRect: NSRect(x: 0, y: 0, width: 620, height: height),
             styleMask: [.titled, .closable], backing: .buffered, defer: false)
         window.title = "Settings"
         window.identifier = NSUserInterfaceItemIdentifier("HarnessSettings")
         window.isReleasedWhenClosed = false
         window.contentView = NSHostingView(rootView: SettingsView().environment(model)
-            .frame(width: 620, height: 460).tint(Theme.accent))
+            .frame(width: 620, height: height).tint(Theme.accent))
         window.center()
         window.orderFrontRegardless()
     }

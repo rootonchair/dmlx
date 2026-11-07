@@ -3,7 +3,7 @@ name: Z-Image Turbo
 adapter: mflux.z_image
 repo: mflux-community/z-image-turbo-mflux-q4
 quantization: 4
-agent_note: "New images only; fast, with more photographic detail than Klein; weak at drawing exact words."
+agent_note: "New images only; fast (about 30 s); the most lifelike photos (people, places, food, products); weak at drawing exact words."
 license: apache-2.0
 tasks: [t2i]
 max_references: 0

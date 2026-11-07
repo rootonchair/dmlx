@@ -536,6 +536,17 @@ enum ModelHints {
         }
     }
 
+    /// One line for the composer's model picker.
+    static func picker(_ m: EngineModel) -> String {
+        switch m.id {
+        case "flux2-klein-4b": "Fast and good at most things"
+        case "flux2-klein-9b": "More detail, about twice as slow"
+        case "z-image-turbo": "The most realistic photos"
+        case "qwen-image-2.1-q4": "Best at words in images · minutes per image"
+        default: m.supports(.edit) ? "Makes new images and edits" : "Makes new images"
+        }
+    }
+
     static func imageShort(_ m: EngineModel) -> String {
         switch m.id {
         case "flux2-klein-4b": "fast, makes and edits images (recommended)"

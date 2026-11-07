@@ -199,7 +199,7 @@ only refuses a request that cannot run, for example an image that does not exist
 
 <p align="center">
   <img src="docs/screenshots/settings-agent.jpg" width="560"
-       alt="Settings, Intelligence, Agent. Qwen3-VL 8B is in use (5.8 GB, recommended for 24 GB and more). Qwen3.5 9B and Ministral 3 3B are ready (recommended for 16 GB).">
+       alt="Settings, Intelligence, Agent. Where the agent runs: On this Mac or On your AI service. Qwen3-VL 8B is in use (5.8 GB, recommended for 24 GB and more). Ministral 3 3B (recommended for 16 GB) and Qwen3-VL 4B (least memory) are ready.">
   <br><sub>Settings → Intelligence → Agent</sub>
 </p>
 

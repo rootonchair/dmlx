@@ -158,7 +158,7 @@ public struct WorkflowCapability: Codable, Hashable, Sendable {
     public var prompt: PromptSupport
 }
 
-public struct CapabilityCatalog: Codable, Sendable {
+public struct CapabilityCatalog: Codable, Hashable, Sendable {
     public var schema_version: Int
     public var operations: [String: [WorkflowCapability]]
 }

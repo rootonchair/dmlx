@@ -5,7 +5,7 @@ mflux_config: qwen_image_21
 repo: OsaurusAI/Qwen-Image-2.1-mflux-4bit
 revision: 235fd28de40d745382e9d7a33f008c7735ec21c2
 quantization: 4
-agent_note: "Pick it only when the image must contain exact words (titles, signs, labels) or for precise edits with several images: it is slow (about 4 minutes, against 30 s) and needs about 9.5 GB free. Research license, not for commercial use."
+agent_note: "The best at drawing exact words (posters, signs, logos, labels, menus) and at precise edits with several images; slow (about 4 minutes, against 30 s) and needs about 9.5 GB free. Research license, not for commercial use."
 license: qwen-research
 license_url: https://huggingface.co/Qwen/Qwen-Image-2.1/blob/main/LICENSE
 license_acceptance_id: qwen-research-2026-09-20

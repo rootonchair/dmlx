@@ -123,6 +123,8 @@ final class AppModel {
     private(set) var planningMessage: String?
     /// The open Settings tab.
     var settingsTab = "models"
+    /// The composer's model picker panel is open.
+    var showModelPicker = false
     private var planTask: _Concurrency.Task<Void, Never>?
     /// The local prompt assistant is downloaded: sent messages are planned by it.
     var promptAssistantInstalled = false
@@ -219,10 +221,14 @@ final class AppModel {
     func refreshModels(openOnboarding: Bool = false) async {
         guard let client else { return }
         if let list = try? await client.models() {
-            models = list
+            // Polled every 2 s: assign only what changed, or every view showing models redraws each time
+            // (an open model menu was rebuilt under the pointer and flickered).
+            if list != models { models = list }
             normalizeModelChoices()
-            capabilityCatalog = try? await client.capabilities()
-            promptAssistantInstalled = (try? await client.promptAssistant())?.installed ?? false
+            let catalog = try? await client.capabilities()
+            if catalog != capabilityCatalog { capabilityCatalog = catalog }
+            let installed = (try? await client.promptAssistant())?.installed ?? false
+            if installed != promptAssistantInstalled { promptAssistantInstalled = installed }
             // First run, or no image model yet. Someone who finished setup without the agent is not asked again.
             let completed = UserDefaults.standard.bool(forKey: Self.onboardingCompletedKey)
             if openOnboarding && (defaultModel(for: .t2i) == nil || (!completed && !promptAssistantInstalled)) {
@@ -810,7 +816,9 @@ final class AppModel {
             execute(snapshot, decision: decision)
             return
         }
-        if !planned, routeDecisionKey == key, let decision = routeDecision {
+        // A workflow the user picked in the composer ("Create a new image", "Edit current") is followed as
+        // picked, also with the agent: it would otherwise plan the message again and could do the other one.
+        if routeDecisionKey == key, let decision = routeDecision, !planned || decision.provider == "user" {
             handle(snapshot, decision: decision)
             return
         }

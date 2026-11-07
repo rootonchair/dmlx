@@ -306,58 +306,92 @@ struct ContextChip: View {
 
 /// Model choice in the message box, per task: New Images and Edits each open their list (Auto, or a
 /// downloaded model that can do the task). The label names the choice in a few words.
+/// The composer's model picker, after Claude's: a button naming the model, and a panel with one row per
+/// model (its name, one line on what it is good at, a check mark on the chosen one). New images and edits
+/// each have their own choice, switched at the top of the panel.
 struct ModelMenu: View {
     @Environment(AppModel.self) private var model
+    @Environment(\.openSettings) private var openSettings
+    @State private var task: GenTask = .t2i
 
     var body: some View {
-        Menu {
-            taskMenu(.t2i)
-            taskMenu(.edit)
-            Divider()
-            SettingsLink { Text("Manage Models…") }
-                .simultaneousGesture(TapGesture().onEnded { model.settingsTab = "models" })
+        @Bindable var model = model
+        Button {
+            model.showModelPicker.toggle()
         } label: {
-            Text(label).font(.caption).lineLimit(1)
+            HStack(spacing: 3) {
+                Text(label).lineLimit(1)
+                Image(systemName: "chevron.down").font(.system(size: 8, weight: .semibold))
+            }
+            .font(.caption)
+            .foregroundStyle(Theme.accent)
+            .contentShape(Rectangle())
         }
-        .menuStyle(.borderlessButton)
+        .buttonStyle(.plain)
         .fixedSize()
         .help("Models for new images and for edits")
         .accessibilityIdentifier("modelMenu")
         .accessibilityLabel("Models")
         .accessibilityValue("New images: \(name(for: .t2i)). Edits: \(name(for: .edit))")
+        .popover(isPresented: $model.showModelPicker, arrowEdge: .top) { panel }
     }
 
-    private func taskMenu(_ task: GenTask) -> some View {
-        Menu {
-            Picker(Self.title(task), selection: Binding(
-                get: { model.chosenModel(for: task)?.id ?? "auto" },
-                set: { model.setModelChoice($0, for: [task]) }
-            )) {
-                Text("Auto")
-                    .badge(Text(autoHint(task)))
-                    .tag("auto")
+    private var panel: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Picker("", selection: $task) {
+                Text("New Images").tag(GenTask.t2i)
+                Text("Edits").tag(GenTask.edit)
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .frame(maxWidth: .infinity)
+            .padding(.horizontal, 10)
+            .padding(.top, 10)
+            .padding(.bottom, 6)
+
+            VStack(spacing: 2) {
+                ModelPickerRow(title: "Auto", detail: autoDetail, selected: model.chosenModel(for: task) == nil) {
+                    choose("auto")
+                }
                 ForEach(model.choosableModels(for: task)) { m in
-                    Text(model.menuName(m))
-                        .badge(Text(m.size_gb.map { String(format: "%.1f GB", $0) } ?? ""))
-                        .tag(m.id)
+                    ModelPickerRow(title: model.menuName(m), detail: ModelHints.picker(m),
+                                   selected: model.chosenModel(for: task)?.id == m.id) {
+                        choose(m.id)
+                    }
                 }
             }
-            .pickerStyle(.inline)
-            .labelsHidden()
-        } label: {
-            Text("\(Self.title(task)): \(name(for: task))")
+            .padding(.horizontal, 6)
+
+            Divider().padding(.vertical, 6)
+
+            ModelPickerRow(title: "Manage Models…", detail: nil, selected: false) {
+                model.showModelPicker = false
+                model.settingsTab = "models"
+                openSettings()
+            }
+            .padding(.horizontal, 6)
+            .padding(.bottom, 6)
         }
+        .frame(width: 300)
+    }
+
+    private func choose(_ id: String) {
+        model.setModelChoice(id, for: [task])
+        model.showModelPicker = false
+    }
+
+    /// What Auto does: with the agent it picks per message; without it, the model it runs now.
+    private var autoDetail: String {
+        if model.promptAssistantInstalled { return "Picks the best model for each message" }
+        // Only on Auto does the default name what Auto runs (otherwise it is the chosen model).
+        let usual = model.chosenModel(for: task) == nil ? model.defaultModel(for: task).map { model.menuName($0) } : nil
+        return usual.map { "Uses \($0)" } ?? "Picks a model for you"
     }
 
     static func title(_ task: GenTask) -> String { task == .edit ? "Edits" : "New Images" }
 
     private func name(for task: GenTask) -> String {
         model.chosenModel(for: task).map { model.menuName($0) } ?? "Auto"
-    }
-
-    /// What Auto would run now, so the choice is never a mystery.
-    private func autoHint(_ task: GenTask) -> String {
-        model.chosenModel(for: task) == nil ? model.defaultModel(for: task).map { model.menuName($0) } ?? "" : ""
     }
 
     /// "Auto"; one name when one model does both; otherwise both, shortened.
@@ -368,5 +402,42 @@ struct ModelMenu: View {
         case let (g?, e?) where g.id == e.id: return model.menuName(g)
         default: return "New: \(name(for: .t2i)) · Edit: \(name(for: .edit))"
         }
+    }
+}
+
+/// One row of the model picker: name, a line on what it is good at, a check mark when chosen; highlighted
+/// under the pointer like a menu item.
+struct ModelPickerRow: View {
+    let title: String
+    let detail: String?
+    let selected: Bool
+    let action: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(alignment: .center, spacing: 10) {
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(title).font(.system(size: 13, weight: detail == nil ? .regular : .medium))
+                    if let detail {
+                        Text(detail).font(.system(size: 11)).foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                Spacer(minLength: 0)
+                if selected {
+                    Image(systemName: "checkmark").font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(Theme.accent)
+                }
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, detail == nil ? 5 : 6)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(RoundedRectangle(cornerRadius: 6).fill(hovering ? Color.primary.opacity(0.08) : .clear))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .accessibilityAddTraits(selected ? .isSelected : [])
     }
 }
