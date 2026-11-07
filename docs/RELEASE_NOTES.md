@@ -1,3 +1,33 @@
+# dMLX v0.1.0-beta4
+
+A guide for new users.
+
+## Highlights
+
+- **Tips after the first-run setup.** Short tips point at what they explain, one at a time: the message
+  box, the paper clip for your own images, the size menu, the control that chooses between a new image and
+  an edit (and the model), and **New creation**. After your first image, tips explain versions,
+  **Variations** and **Crop / Draw**, and the editor explains **Crop**, **Paint** and **Erase**. Each tip
+  shows once.
+- **Help menu.** **dMLX Guide** opens the online guide, and **Show Tips Again** starts the tips over.
+- **The new image's buttons stay in view.** When an image is done, the chat scrolls so that
+  **Variations**, **Crop / Draw** and **Save** show below it.
+
+## Requirements
+
+Apple Silicon, macOS 15+, 16 GB memory or more. About 7–11 GB of disk for the image model and the agent.
+
+## Install
+
+Open the `.dmg` and drag dMLX onto the Applications folder (a `.zip` of the same app is also attached), then
+right-click → Open the first time (beta builds are not notarized). The first-run setup downloads the models.
+
+## Known issues
+
+See [Known issues](KNOWN_ISSUES.md).
+
+---
+
 # dMLX v0.1.0-beta3
 
 A guided first start, six more image models, and a new look.
