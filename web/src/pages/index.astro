@@ -278,7 +278,7 @@ const examples = [
       var el = e.target;
       if (el.classList && el.classList.contains('in') && e.propertyName === 'opacity') el.classList.add('done');
     });
-    var groups = ['main .head', '.examples > .ex', '.steps > li', '.stack', '.facts > div', '.gauge', '.edit > figure', '#api pre', '.tables > .tbl', '.start > div', '.btns.end', '.flow'];
+    var groups = ['main .head', '.examples > .ex', '.steps > li', '.stack', '.facts > div', '.gauge', '.edit > figure', '#api pre', '.tables > .tbl', '.start > div', '.btns.end', '.flow .stage', '.flow figcaption'];
     var items = [];
     groups.forEach(function (sel) {
       var byParent = new Map();
@@ -286,7 +286,7 @@ const examples = [
         var n = byParent.get(el.parentNode) || 0;
         byParent.set(el.parentNode, n + 1);
         el.classList.add('reveal');
-        el.style.setProperty('--i', Math.min(n, 5));
+        el.style.setProperty('--i', el.dataset.i || Math.min(n, 5));
         items.push(el);
       });
     });

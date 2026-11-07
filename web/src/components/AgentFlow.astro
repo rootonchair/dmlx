@@ -1,103 +1,116 @@
 ---
-// How one chat message flows through the agent (engine/src/dmlx/prompting/agent.py): it sees the latest
-// image, may look at older images or read the whole chat, then replies, asks, or plans an image job.
-// It unloads before the image model runs. Two drawings: wide for desktop, tall for phones.
-const spine = [
-  { t: 'Your message', s: ['"make the boat red"', '+ the chat so far'] },
-  { t: 'The agent plans', s: ['on your Mac', 'about 3–10 s'], agent: true },
-  { t: 'Writes the prompt', s: ['and picks the image', 'to edit: image 1'] },
-  { t: 'Picks a model', s: ['Auto: by the job', 'and the free memory'] },
-  { t: 'Image model runs', s: ['the agent unloads', 'first to free memory'] },
-  { t: 'New version', s: ['v1, v2… nothing', 'is overwritten'], out: true },
+// One chat message, start to finish, as the engine does it:
+//   engine/src/dmlx/prompting/agent.py  (what the agent sees, its look/read_chat tools, the plan and its checks)
+//   engine/src/dmlx/engine.py           (unload the agent, memory plan, run the image job)
+// Two lanes (the agent, then the image job) with a running example. Wide on desktop, stacked on phones.
+type Stage = { n: number; title: string; tag?: string; items: [string, string][]; eg: string };
+const agent: Stage[] = [
+  {
+    n: 1, title: 'Reads the chat', items: [
+      ['Your message', 'and the recent lines of the chat'],
+      ['The latest image', 'or the images you attached'],
+      ['Every image', 'in the chat, listed with its prompt'],
+      ['The models', 'it may pick, and the free memory'],
+    ], eg: '"make the boat red" · it sees image 2, a teapot',
+  },
+  {
+    n: 2, title: 'Looks closer', tag: 'if it needs to', items: [
+      ['Look', 'opens up to 3 older images, twice at most'],
+      ['Read', 'the whole chat when the recent lines aren’t enough'],
+      ['Resolves', '"it", "the first one", "undo the hat"'],
+      ['Trusts', 'what it sees over an old prompt'],
+    ], eg: 'looks at image 1 · a rowboat',
+  },
+  {
+    n: 3, title: 'Decides and writes', items: [
+      ['New image', 'a full description, 40–120 words'],
+      ['Edit', 'the image to change, up to 2 references, one clear instruction, then a detailed description of the result'],
+      ['Model', 'on Auto, the one that fits the job, its speed and the free memory'],
+      ['Or', 'one short question when unsure, or a reply when you’re just talking'],
+    ], eg: 'edit image 1 · "Make the wooden rowboat red" · FLUX.2 Klein 4B',
+  },
 ];
-const side = [
-  { t: 'Just talking', s: ['replies in text'] },
-  { t: 'Not sure', s: ['asks one short question'] },
+const job: Stage[] = [
+  {
+    n: 4, title: 'Checks the plan', tag: 'plain code', items: [
+      ['Images', 'exist in the chat; an edit has one; 3 at most'],
+      ['Models', 'it wasn’t offered are ignored'],
+      ['Retry', 'a plan that fails is sent back once, with the reason'],
+      ['Fallback', 'then simple rules take over'],
+    ], eg: 'image 1 exists · edit is possible',
+  },
+  {
+    n: 5, title: 'Makes the image', items: [
+      ['Unload', 'the agent leaves memory first'],
+      ['Memory check', 'loads the model all at once, in phases, or piece by piece'],
+      ['Not enough', 'it doesn’t start: Retry, or Try anyway'],
+      ['Result', 'a new image, or a new version of one'],
+    ], eg: 'Image 3 · edited from image 1',
+  },
 ];
-
-// Wide: six nodes in a row, the loop above the agent, the two other outcomes below it.
-const W = 1088, NW = 148, NH = 92, GAP = (W - 6 * NW) / 5, Y = 92;
-const x = (i: number) => i * (NW + GAP);
-const BY = 250, BH = 64;
-
-// Tall: the spine on the left, the loop and the other outcomes on the right.
-const TW = 360, TNW = 200, TNH = 80, TSTEP = 108, TBX = 234, TBW = TW - TBX, CH = 217; // CH: the channel between the columns
-const ty = (i: number) => i * TSTEP;
+const lanes = [
+  { name: 'The agent', note: 'on your Mac · about 3–10 s', stages: agent, cls: 'lane-agent' },
+  { name: 'The image job', note: 'after the plan', stages: job, cls: 'lane-job' },
+];
 ---
 <figure class="flow" aria-labelledby="flow-cap">
-  <svg class="wide" viewBox={`0 0 ${W} ${BY + BH + 4}`} role="img" aria-label="Your message goes to the agent, which may look at older images or read the chat. If you are just talking it replies in text; if it is not sure it asks one short question. Otherwise it writes the prompt, picks a model, unloads, and the image model makes a new version.">
-    <defs><marker id="af-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 1 L9 5 L0 9 z" class="head" /></marker></defs>
-    {spine.slice(0, -1).map((_, i) => (
-      <path class="e" style={`--d:${i * 2 + 1}`} d={`M${x(i) + NW + 4} ${Y + NH / 2} H${x(i + 1) - 4}`} marker-end="url(#af-a)" />
+  <div class="lanes">
+    {lanes.map((lane) => (
+      <div class:list={['lane', lane.cls]} role="group" aria-label={lane.name}>
+        <h4 class="lane-h"><b>{lane.name}</b><span>{lane.note}</span></h4>
+        <ol class="stages" style={`--cols:${lane.stages.length}`}>
+          {lane.stages.map((s) => (
+            <li class="stage" data-i={s.n - 1}>
+              <div class="st-h"><span class="num">{s.n}</span><h5>{s.title}</h5></div>
+              {s.tag && <em class="tag">{s.tag}</em>}
+              <dl>{s.items.map(([k, v]) => <div><dt>{k}</dt><dd>{v}</dd></div>)}</dl>
+              <p class="eg"><span>e.g.</span>{s.eg}</p>
+            </li>
+          ))}
+        </ol>
+      </div>
     ))}
-    <path class="e loop" style="--d:2" d={`M${x(1) + NW - 34} ${Y - 2} C${x(1) + NW - 34} ${Y - 46}, ${x(1) + 34} ${Y - 46}, ${x(1) + 34} ${Y - 4}`} marker-end="url(#af-a)" />
-    <text class="lbl" style="--d:2" x={x(1) + NW / 2} y="26" text-anchor="middle"><tspan x={x(1) + NW / 2}>looks at older images</tspan><tspan x={x(1) + NW / 2} dy="15">or reads the chat</tspan></text>
-    <path class="e alt" style="--d:3" d={`M${x(1) + 44} ${Y + NH + 4} V${BY - 4}`} marker-end="url(#af-a)" />
-    <path class="e alt" style="--d:3" d={`M${x(1) + NW - 30} ${Y + NH + 4} C${x(1) + NW - 30} ${BY - 40}, ${x(2) + NW / 2} ${BY - 50}, ${x(2) + NW / 2} ${BY - 4}`} marker-end="url(#af-a)" />
-    {spine.map((n, i) => (
-      <g class:list={['n', { ag: n.agent, out: n.out }]} style={`--d:${i * 2}`}>
-        <rect x={x(i)} y={Y} width={NW} height={NH} rx="12" />
-        <text class="t" x={x(i) + NW / 2} y={Y + 33} text-anchor="middle">{n.t}</text>
-        {n.s.map((line, j) => <text class="s" x={x(i) + NW / 2} y={Y + 55 + j * 17} text-anchor="middle">{line}</text>)}
-      </g>
-    ))}
-    {side.map((n, i) => (
-      <g class="n side" style="--d:4">
-        <rect x={x(1 + i)} y={BY} width={NW} height={BH} rx="12" />
-        <text class="t" x={x(1 + i) + NW / 2} y={BY + 26} text-anchor="middle">{n.t}</text>
-        <text class="s" x={x(1 + i) + NW / 2} y={BY + 45} text-anchor="middle">{n.s[0]}</text>
-      </g>
-    ))}
-  </svg>
-
-  <svg class="tall" viewBox={`0 0 ${TW} ${ty(5) + TNH + 2}`} role="img" aria-label="Your message goes to the agent, which may look at older images or read the chat. If you are just talking it replies in text; if it is not sure it asks one short question. Otherwise it writes the prompt, picks a model, unloads, and the image model makes a new version.">
-    <defs><marker id="af-b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 1 L9 5 L0 9 z" class="head" /></marker></defs>
-    {spine.slice(0, -1).map((_, i) => (
-      <path class="e" style={`--d:${i * 2 + 1}`} d={`M${TNW / 2} ${ty(i) + TNH + 4} V${ty(i + 1) - 4}`} marker-end="url(#af-b)" />
-    ))}
-    <path class="e loop" style="--d:2" d={`M${TNW + 4} ${ty(1) + 42} C${TNW + 44} ${ty(1) + 42}, ${TNW + 44} ${ty(1) + 14}, ${TNW + 6} ${ty(1) + 14}`} marker-end="url(#af-b)" />
-    <text class="lbl" style="--d:2" x={TNW + 50} y={ty(1) + 16}><tspan x={TNW + 50}>looks at older</tspan><tspan x={TNW + 50} dy="14">images or reads</tspan><tspan x={TNW + 50} dy="14">the chat</tspan></text>
-    {[2, 3].map((row) => (
-      <path class="e alt" style="--d:3" d={`M${TNW + 4} ${ty(1) + TNH - 14} H${CH - 8} Q${CH} ${ty(1) + TNH - 14} ${CH} ${ty(1) + TNH - 6} V${ty(row) + TNH / 2 - 8} Q${CH} ${ty(row) + TNH / 2} ${CH + 8} ${ty(row) + TNH / 2} H${TBX - 4}`} marker-end="url(#af-b)" />
-    ))}
-    {spine.map((n, i) => (
-      <g class:list={['n', { ag: n.agent, out: n.out }]} style={`--d:${i * 2}`}>
-        <rect x="0" y={ty(i)} width={TNW} height={TNH} rx="12" />
-        <text class="t" x={TNW / 2} y={ty(i) + 28} text-anchor="middle">{n.t}</text>
-        {n.s.map((line, j) => <text class="s" x={TNW / 2} y={ty(i) + 49 + j * 17} text-anchor="middle">{line}</text>)}
-      </g>
-    ))}
-    {side.map((n, i) => (
-      <g class="n side" style="--d:4">
-        <rect x={TBX} y={ty(2 + i) + 8} width={TBW} height={TNH - 16} rx="12" />
-        <text class="t" x={TBX + TBW / 2} y={ty(2 + i) + 34} text-anchor="middle">{n.t}</text>
-        <text class="s" x={TBX + TBW / 2} y={ty(2 + i) + 53} text-anchor="middle">{n.s[0].replace('asks one short question', 'asks a question')}</text>
-      </g>
-    ))}
-  </svg>
-  <figcaption id="flow-cap">One message, start to finish. The agent decides; plain code only refuses what can't run, like an edit with no image.</figcaption>
+  </div>
+  <figcaption id="flow-cap">One message, start to finish. The agent makes the choices; plain code only refuses what can’t run.</figcaption>
 </figure>
 
 <style>
-  .flow { margin: 64px 0 0; display: grid; gap: 14px }
-  .flow svg { width: 100%; height: auto; display: block; overflow: visible }
-  .flow .tall { display: none; max-width: 420px; margin-inline: auto }
-  @media (max-width: 760px) { .flow .wide { display: none } .flow .tall { display: block } }
+  .flow { margin: 72px 0 0; display: grid; gap: 16px }
+  .lanes { display: grid; grid-template-columns: 3fr 2fr; gap: 28px }
+  .lane { display: grid; grid-template-rows: auto 1fr }
+  .lane-h { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; margin: 0 0 12px; padding-top: 10px; border-top: 2px solid var(--line); font: 500 .78rem var(--mono); letter-spacing: .06em; text-transform: uppercase; color: var(--muted) }
+  .lane-h b { color: var(--fg); font-weight: 600 }
+  .lane.lane-agent .lane-h { border-top-color: var(--accent) }
+  .lane.lane-agent .lane-h b { color: var(--accent) }
+  .stages { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(var(--cols), minmax(0, 1fr)); gap: 28px }
+  .stage { position: relative; display: flex; flex-direction: column; gap: 12px; padding: 16px; border: 1px solid var(--line); border-radius: 12px; background: var(--raise) }
+  .lane-agent .stage { background: color-mix(in srgb, var(--accent) 7%, var(--raise)); border-color: color-mix(in srgb, var(--accent) 35%, var(--line)) }
+  /* An arrow in the gap after every stage but the very last one. */
+  .stage::after { content: ''; position: absolute; top: 26px; right: -22px; width: 16px; height: 10px; background: var(--muted);
+    clip-path: polygon(0 40%, 62% 40%, 62% 0, 100% 50%, 62% 100%, 62% 60%, 0 60%) }
+  .lane-job .stage:last-child::after { display: none }
+  .st-h { display: flex; align-items: center; gap: 8px; flex-wrap: wrap }
+  .num { display: grid; place-items: center; width: 22px; height: 22px; border-radius: 50%; background: var(--accent); color: var(--accent-ink); font: 600 .75rem var(--mono); flex: none }
+  .lane-job .num { background: var(--fg); color: var(--bg) }
+  h5 { flex: 1 1 0; min-width: 0; margin: 0; font: 600 1rem/1.3 var(--body); color: var(--fg) }
+  .tag { align-self: flex-start; margin: -6px 0 0 30px;  font: normal .7rem var(--mono); color: var(--muted); border: 1px solid var(--line); border-radius: 99px; padding: 1px 7px }
+  dl { margin: 0; display: grid; gap: 8px; align-content: start }
+  dl div { font-size: .86rem; line-height: 1.4; color: var(--muted) }
+  dt { display: inline; color: var(--fg); font-weight: 600 }
+  dt::after { content: ' ' }
+  dd { display: inline; margin: 0 }
+  .eg { margin: auto 0 0; padding-top: 10px; border-top: 1px dashed var(--line); font: .76rem/1.45 var(--mono); color: var(--accent) }
+  .eg span { color: var(--muted); margin-right: 6px }
   .flow figcaption { font: .85rem var(--mono); color: var(--muted); text-align: center }
-  .n rect { fill: var(--raise); stroke: var(--line); stroke-width: 1 }
-  .n.ag rect { fill: color-mix(in srgb, var(--accent) 12%, var(--raise)); stroke: var(--accent); stroke-width: 1.5 }
-  .n.out rect { stroke: var(--accent) }
-  .n.side rect { fill: var(--bg) ; stroke-dasharray: 4 4 }
-  .t { font: 600 14px var(--body); fill: var(--fg) }
-  .s { font: 12.5px var(--body); fill: var(--muted) }
-  .n.ag .t, .n.out .t { fill: var(--accent) }
-  .e { fill: none; stroke: var(--muted); stroke-width: 1.5; stroke-linecap: round }
-  .e.alt { stroke-dasharray: 4 5 }
-  .e.loop { stroke: var(--accent) }
-  .head { fill: var(--muted) }
-  .lbl { font: 11.5px var(--mono); fill: var(--accent) }
-  .tall .t { font-size: 15px } .tall .s { font-size: 13px } .tall .side .s { font-size: 12.5px }
-  /* Drawn in order when the figure scrolls into view (the page script adds .in). */
-  :global(.motion) .flow :is(.n, .e, .lbl) { opacity: 0; transition: opacity .45s ease-out; transition-delay: calc(var(--d) * 110ms + 150ms) }
-  :global(.motion) .flow.in :is(.n, .e, .lbl) { opacity: 1 }
+
+  /* Narrower: each lane gets the full width. */
+  @media (max-width: 1060px) {
+    .lanes { grid-template-columns: 1fr }
+    .lane-agent .stage:last-child::after { top: auto; bottom: -50px; right: auto; left: 50%; transform: translateX(-50%) rotate(90deg) }
+  }
+  /* Phones: one column, arrows point down. */
+  @media (max-width: 700px) {
+    .stages { grid-template-columns: 1fr; gap: 26px }
+    .stage::after, .lane-agent .stage:last-child::after { top: auto; bottom: -19px; right: auto; left: 28px; transform: rotate(90deg) }
+  }
 </style>
