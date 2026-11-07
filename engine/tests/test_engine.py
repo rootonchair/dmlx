@@ -331,6 +331,7 @@ def test_low_memory_decode_only_when_tight(make_engine, client_for):
 def test_swapin_thrash_aborts_and_degrades(make_engine):
     engine = make_engine()
     engine.memory.monitor.swapin_rate = lambda window=3.0: 500 * 1024**2  # 500 MB/s read back from swap
+    engine.memory.monitor.swapout_rate = lambda window=3.0: 200 * 1024**2  # while pushing pages out: thrashing
     job = engine.submit(task="t2i", prompt="boat", model="fake-a", size="512x512")
     job.finished.wait(5)
     assert job.status == "error" and job.error["code"] == "memory_pressure"
@@ -339,6 +340,40 @@ def test_swapin_thrash_aborts_and_degrades(make_engine):
     job2 = engine.submit(task="t2i", prompt="boat", model="fake-a", size="512x512")
     job2.finished.wait(5)
     assert job2.status == "done" and job2.report["strategy"] == "sequential"  # degraded mode afterwards
+
+
+def test_a_mac_coming_back_from_swap_is_not_stopped(make_engine):
+    """Apps the agent pushed out read back in while the job runs: pressure normal, nothing pushed out."""
+    engine = make_engine()
+    engine.memory.monitor.swapin_rate = lambda window=3.0: 120 * 1024**2
+    job = engine.submit(task="t2i", prompt="boat", model="fake-a", size="512x512")
+    job.finished.wait(5)
+    assert job.status == "done"
+    assert job.report["swapin_while_recovering"] is True
+
+
+def test_swapin_with_rising_pressure_or_growing_swap_still_stops(make_engine):
+    from dataclasses import replace
+
+    from dmlx import sysmem
+
+    for change in ({"pressure": sysmem.PRESSURE_WARN}, {"swap_used_plus": int(0.6 * GB)}):
+        engine = make_engine()
+        monitor = engine.memory.monitor
+        calm = monitor.last()
+        monitor.swapin_rate = lambda window=3.0: 120 * 1024**2
+        later = replace(calm, pressure=change.get("pressure", calm.pressure),
+                        swap_used=calm.swap_used + change.get("swap_used_plus", 0))
+        calls = {"n": 0}
+
+        def last(calm=calm, later=later, calls=calls):
+            calls["n"] += 1
+            return calm if calls["n"] <= 2 else later  # the job's start sees calm, its steps see the change
+
+        monitor.last = last
+        job = engine.submit(task="t2i", prompt="boat", model="fake-a", size="512x512")
+        job.finished.wait(5)
+        assert job.status == "error" and "read back from swap" in job.error["message"], change
 
 
 def test_streamed_strategy_when_only_block_streaming_fits(make_engine):

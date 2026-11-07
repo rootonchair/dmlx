@@ -33,6 +33,12 @@ MARGIN = {"eager": 1.25, "phase_free": 1.5, "sequential": 1.0, "streamed": 1.0}
 SWAP_GROWTH_CAP = int(4 * GB)  # backstop: abort a job that pushes this much new data to swap
 SWAPIN_RATE_CAP = 64 * 1024**2  # bytes/s read back from swap, sustained over SWAPIN_WINDOW -> thrashing
 SWAPIN_WINDOW = 3.0
+# Reading back from swap alone is also what a Mac does while it recovers: apps the agent pushed out come
+# back once it unloads, with pressure normal and swap shrinking (2026-11-07: every stop of the day was
+# that, none a hang). Thrashing also pushes pages out, raises pressure or grows swap, so the swap-in
+# rule needs one of these too.
+SWAPOUT_RATE_SIGN = 32 * 1024**2  # bytes/s pushed out to swap over the same window
+SWAP_GROWTH_SIGN = int(0.5 * GB)  # swap grown since the job started
 CACHE_LIMIT = 512 * 1024**2
 
 
@@ -107,6 +113,13 @@ class PressureMonitor:
 
     def swapin_rate(self, window: float = SWAPIN_WINDOW) -> float:
         """Average bytes/s read back from swap over the last `window` seconds."""
+        return self._rate("swapins", window)
+
+    def swapout_rate(self, window: float = SWAPIN_WINDOW) -> float:
+        """Average bytes/s pushed out to swap over the last `window` seconds."""
+        return self._rate("swapouts", window)
+
+    def _rate(self, counter: str, window: float) -> float:
         with self._lock:
             if len(self._history) < 2:
                 return 0.0
@@ -115,7 +128,7 @@ class PressureMonitor:
             span = newest.taken - oldest.taken
             if span < window * 0.8:
                 return 0.0
-            return (newest.swapins - oldest.swapins) / span
+            return (getattr(newest, counter) - getattr(oldest, counter)) / span
 
     def start_window(self) -> None:
         with self._lock:
@@ -343,6 +356,7 @@ class JobGuard:
         self.size: tuple[int, int] | None = None
         self.decode_mode = "full"
         self.max_swapin_rate = 0.0
+        self.swapin_without_thrash = False
         manager.monitor.start_window()
 
     def _ensure_phase(self, phase: str) -> None:
@@ -445,7 +459,7 @@ class JobGuard:
             raise JobAborted("memory_pressure", "Stopped to keep your Mac responsive: memory pressure became critical.")
         rate = self.m.monitor.swapin_rate()
         self.max_swapin_rate = max(self.max_swapin_rate, rate)
-        if rate > SWAPIN_RATE_CAP:
+        if rate > SWAPIN_RATE_CAP and self._thrashing(snap):
             self.m.degrade()
             raise JobAborted(
                 "memory_pressure", "Stopped to keep your Mac responsive: apps were being read back from swap."
@@ -459,6 +473,15 @@ class JobGuard:
             # Pressure rose because of us: prefer slower strategies for the next jobs.
             self.m.degrade()
 
+    def _thrashing(self, snap: sysmem.MemorySnapshot) -> bool:
+        """Swap-in with a second sign that the Mac is short of memory, not coming back from it."""
+        if snap.pressure > self.baseline_pressure or snap.swap_used - self.swap_start > SWAP_GROWTH_SIGN:
+            return True
+        if self.m.monitor.swapout_rate() > SWAPOUT_RATE_SIGN:
+            return True
+        self.swapin_without_thrash = True  # reported: the old rule would have stopped this job
+        return False
+
     def report(self) -> dict:
         snap = self.m.monitor.last()
         return {
@@ -470,4 +493,5 @@ class JobGuard:
             "max_pressure": sysmem.PRESSURE_NAMES.get(self.max_pressure, str(self.max_pressure)),
             "swap_delta_gb": round((snap.swap_used - self.swap_start) / GB, 2),
             "max_swapin_mb_s": round(self.max_swapin_rate / 1024**2, 1),
+            "swapin_while_recovering": self.swapin_without_thrash,
         }

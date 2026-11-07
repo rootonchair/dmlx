@@ -254,14 +254,18 @@ Still open:
 - [ ] Task 11's Mark area could share `LayoutCanvas`.
 - [ ] The editor's per-box bar on narrow sheets (it scrolls sideways today).
 - [ ] FIBO Edit and FIBO 1 as families (FIBO 2 is in, below).
-- [ ] In the app, FIBO 2 after the 8B agent was stopped twice by the guard ("apps were being read back
-      from swap") on a Mac with 9 GB of swap in use and about 6 GB free: the transformer streams from disk
-      at every step. The same job without the agent first ran fine. Check on a quieter Mac before calling
-      it a FIBO problem. Ideogram 4's redraw with the date moved hit the same guard twice through the
-      engine (64.6 MB/s read back against the 64 MB/s cap, with pressure normal and swap shrinking: other
-      apps coming back, not dMLX pushing them out); the same size passed twice in bench-family. Still to
-      see: the Ideogram redraw, and whether the swap-in check should tell apps coming back from apps
-      being pushed out.
+- [x] The guard stopped every in-app run with the agent on 2026-11-07 (FIBO 2 twice, MOSS once, Ideogram
+      4's redraw twice): "apps were being read back from swap", with pressure normal and swap shrinking.
+      The 8B agent pushes idle apps to swap, and they read back in during the image job. Swap-in above
+      64 MB/s now stops a job only with a second sign of thrashing: pages pushed out at 32 MB/s or more,
+      pressure above the job's start, or swap grown 0.5 GB since it (`JobGuard._thrashing`); critical
+      pressure and 4 GB of new swap still stop it alone. The report says `swapin_while_recovering` when
+      the old rule would have stopped the job. Then the in-app flow on main passed on MOSS (2026-11-08,
+      8 GB in swap): the agent's boxes, the Layout tool, the date moved to the bottom right, the redraw.
+- [ ] After a stop the log says "released 0.00 GB of 4.86 GB; something still holds its weights": check
+      whether a stopped job keeps its weights until the engine restarts.
+- [ ] The 8B agent still drew a box for lighting ("glowing spotlights") and let "musicians silhouettes"
+      cover the date, against the box rules; only the instructions enforce them today.
 - [ ] Compare FIBO against FIBO-VLM's expansion.
 
 ## Risks

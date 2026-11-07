@@ -49,6 +49,7 @@ def make_engine(tmp_path, monkeypatch):
         engine.memory.monitor.last = lambda: calm
         engine.memory.monitor.window_max_pressure = lambda: sysmem.PRESSURE_NORMAL
         engine.memory.monitor.swapin_rate = lambda window=3.0: 0.0
+        engine.memory.monitor.swapout_rate = lambda window=3.0: 0.0
         engines.append(engine)
         return engine
 
