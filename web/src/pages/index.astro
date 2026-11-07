@@ -4,6 +4,7 @@ import { Image } from 'astro:assets';
 import { latestDownload, releasesPage } from '../lib/release';
 import ThemeSwitch from '../components/ThemeSwitch.astro';
 import AgentFlow from '../components/AgentFlow.astro';
+import Analytics from '@vercel/analytics/astro';
 import type { ImageMetadata } from 'astro';
 import '@fontsource/ibm-plex-sans/400.css';
 import '@fontsource/ibm-plex-sans/500.css';
@@ -319,6 +320,7 @@ const examples = [
     items.forEach(function (el) { io.observe(el); });
   })();
 </script>
+<Analytics />
 </body>
 </html>
 

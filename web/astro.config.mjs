@@ -17,6 +17,7 @@ export default defineConfig({
       components: {
         ThemeSelect: './src/components/ThemeSelect.astro',
         SocialIcons: './src/components/SocialIcons.astro',
+        SkipLink: './src/components/SkipLink.astro',
       },
       head: [
         { tag: 'link', attrs: { rel: 'icon', href: '/favicon.ico', sizes: '48x48' } },

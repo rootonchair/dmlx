@@ -1,6 +1,7 @@
 ---
 // /download/ sends the browser straight to the newest release's .dmg (read at build time; see src/lib/release.ts).
 import { latestDownload } from '../lib/release';
+import Analytics from '@vercel/analytics/astro';
 const download = await latestDownload();
 ---
 <!doctype html>
@@ -12,5 +13,5 @@ const download = await latestDownload();
   <meta http-equiv="refresh" content={`0;url=${download.url}`}>
   <link rel="canonical" href={download.url}>
 </head>
-<body><p>Downloading dMLX {download.tag}. If nothing happens, <a href={download.url}>download the .dmg</a>.</p></body>
+<body><p>Downloading dMLX {download.tag}. If nothing happens, <a href={download.url}>download the .dmg</a>.</p><Analytics /></body>
 </html>
