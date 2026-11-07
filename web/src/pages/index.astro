@@ -3,6 +3,7 @@
 import { Image, getImage } from 'astro:assets';
 import { latestDownload, releasesPage } from '../lib/release';
 import ThemeSwitch from '../components/ThemeSwitch.astro';
+import AgentFlow from '../components/AgentFlow.astro';
 import type { ImageMetadata } from 'astro';
 import '@fontsource/ibm-plex-sans/400.css';
 import '@fontsource/ibm-plex-sans/500.css';
@@ -136,6 +137,7 @@ const examples = [
       <p class="cap">"give the teapot the same weathered wood as the boat" · uses 1 reference image</p>
     </div>
   </div>
+  <div class="wrap"><AgentFlow /></div>
 </section>
 
 <section class="alt" id="memory">
@@ -276,7 +278,7 @@ const examples = [
       var el = e.target;
       if (el.classList && el.classList.contains('in') && e.propertyName === 'opacity') el.classList.add('done');
     });
-    var groups = ['main .head', '.examples > .ex', '.steps > li', '.stack', '.facts > div', '.gauge', '.edit > figure', '#api pre', '.tables > .tbl', '.start > div', '.btns.end'];
+    var groups = ['main .head', '.examples > .ex', '.steps > li', '.stack', '.facts > div', '.gauge', '.edit > figure', '#api pre', '.tables > .tbl', '.start > div', '.btns.end', '.flow'];
     var items = [];
     groups.forEach(function (sel) {
       var byParent = new Map();
