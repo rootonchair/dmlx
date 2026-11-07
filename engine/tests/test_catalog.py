@@ -110,13 +110,14 @@ def test_normalize_rejects_garbage():
 def test_saved_specs_load_and_bad_files_are_skipped(tmp_path, monkeypatch, remote):
     monkeypatch.setenv("DMLX_HOME", str(tmp_path))
     remote(_names(double=8, single=24))
-    spec = catalog.save_spec(catalog.detect("mflux-community/flux2-klein-9b-mflux-q4", FILES, "other"))
+    # The 8-bit build: the 4-bit one is built in now, and a built-in replaces an added spec of the same repo.
+    spec = catalog.save_spec(catalog.detect("mflux-community/flux2-klein-9b-mflux-q8", FILES, "other"))
     (tmp_path / "models" / "broken.yaml").write_text("id: [unclosed")
     registry = Registry.load_builtin(extra_dir=tmp_path / "models")
     loaded = registry.get(spec.id)
     assert loaded.user_added and loaded.mflux_config == "flux2_klein_9b"
     assert loaded.components["transformer"].stream == ["transformer_blocks", "single_transformer_blocks"]
-    assert "flux2-klein-4b" in registry  # built-ins still load alongside
+    assert "flux2-klein-4b" in registry and "flux2-klein-9b" in registry  # built-ins still load alongside
 
 
 @pytest.mark.parametrize("repo,expected", [

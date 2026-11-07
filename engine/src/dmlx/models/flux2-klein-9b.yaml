@@ -1,0 +1,36 @@
+id: flux2-klein-9b
+name: FLUX.2 Klein 9B
+adapter: mflux.flux2_klein
+mflux_config: flux2_klein_9b
+repo: mflux-community/flux2-klein-9b-mflux-q4
+revision: fcbc7528d6b4193cca919390a2a8b5b59e601f65
+quantization: 4
+agent_note: "The larger Klein: usually more detail than Klein 4B for new images and edits with up to 3 images, but about twice as slow (about 35 s for a new image, 1.5 minutes for an edit). Non-commercial license; pick it only when the user chose it."
+license: flux-non-commercial
+license_url: https://huggingface.co/black-forest-labs/FLUX.2-klein-9B/blob/main/LICENSE.md
+license_acceptance_id: flux-non-commercial-2026-11-07
+auto_select: false
+tasks: [t2i, edit]
+max_references: 3
+capabilities:
+  image.generate:
+    inputs: {}
+    prompt: { positive: true, negative: false }
+  image.edit:
+    inputs:
+      image: { min: 1, max: 3, ordered: true }
+    prompt: { positive: true, negative: false }
+download_gb: 8.89
+min_ram_gb: 16
+components:
+  text_encoder: { phase: encode, share_key: qwen3-8b-q4, stream: [layers] }
+  transformer:  { phase: denoise, stream: [transformer_blocks, single_transformer_blocks] }
+  vae:          { phase: decode, keep: true }
+defaults: { steps: 4, guidance: 1.0, width: 1024, height: 1024 }
+# Measured on M5 24 GB with dmlx bench-family (Nov 7): 1024 px new image ~35 s (denoise 28-30 s), edit with one
+# reference ~97 s. The VAE is Klein 4B's, so the decode numbers are the same as its spec.
+activation_gb_per_mp: 1.8
+reference_activation_factor: 0.4
+decode_gb_per_mp: 8.6
+decode_tiled_gb_per_mp: 2.4
+decode_banded_gb_per_mp: 1.2

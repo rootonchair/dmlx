@@ -529,7 +529,7 @@ enum ModelHints {
     static func image(_ m: EngineModel) -> String {
         switch m.id {
         case "flux2-klein-4b": "Fast and good at most things. Makes new images and edits yours."
-        case "flux2-klein-9b": "Sharper, more faithful images and edits than Klein 4B. Slower and larger."
+        case "flux2-klein-9b": "The bigger Klein. Usually more detail than Klein 4B, but about twice as slow."
         case "z-image-turbo": "Very realistic photos, but slower. Makes new images only; it can't edit them."
         case "qwen-image-2.1-q4": "Best at writing words in images, like posters, and careful edits. Very slow: minutes per image."
         default: m.supports(.edit) ? "Makes new images and edits yours." : "Makes new images."
@@ -539,7 +539,7 @@ enum ModelHints {
     static func imageShort(_ m: EngineModel) -> String {
         switch m.id {
         case "flux2-klein-4b": "fast, makes and edits images (recommended)"
-        case "flux2-klein-9b": "sharper images and edits, slower, non-commercial use only"
+        case "flux2-klein-9b": "more detail, about twice as slow"
         case "z-image-turbo": "realistic photos, slower, new images only"
         case "qwen-image-2.1-q4": "best at words in images, very slow, research use only"
         default: m.supports(.edit) ? "makes and edits images" : "makes new images"
