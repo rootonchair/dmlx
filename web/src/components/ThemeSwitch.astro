@@ -1,0 +1,73 @@
+---
+// A light/dark switch, used on the homepage and (through ThemeSelect.astro) in the docs.
+// Until the reader flips it, the site follows the Mac's appearance. Flipping it stores the choice
+// under "starlight-theme", the key Starlight's own theme script reads before the page paints.
+---
+<button class="theme-switch" type="button" role="switch" aria-checked="false" aria-label="Dark mode" data-theme-switch>
+  <span class="track" aria-hidden="true">
+    <svg class="icon sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+    <svg class="icon moon" viewBox="0 0 24 24"><path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z"/></svg>
+    <span class="knob"></span>
+  </span>
+</button>
+
+<script is:inline>
+  (function () {
+    if (!window.dmlxThemeSwitch) {
+      var key = 'starlight-theme', root = document.documentElement, system = matchMedia('(prefers-color-scheme: dark)');
+      var stored = function () { try { var t = localStorage.getItem(key); return t === 'light' || t === 'dark' ? t : ''; } catch (e) { return ''; } };
+      var effective = function () { return stored() || (system.matches ? 'dark' : 'light'); };
+      var sync = function () {
+        var dark = effective() === 'dark';
+        document.querySelectorAll('[data-theme-switch]').forEach(function (b) { b.setAttribute('aria-checked', String(dark)); });
+      };
+      var apply = function (theme) {
+        root.dataset.theme = theme;
+        try { localStorage.setItem(key, theme); } catch (e) {}
+        sync();
+      };
+      document.addEventListener('click', function (e) {
+        var b = e.target.closest && e.target.closest('[data-theme-switch]');
+        if (b) apply(effective() === 'dark' ? 'light' : 'dark');
+      });
+      // With no stored choice, follow the Mac when its appearance changes.
+      system.addEventListener('change', function () {
+        if (stored()) return;
+        if (root.dataset.theme) root.dataset.theme = system.matches ? 'dark' : 'light';
+        sync();
+      });
+      window.dmlxThemeSwitch = { sync: sync };
+    }
+    window.dmlxThemeSwitch.sync();
+  })();
+</script>
+
+<style>
+  .theme-switch {
+    --sw-line: var(--line, var(--sl-color-gray-5, #8884));
+    --sw-fill: var(--raise, var(--sl-color-gray-6, #8882));
+    --sw-ink: var(--muted, var(--sl-color-gray-3, #888));
+    --sw-knob: var(--fg, var(--sl-color-white, #111));
+    padding: 0; border: 0; background: none; cursor: pointer; display: inline-flex; align-items: center; flex: none;
+    border-radius: 99px;
+  }
+  .theme-switch:focus-visible { outline: 2px solid var(--accent, var(--sl-color-accent, #2f6fa3)); outline-offset: 3px }
+  .track {
+    position: relative; display: flex; align-items: center; justify-content: space-between;
+    width: 52px; height: 28px; padding: 0 7px; box-sizing: border-box;
+    border-radius: 99px; border: 1px solid var(--sw-line); background: var(--sw-fill);
+  }
+  .icon { width: 13px; height: 13px; fill: none; stroke: var(--sw-ink); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; position: relative; z-index: 1 }
+  .knob {
+    position: absolute; top: 3px; left: 3px; width: 20px; height: 20px; border-radius: 50%;
+    background: var(--sw-knob); box-shadow: 0 1px 3px #0003;
+  }
+  .theme-switch[aria-checked='true'] .knob { transform: translateX(24px) }
+  /* The icon under the knob is hidden; the other one shows which way the switch goes. */
+  .theme-switch[aria-checked='false'] .sun, .theme-switch[aria-checked='true'] .moon { opacity: 0 }
+  .theme-switch:hover .icon { stroke: var(--sw-knob) }
+  @media (prefers-reduced-motion: no-preference) {
+    .knob { transition: transform .22s cubic-bezier(.3,.7,.2,1) }
+    .icon { transition: opacity .15s }
+  }
+</style>

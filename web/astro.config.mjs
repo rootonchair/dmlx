@@ -12,6 +12,7 @@ export default defineConfig({
       description: 'Make and edit images with chat, fully on your Mac.',
       logo: { light: '../docs/brand/dmlx-mark.svg', dark: '../docs/brand/dmlx-mark-dark.svg' },
       favicon: '/favicon.svg',
+      components: { ThemeSelect: './src/components/ThemeSelect.astro' },
       social: [{ icon: 'github', label: 'GitHub', href: 'https://github.com/rootonchair/dmlx' }],
       customCss: [
         '@fontsource/ibm-plex-sans/400.css',
