@@ -231,6 +231,10 @@ uses simple rules to route messages. For more data, refer to
 - **Edit Prompt…** on one of your messages runs the image of that message again with the new words.
 - While the app makes an image, the send button changes to **Stop**. You can write your next message during
   this time.
+- **Tips:** after the first-run setup, short tips point at the message box, the paper clip, the size menu, the
+  new image or edit control, and **New creation**. After your first image, tips explain versions,
+  **Variations** and **Crop / Draw**, and the editor explains its tools. To see the tips again, select
+  **Help → Show Tips Again**.
 
 ## Image models
 

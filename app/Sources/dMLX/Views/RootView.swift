@@ -1,5 +1,6 @@
 import DMLXKit
 import SwiftUI
+import TipKit
 
 struct RootView: View {
     @Environment(AppModel.self) private var model
@@ -33,6 +34,15 @@ struct RootView: View {
             }
         }
         .animation(.easeOut(duration: 0.2), value: model.toast)
+        // The chat tips start once the setup is closed and an image model is ready.
+        .onAppear { updateGuide() }
+        .onChange(of: model.showOnboarding) { updateGuide() }
+        // The default image model, not the model list: it depends on the capabilities, which load after it.
+        .onChange(of: model.defaultModel(for: .t2i)?.id) { updateGuide() }
+    }
+
+    private func updateGuide() {
+        Guide.shared.setReady(!model.showOnboarding && model.defaultModel(for: .t2i) != nil)
     }
 }
 
@@ -52,6 +62,13 @@ struct SidebarView: View {
             .buttonStyle(.bordered)
             .controlSize(.large)
             .padding(12)
+
+            // Inline, not a popover: at the top of the window a popover has no room above the button.
+            if let tip = Guide.shared.chat.currentTip as? ChatsTip {
+                TipView(tip, arrowEdge: .top) { _ in Guide.shared.next(tip) }
+                    .padding(.horizontal, 12)
+                    .padding(.bottom, 8)
+            }
 
             List(selection: Binding(
                 get: { model.currentSessionId },

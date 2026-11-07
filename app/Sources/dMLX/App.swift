@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import TipKit
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
@@ -24,6 +25,8 @@ struct DMLXApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
     private var model: AppModel { delegate.model }
 
+    init() { Guide.configure() }
+
     var body: some Scene {
         Window("dMLX", id: "main") {
             RootView()
@@ -37,6 +40,10 @@ struct DMLXApp: App {
         .commands {
             CommandGroup(replacing: .newItem) {
                 Button("New Creation") { model.newSession() }.keyboardShortcut("n")
+            }
+            CommandGroup(replacing: .help) {
+                Link("dMLX Guide", destination: URL(string: "https://dmlx.vercel.app/docs/using-dmlx/")!)
+                Button("Show Tips Again") { Guide.shared.showAgain() }
             }
         }
 

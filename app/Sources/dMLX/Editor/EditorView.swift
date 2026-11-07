@@ -1,6 +1,7 @@
 import AppKit
 import DMLXKit
 import SwiftUI
+import TipKit
 
 private enum EditorTool: String, CaseIterable, Identifiable {
     case crop = "Crop"
@@ -67,6 +68,11 @@ struct EditorView: View {
             }
             .scrollIndicators(.hidden)
             .padding()
+
+            // First time in the editor: what the tools do.
+            TipView(Guide.shared.editor)
+                .padding(.horizontal)
+                .padding(.bottom, 10)
 
             EditorCanvas(
                 source: source, document: comparing ? originalView : document,

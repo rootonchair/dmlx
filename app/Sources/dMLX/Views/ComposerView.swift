@@ -1,6 +1,7 @@
 import AppKit
 import DMLXKit
 import SwiftUI
+import TipKit
 import UniformTypeIdentifiers
 
 struct ComposerView: View {
@@ -128,6 +129,7 @@ struct ComposerView: View {
                 .focused($focused)
                 .onSubmit { if canSend { model.send() } }
                 .accessibilityLabel("Describe an image or a change")
+                .guideTip(ComposerTip.self, in: Guide.shared.chat, edge: .bottom)
 
                 HStack(spacing: 8) {
                     ScrollView(.horizontal) {
@@ -140,6 +142,7 @@ struct ComposerView: View {
                             .buttonStyle(.borderless)
                             .help("Attach up to 3 reference images")
                             .accessibilityLabel("Attach reference images")
+                            .guideTip(AttachTip.self, in: Guide.shared.chat, edge: .bottom)
 
                             if model.promptEnhancementMode != .off {
                                 Button { model.enhanceDraft() } label: {
@@ -165,11 +168,13 @@ struct ComposerView: View {
                             .menuStyle(.borderlessButton)
                             .fixedSize()
                             .help("Size for new images (edits keep the source size)")
+                            .guideTip(SizeTip.self, in: Guide.shared.chat, edge: .bottom)
 
                             if model.choosableModels.count > 1 {
                                 ModelMenu()
                             }
 
+                            Group {
                             if model.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                                 Text(model.routePreview)
                                     .font(.caption)
@@ -199,6 +204,8 @@ struct ComposerView: View {
                                 .fixedSize()
                                 .help("Choose the workflow")
                             }
+                            }
+                            .guideTip(ModeTip.self, in: Guide.shared.chat, edge: .bottom)
                         }
                         .fixedSize(horizontal: true, vertical: false)
                     }

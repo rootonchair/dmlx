@@ -1,5 +1,6 @@
 import DMLXKit
 import SwiftUI
+import TipKit
 
 struct TurnView: View {
     let turn: Turn
@@ -207,6 +208,8 @@ struct ImageTurnView: View {
     let turn: Turn
 
     var version: ImageVersion? { turn.current }
+    /// The image tips point at the newest image only.
+    var isLatest: Bool { model.latestImageTurn?.id == turn.id }
     /// A version that stopped before producing an image: no empty frame, only the error and its actions.
     var hasNoImage: Bool { version.map { !$0.isActive && $0.resultId == nil } ?? false }
 
@@ -241,8 +244,10 @@ struct ImageTurnView: View {
                 } else if !hasNoImage {
                     Button("Variations") { model.variation(turn.id) }
                         .help("Same prompt, new seed")
+                        .guideTip(VersionsTip.self, in: isLatest ? Guide.shared.image : nil, edge: .top)
                     Button("Crop / Draw") { model.openEditor(turn.id) }
                         .help("Prepare a non-destructive crop or paint overlay, then attach it")
+                        .guideTip(CropDrawTip.self, in: isLatest ? Guide.shared.image : nil, edge: .top)
                     Button {
                         model.save(turn.id)
                     } label: {
@@ -257,6 +262,15 @@ struct ImageTurnView: View {
 
             if let v = version {
                 Text(metaLine(v)).font(.caption).foregroundStyle(.secondary)
+            }
+        }
+        .onAppear { if version?.status == .done { Guide.shared.imageShown() } }
+        // After the chat has scrolled the new image's buttons into view (ChatView), so the tip points at them.
+        .onChange(of: version?.status) {
+            guard version?.status == .done else { return }
+            _Concurrency.Task { @MainActor in
+                try? await _Concurrency.Task.sleep(for: .seconds(1.2))
+                Guide.shared.imageShown()
             }
         }
     }

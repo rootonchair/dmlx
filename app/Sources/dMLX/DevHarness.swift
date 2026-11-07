@@ -8,7 +8,7 @@ import SwiftUI
 ///
 /// Script: {"out": "/dir", "steps": [{"newSession": true}, {"send": "a boat"}, {"waitIdle": 300},
 ///          {"snapshot": "name"}, {"variation": true}, {"attachFile": "/path.png"}, {"draft": "text"}, {"sleep": 1},
-///          {"onboarding": true|false}, {"onboardingStep": "welcome"|"setup"}, {"onboardingDownload": true} (presses Download), {"settings": true}, {"selectSession": 0}, {"renderChat": "name"},
+///          {"onboarding": true|false}, {"onboardingStep": "welcome"|"setup"}, {"onboardingDownload": true} (presses Download), {"guideNext": "chat"|"image"} (the tip's Next; DMLX_RESET_TIPS=1 shows the guide again), {"settings": true}, {"selectSession": 0}, {"renderChat": "name"},
 ///          {"modelChoice": "auto"|"<model id>"}, {"logPreview": true},
 ///          {"windowSize": [w, h]}, {"measure": true}, {"fakeSessions": n},
 ///          {"ask": {"message": "…", "question": "…"}} (as if the agent asked), {"planning": "message"} (as if just sent; "" clears), {"waitRouted": 60},
@@ -124,6 +124,13 @@ enum DevHarness {
         if let name = step["onboardingStep"] as? String, let value = OnboardingStep(rawValue: name) { model.onboardingStep = value }
         if let show = step["onboarding"] as? Bool { model.showOnboarding = show }
         if step["onboardingDownload"] != nil { model.harnessOnboardingDownload += 1 }
+        if step["guideLog"] != nil {
+            log("guide ready=\(GuideState.ready) hasImage=\(GuideState.hasImage) chat=\(Guide.shared.chat.currentTip?.id ?? "-") image=\(Guide.shared.image.currentTip?.id ?? "-") t2i=\(model.defaultModel(for: .t2i)?.id ?? "-") onboarding=\(model.showOnboarding)")
+        }
+        if let group = step["guideNext"] as? String {
+            // Press Next on the current tip of the "chat" or "image" group.
+            if let tip = (group == "image" ? Guide.shared.image : Guide.shared.chat).currentTip { Guide.shared.next(tip) }
+        }
         if step["settings"] != nil { showSettings(model) }
         if let tab = step["settingsTab"] as? String { model.settingsTab = tab }
         if let name = step["appearance"] as? String, let a = AppAppearance(rawValue: name) {
@@ -166,7 +173,7 @@ enum DevHarness {
             case "addModel": addModelWindow
             default: mainWindow()
             }
-            capture(name: name, window: window, out: out)
+            capture(name: name, window: window, out: out, region: step["region"] != nil)
         }
         if let seconds = step["sleep"] as? Double { try? await _Concurrency.Task.sleep(for: .seconds(seconds)) }
         if let timeout = step["waitIdle"] as? Double {
@@ -277,7 +284,8 @@ enum DevHarness {
     }
 
     /// The window as it is on screen, through screencapture (ImageRenderer cannot draw native controls).
-    static func capture(name: String, window: NSWindow?, out: URL) {
+    /// `region`: the window's area of the screen, so popovers over it (the guide's tips) are included.
+    static func capture(name: String, window: NSWindow?, out: URL, region: Bool = false) {
         guard let window else {
             return log("capture \(name): no such window; " + NSApp.windows.map {
                 "\($0.title)|\($0.identifier?.rawValue ?? "-")|visible=\($0.isVisible)" }.joined(separator: ", "))
@@ -289,7 +297,14 @@ enum DevHarness {
         let file = out.appendingPathComponent("\(name).png")
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
-        process.arguments = ["-x", "-o", "-l\(window.windowNumber)", file.path]
+        if region, let screen = window.screen ?? NSScreen.main {
+            // screencapture -R counts from the top-left of the main display; AppKit from the bottom-left.
+            let f = window.frame.insetBy(dx: -40, dy: -40)
+            let top = (NSScreen.screens.first?.frame.maxY ?? screen.frame.maxY) - f.maxY
+            process.arguments = ["-x", "-R\(Int(f.minX)),\(Int(top)),\(Int(f.width)),\(Int(f.height))", file.path]
+        } else {
+            process.arguments = ["-x", "-o", "-l\(window.windowNumber)", file.path]
+        }
         do {
             try process.run()
             process.waitUntilExit()

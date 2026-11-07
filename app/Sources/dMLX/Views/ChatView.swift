@@ -44,6 +44,17 @@ struct ChatView: View {
                 .onChange(of: model.currentSessionId) {
                     proxy.scrollTo("bottom", anchor: .bottom)
                 }
+                // A finished image grows its turn (the picture, its buttons) and the composer (the suggestions):
+                // scroll again once both have settled, so the image's buttons are in view.
+                .onChange(of: model.latestImageTurn?.current?.status) { _, status in
+                    guard status == .done else { return }
+                    _Concurrency.Task { @MainActor in
+                        for delay in [0.15, 0.6] {
+                            try? await _Concurrency.Task.sleep(for: .seconds(delay))
+                            withAnimation(.easeOut(duration: 0.25)) { proxy.scrollTo("bottom", anchor: .bottom) }
+                        }
+                    }
+                }
             }
             // The transcript must absorb window-height changes. Without an
             // explicit flexible height, an active 520-point image placeholder
