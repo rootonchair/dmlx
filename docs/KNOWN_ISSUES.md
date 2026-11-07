@@ -9,7 +9,7 @@
 | Quality | Below 32 GB, Z-Image decodes tiled (visually identical). FLUX.2 Klein uses an exact banded decoder that matches the one-piece decode up to rounding. | — |
 | Reproducibility | A fixed seed reproduces the same image within a memory mode. Lowest-memory mode runs the model uncompiled, so its image can differ very slightly (≈1/255 on average) from the same seed in other modes. | — |
 | Previews | No live preview frames yet; the card shows progress (and the blurred source image while editing). | Planned: cheap latent previews. |
-| Features | No video, no brush/mask edits, no upscaling, no LoRA in this beta. | On the roadmap (`dmlx-spec.md` §13). |
+| Features | No video, no mask-based inpainting (Crop / Draw paints visible marks that the edit model reads), no upscaling, no LoRA in this beta. | On the roadmap (`dmlx-spec.md` §13). |
 | Models | Only FLUX.2 Klein, FLUX.3 Klein, Z-Image, Qwen Image 2.1, ERNIE Image Turbo, MOSS Image, Boogu Image Turbo, Iris 3B Turbo and Krea 2 Turbo models in mflux format can be added; other mflux families need a table entry and a memory measurement (task 15). ERNIE, MOSS, Boogu and Krea 2 are slow (minutes per 1024 px image). Memory estimates for added 9B and base models are derived, not measured on every variant. | Pick an mflux-community version; report variants that misbehave. |
 | History | A job that is running when you quit the app is not resumed; it shows as stopped. | Retry from the turn. |
 | Cache | Prompt embeddings are cached in memory only and are cleared when the engine restarts. | Planned SSD tier (spec F6). |

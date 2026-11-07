@@ -1,0 +1,21 @@
+---
+// The site's 404 page, in the docs' look, with a way back to the homepage and the docs.
+import StarlightPage from '@astrojs/starlight/components/StarlightPage.astro';
+---
+<StarlightPage
+  frontmatter={{
+    title: 'Page not found',
+    description: "This page doesn't exist.",
+    template: 'splash',
+    pagefind: false,
+    head: [{ tag: 'meta', attrs: { name: 'robots', content: 'noindex' } }],
+    hero: {
+      title: 'Page not found',
+      tagline: "This page doesn't exist, or it moved.",
+      actions: [
+        { text: 'Go to the homepage', link: '/', icon: 'right-arrow' },
+        { text: 'Read the docs', link: '/docs/getting-started/', variant: 'minimal' },
+      ],
+    },
+  }}
+/>

@@ -1,0 +1,14 @@
+---
+// The docs header: a Download button next to Starlight's GitHub icon.
+import Default from '@astrojs/starlight/components/SocialIcons.astro';
+---
+<a class="docs-dl" href="/download/">Download</a>
+<Default />
+
+<style>
+  .docs-dl {
+    padding: .3rem .8rem; margin-right: .5rem; border-radius: 99px; white-space: nowrap;
+    background: #2f6fa3; color: #fff; font-size: .85rem; font-weight: 600; text-decoration: none;
+  }
+  .docs-dl:hover { background: #2b6699; color: #fff }
+</style>

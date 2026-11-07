@@ -1,6 +1,6 @@
 ---
 // The dMLX homepage. Screenshots come from the repo's docs/screenshots/ and are optimized at build time.
-import { Image, getImage } from 'astro:assets';
+import { Image } from 'astro:assets';
 import { latestDownload, releasesPage } from '../lib/release';
 import ThemeSwitch from '../components/ThemeSwitch.astro';
 import AgentFlow from '../components/AgentFlow.astro';
@@ -19,8 +19,8 @@ const shot = (name: string) => {
   if (!f) throw new Error(`docs/screenshots/${name}.jpg not found`);
   return f.default;
 };
-const og = await getImage({ src: shot('chat-edit-versions'), width: 1200, format: 'jpg' });
 
+const site = new URL('/', Astro.site ?? 'https://dmlx.vercel.app').href;
 const repo = 'https://github.com/rootonchair/dmlx';
 const releases = releasesPage;
 const download = await latestDownload();
@@ -30,10 +30,18 @@ const description = 'Make and edit images by chatting, all on your Mac. Free and
 
 const apiExample = '<span class="c"># from a clone of the repo: run the engine without the app</span>\ncd engine && uv run dmlx serve --port 8642\n\n<span class="c"># make an image</span>\ncurl localhost:8642/v1/images/generations \\\n  -H <span class="s">\'content-type: application/json\'</span> \\\n  -d <span class="s">\'{"prompt": "a rowboat on a lake at dawn",\n       "size": "1024x1024"}\'</span>';
 
+// Before/after crops of the removal examples (web/scripts/crop-examples.py cuts them from the screenshots).
+const crops = import.meta.glob<{ default: ImageMetadata }>('../assets/examples/*.jpg', { eager: true });
+const crop = (name: string) => {
+  const f = crops[`../assets/examples/${name}.jpg`];
+  if (!f) throw new Error(`web/src/assets/examples/${name}.jpg not found; run web/scripts/crop-examples.py`);
+  return f.default;
+};
+
 const examples = [
-  { img: 'use-remove-object', q: 'remove the coffee mug', model: 'FLUX.2 Klein 4B', time: '36 s', alt: 'A desk with a laptop, mug and plant, then the same desk with no mug.' },
-  { img: 'use-remove-person', q: 'remove the person', model: 'FLUX.2 Klein 4B', time: '40 s', alt: 'A beach at sunset with one person, then the same beach with no person.' },
-  { img: 'use-remove-text', q: 'remove all the text from the window', model: 'Qwen Image 2.1', time: 'about 5 min', alt: 'A coffee shop window with painted lettering, then the same window with no lettering.' },
+  { img: 'use-remove-object', pair: true, q: 'remove the coffee mug', model: 'FLUX.2 Klein 4B', time: '36 s', alt: 'A desk with a laptop, mug and plant, then the same desk with no mug.' },
+  { img: 'use-remove-person', pair: true, q: 'remove the person', model: 'FLUX.2 Klein 4B', time: '40 s', alt: 'A beach at sunset with one person, then the same beach with no person.' },
+  { img: 'use-remove-text', pair: true, q: 'remove all the text from the window', model: 'Qwen Image 2.1', time: 'about 5 min', alt: 'A coffee shop window with painted lettering, then the same window with no lettering.' },
   { img: 'use-poster', q: 'a jazz night poster, MIDNIGHT ECHO in large gold letters', model: 'Qwen Image 2.1', time: 'about 4 min', extra: 'Portrait', alt: 'An art deco jazz poster with MIDNIGHT ECHO in gold letters.' },
   { img: 'use-banner', q: 'a bakery banner with the words FRESH BREAD DAILY', model: 'Qwen Image 2.1', time: 'about 4 min', extra: 'Landscape', alt: 'A wide bakery banner of loaves with FRESH BREAD DAILY at the top.' },
   { img: 'versions', q: 'make a variation', model: 'Every result keeps v1, v2, v3', time: '', extra: 'Nothing is overwritten. Go back to any version.', alt: 'A red rowboat with version buttons v1 and v2, Variations and Crop / Draw.' },
@@ -47,11 +55,18 @@ const examples = [
   <title>{title}</title>
   <meta name="description" content={description}>
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
-  <link rel="canonical" href={Astro.site ? new URL('/', Astro.site).href : '/'}>
+  <link rel="icon" href="/favicon.ico" sizes="48x48">
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+  <link rel="canonical" href={site}>
   <meta property="og:type" content="website">
+  <meta property="og:site_name" content="dMLX">
+  <meta property="og:url" content={site}>
   <meta property="og:title" content={title}>
   <meta property="og:description" content={description}>
-  <meta property="og:image" content={Astro.site ? new URL(og.src, Astro.site).href : og.src}>
+  <meta property="og:image" content={new URL('/og.jpg', site).href}>
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="dMLX: make and edit images by chatting. Free and private, on your Mac.">
   <meta name="twitter:card" content="summary_large_image">
   <script is:inline>
     // Use the same theme choice as the docs (Starlight stores it as "starlight-theme").
@@ -68,7 +83,7 @@ const examples = [
       <span class="wm">dMLX</span>
     </a>
     <div class="links">
-      <a href="#examples">Examples</a><a href="#agent">Agent</a><a href="#models">Models</a><a href="/docs/getting-started/">Docs</a><a href={repo}>GitHub</a>
+      <a class="wide-only" href="#examples">Examples</a><a class="wide-only" href="#agent">Agent</a><a class="wide-only" href="#models">Models</a><a href="/docs/getting-started/">Docs</a><a class="mid-only" href={repo}>GitHub</a>
     </div>
     <a class="nav-dl" href={download.url}>Download</a>
     <ThemeSwitch />
@@ -89,10 +104,10 @@ const examples = [
         <a class="btn" href="/docs/getting-started/">See how to get started</a>
       </div>
       <p class="req">{downloadNote} · <a href={releases}>all releases</a></p>
-      <p class="req">Apple Silicon (M1 or newer) · macOS 15 or later · 16 GB of memory · about 8–11 GB of disk for models, downloaded on first start</p>
+      <p class="req">Apple Silicon (M1 or newer) · macOS 15 or later · 16 GB of memory · about 7–11 GB of disk for models, downloaded on first start</p>
       <p class="req">This is a beta. The agent can still pick the wrong image or model. <a href="/docs/known-issues/">Known issues</a></p>
     </div>
-    <div class="shot"><Image src={shot('chat-edit-versions')} widths={[800, 1200, 1600]} sizes="(max-width: 1120px) 100vw, 1088px" alt="A dMLX chat. The message 'make the boat red' turns a wooden rowboat on a misty mountain lake red. The result is Image 2, edited from image 1, with versions v1 and v2." loading="eager" /></div>
+    <div class="shot"><Image src={shot('chat-edit-versions')} widths={[800, 1200, 1600]} sizes="(max-width: 1120px) 100vw, 1088px" alt="A dMLX chat. The message 'make the boat red' turns a wooden rowboat on a misty mountain lake red. The result is Image 2, edited from image 1, with versions v1 and v2." loading="eager" fetchpriority="high" /></div>
   </div>
 </header>
 
@@ -107,7 +122,14 @@ const examples = [
     <div class="examples">
       {examples.map((e) => (
         <figure class="ex">
-          <Image src={shot(e.img)} widths={[400, 700]} sizes="(max-width: 700px) 100vw, 360px" alt={e.alt} />
+          {e.pair ? (
+            <div class="pair" role="img" aria-label={e.alt}>
+              <div><Image src={crop(`${e.img}-before`)} widths={[200, 400]} sizes="(max-width: 700px) 50vw, 180px" alt="" /><span>Before</span></div>
+              <div><Image src={crop(`${e.img}-after`)} widths={[200, 400]} sizes="(max-width: 700px) 50vw, 180px" alt="" /><span>After</span></div>
+            </div>
+          ) : (
+            <Image src={shot(e.img)} widths={[400, 700]} sizes="(max-width: 700px) 100vw, 360px" alt={e.alt} />
+          )}
           <figcaption><q>{e.q}</q><div class="meta"><span>{e.model}</span>{e.time && <b>{e.time}</b>}{e.extra && <span>{e.extra}</span>}</div></figcaption>
         </figure>
       ))}
@@ -158,7 +180,7 @@ const examples = [
     <div class="gauge" role="img" aria-label="Memory check: Qwen Image 2.1 needs 9.5 GB, but 9.2 GB is free without slowing the Mac, so the job does not start.">
       <div class="gauge-row"><span>Memory check · Qwen Image 2.1</span><span>M5 Mac, 24 GB</span></div>
       <div class="bar"><div class="used"></div><div class="free"></div><div class="need"></div></div>
-      <div class="legend"><span class="k-used">In use</span><span class="k-free">Free without slowing: 9.2 GB</span><span class="k-need">Model needs: 9.5 GB</span></div>
+      <div class="legend"><span class="k-used">In use</span><span class="k-free">Free without slowing: 9.2 GB</span><span class="k-need">Model needs: 9.5 GB</span><span class="k-short">Short by 0.3 GB</span></div>
       <p class="verdict">dMLX doesn't start the job. Choose <b>Retry</b>, or <b>Try anyway</b>, which uses the mode with the least memory and stops if the Mac slows down.</p>
       <Image src={shot('memory-check')} widths={[600, 1000]} sizes="(max-width: 860px) 100vw, 520px" alt="The app explains that the model needs about 9.5 GB but only 9.2 GB can be used without slowing down the Mac, with Retry and Try anyway." />
     </div>
@@ -240,7 +262,7 @@ const examples = [
     <div class="start">
       <div><span class="n">Step 1</span><h3>Download and install</h3><p>Open the downloaded <span class="mono">.dmg</span> and drag dMLX onto the Applications folder.</p></div>
       <div><span class="n">Step 2</span><h3>Open it the first time</h3><p>The beta is not notarized yet. Right-click the app, choose Open, then click Open in the dialog.</p></div>
-      <div><span class="n">Step 3</span><h3>Pick your models</h3><p>On first start, dMLX recommends an image model and an agent for your Mac and shows the download size (about 8–11 GB). After that download, it works offline, with no account to create.</p></div>
+      <div><span class="n">Step 3</span><h3>Pick your models</h3><p>On first start, dMLX recommends an image model and an agent for your Mac and shows the download size (about 7–11 GB). After that download, it works offline, with no account to create.</p></div>
     </div>
     <div class="btns end">
       <a class="btn primary" href={download.url}>Download dMLX free</a>
@@ -304,7 +326,7 @@ const examples = [
 /* Layout: one 1120px column; plain and tinted bands alternate. Colors are the "Lake" brand (docs/brand/README.md). */
 :root {
   --bg: #f4f6f8; --surface: #e9eef2; --raise: #fff; --line: #d3dbe2;
-  --fg: #18212b; --muted: #5a6875; --accent: #2f6fa3; --accent-ink: #fff; --logo: #2f6fa3; --hill: #7f97ab;
+  --fg: #18212b; --muted: #5a6875; --accent: #2f6fa3; --accent-fill: #2f6fa3; --accent-ink: #fff; --logo: #2f6fa3; --hill: #7f97ab;
   --code-bg: #141b22; --code-fg: #e4ecf2; --code-str: #8cc4f0; --code-com: #8a9aa8;
   --display: 'Bricolage Grotesque Variable', 'Avenir Next', system-ui, sans-serif;
   --body: 'IBM Plex Sans', -apple-system, 'Helvetica Neue', sans-serif;
@@ -313,11 +335,11 @@ const examples = [
 }
 @media (prefers-color-scheme: dark) { :root:not([data-theme='light']) {
   --bg: #11161c; --surface: #18202a; --raise: #1f2934; --line: #2c3845;
-  --fg: #e8eef3; --muted: #9aa9b6; --accent: #3a84cf; --accent-ink: #fff; --logo: #7db7e8; --hill: #4f6a82;
+  --fg: #e8eef3; --muted: #9aa9b6; --accent: #6aa6e0; --accent-fill: #2f6fa3; --accent-ink: #fff; --logo: #7db7e8; --hill: #4f6a82;
   --code-bg: #0b1015; color-scheme: dark } }
 :root[data-theme='dark'] {
   --bg: #11161c; --surface: #18202a; --raise: #1f2934; --line: #2c3845;
-  --fg: #e8eef3; --muted: #9aa9b6; --accent: #3a84cf; --accent-ink: #fff; --logo: #7db7e8; --hill: #4f6a82;
+  --fg: #e8eef3; --muted: #9aa9b6; --accent: #6aa6e0; --accent-fill: #2f6fa3; --accent-ink: #fff; --logo: #7db7e8; --hill: #4f6a82;
   --code-bg: #0b1015; color-scheme: dark }
 
 * { box-sizing: border-box }
@@ -348,14 +370,15 @@ nav .wrap { display: flex; align-items: center; gap: 28px; height: 60px }
 .brand .wm { font: 600 1.3rem/1 'Figtree', var(--body); letter-spacing: -0.02em }
 .links { display: flex; gap: 22px; font-size: .92rem; color: var(--muted); margin-left: auto }
 .links a { text-decoration: none } .links a:hover { color: var(--fg) }
-.nav-dl { margin-left: 18px; padding: 6px 14px; border-radius: 99px; background: var(--accent); color: var(--accent-ink); font-size: .88rem; font-weight: 500; text-decoration: none }
+.nav-dl { margin-left: 18px; padding: 6px 14px; border-radius: 99px; background: var(--accent-fill); color: var(--accent-ink); font-size: .88rem; font-weight: 500; text-decoration: none }
 .nav-dl:hover { filter: brightness(1.08) }
-@media (max-width: 760px) { .links { display: none } .nav-dl { margin-left: auto } }
+@media (max-width: 760px) { .links { gap: 16px } .links .wide-only { display: none } .nav-dl { margin-left: 14px } nav .wrap { gap: 14px } }
+@media (max-width: 440px) { .links .mid-only { display: none } }
 
 .btns { display: flex; flex-wrap: wrap; gap: 12px }
 .btns.end { margin-top: 44px }
 .btn { display: inline-flex; align-items: center; gap: 9px; font: 600 .98rem var(--body); text-decoration: none; padding: 13px 20px; border-radius: 10px; border: 1px solid var(--line); background: var(--raise); color: var(--fg) }
-.btn.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent) }
+.btn.primary { background: var(--accent-fill); color: var(--accent-ink); border-color: var(--accent-fill) }
 .btn svg { width: 18px; height: 18px; fill: currentColor }
 a:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 6px }
 @media (prefers-reduced-motion: no-preference) { .btn { transition: transform .15s } .btn:hover { transform: translateY(-1px) } }
@@ -398,7 +421,11 @@ a:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outlin
 .examples { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px }
 @media (max-width: 400px) { .examples { grid-template-columns: 1fr } }
 .ex { margin: 0; background: var(--raise); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; display: grid; grid-template-rows: auto 1fr }
-.ex img { width: 100%; aspect-ratio: 4/3; object-fit: cover; object-position: top }
+.ex > img { width: 100%; aspect-ratio: 4/3; object-fit: cover; object-position: top }
+.pair { display: grid; grid-template-columns: 1fr 1fr; gap: 2px; aspect-ratio: 4/3; background: var(--line) }
+.pair > div { position: relative; overflow: hidden }
+.pair img { width: 100%; height: 100%; object-fit: cover; display: block }
+.pair span { position: absolute; left: 8px; bottom: 8px; font: 500 .7rem var(--mono); letter-spacing: .06em; text-transform: uppercase; color: #fff; background: #000a; padding: 2px 7px; border-radius: 99px }
 .ex figcaption { padding: 16px 18px; display: grid; gap: 8px; align-content: start }
 .ex q { font-weight: 600 }
 .meta { display: flex; flex-wrap: wrap; gap: 6px 14px; font: .8rem var(--mono); color: var(--muted) }
@@ -419,7 +446,8 @@ a:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outlin
 @media (max-width: 860px) { .mem { grid-template-columns: 1fr } }
 .gauge { background: var(--raise); border: 1px solid var(--line); border-radius: 12px; padding: 22px; display: grid; gap: 14px; font-variant-numeric: tabular-nums }
 .gauge-row { display: flex; justify-content: space-between; font: .85rem var(--mono); color: var(--muted); gap: 12px; flex-wrap: wrap }
-.bar { position: relative; height: 34px; border-radius: 8px; background: var(--surface); overflow: hidden; border: 1px solid var(--line) }
+.bar { position: relative; height: 34px; margin-right: 6%; border-radius: 8px; background: var(--surface); border: 1px solid var(--line) }
+.bar .used { border-radius: 7px 0 0 7px }
 .bar .used { position: absolute; inset: 0 auto 0 0; width: 61.7%; background: color-mix(in srgb, var(--hill) 55%, var(--surface)) }
 .bar .free { position: absolute; inset: 0 auto 0 61.7%; width: 38.3%; background: repeating-linear-gradient(135deg, transparent 0 6px, color-mix(in srgb, var(--accent) 22%, transparent) 6px 12px) }
 .bar .need { position: absolute; top: -1px; bottom: -1px; left: 61.7%; width: 39.6%; border: 2px dashed var(--accent); border-radius: 0 8px 8px 0 }
@@ -428,6 +456,7 @@ a:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outlin
 .k-used::before { background: color-mix(in srgb, var(--hill) 55%, var(--surface)) }
 .k-free::before { background: color-mix(in srgb, var(--accent) 40%, transparent) }
 .k-need::before { background: var(--accent) }
+.k-short { color: var(--fg); font-weight: 600 } .k-short::before { display: none !important }
 .verdict { font-size: .95rem; border-left: 3px solid var(--accent); padding-left: 12px }
 .facts { display: grid; gap: 14px; margin-top: 24px }
 .facts div { display: grid; grid-template-columns: 22px 1fr; gap: 10px; color: var(--muted) }
@@ -455,8 +484,10 @@ pre .c { color: var(--code-com) } pre .s { color: var(--code-str) }
 .tbl .sub.foot { padding: 12px 20px 16px; border-top: 1px solid var(--line) }
 table { width: 100%; border-collapse: collapse; font-size: .9rem; font-variant-numeric: tabular-nums }
 th, td { text-align: left; padding: 11px 20px; border-top: 1px solid var(--line); white-space: nowrap; vertical-align: top }
+@media (max-width: 700px) { table { width: 100% } th, td { white-space: normal; padding: 10px 8px } th:first-child, td:first-child { padding-left: 16px } th:last-child, td:last-child { padding-right: 16px } }
 th { font: 500 .72rem var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--muted) }
 td.note { white-space: normal; color: var(--muted); min-width: 200px }
+@media (max-width: 700px) { td.note { min-width: 0 } }
 
 .start { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 20px }
 @media (max-width: 860px) { .start { grid-template-columns: 1fr } }

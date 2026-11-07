@@ -24,10 +24,16 @@ mark, change both.
 | Background | `#f4f6f8` | `#11161c` |
 | App icon tile | `#1d2a36` | `#1d2a36` |
 | App buttons and links (`Theme.accent`) | `#2f6fa3` | `#3a84cf` |
+| Website button fill (white text) | `#2f6fa3` | `#2f6fa3` |
+| Website links and accent text | `#2f6fa3` | `#6aa6e0` |
 
 In the app, the logo uses `Theme.logo` (the accent row above). Buttons and links use `Theme.accent`.
 In dark mode it is deeper than the logo blue so that white text on it stays readable. Put white text on
 the accent color, never black.
+
+The website splits the dark accent in two so both pass WCAG AA (4.5:1): buttons keep the deeper
+`#2f6fa3` under white text (5.4:1), and blue text uses the lighter `#6aa6e0` (4.6:1 or more on every dark
+surface the site uses).
 
 ## Wordmark
 

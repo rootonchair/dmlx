@@ -1,0 +1,16 @@
+---
+// /download/ sends the browser straight to the newest release's .dmg (read at build time; see src/lib/release.ts).
+import { latestDownload } from '../lib/release';
+const download = await latestDownload();
+---
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Download dMLX</title>
+  <meta name="robots" content="noindex">
+  <meta http-equiv="refresh" content={`0;url=${download.url}`}>
+  <link rel="canonical" href={download.url}>
+</head>
+<body><p>Downloading dMLX {download.tag}. If nothing happens, <a href={download.url}>download the .dmg</a>.</p></body>
+</html>

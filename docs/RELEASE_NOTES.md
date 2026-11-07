@@ -30,12 +30,13 @@ Apple Silicon, macOS 15+, 16 GB memory or more. Plus 2.8–6.0 GB disk for an ag
 
 ## Install
 
-Unzip, move to Applications, then right-click → Open the first time (beta builds are not notarized).
+Open the `.dmg` and drag dMLX onto the Applications folder (a `.zip` of the same app is also attached), then
+right-click → Open the first time (beta builds are not notarized).
 Download an agent model in Settings → Intelligence → Agent; without one, messages are routed by rules.
 
 ## Known issues
 
-See `docs/KNOWN_ISSUES.md`.
+See [Known issues](KNOWN_ISSUES.md).
 
 ---
 
@@ -77,5 +78,5 @@ Unzip, move to Applications, then right-click → Open the first time (beta buil
 
 ## Known issues
 
-See `docs/KNOWN_ISSUES.md`. Most important: the 16 GB target still needs validation on a real
+See [Known issues](KNOWN_ISSUES.md). Most important: the 16 GB target still needs validation on a real
 16 GB Mac — reports welcome.

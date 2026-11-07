@@ -25,7 +25,7 @@ function sections(md) {
 }
 
 /** Makes README Markdown work as a docs page: images, links, heading levels. */
-function adapt(md, { from = '' } = {}) {
+function adapt(md, { from = '', promote = true } = {}) {
   return md
     // <p align="center"><img …><br><sub>caption</sub></p> and plain <img …> become Markdown images.
     .replace(/<p align="center">\s*([\s\S]*?)<\/p>/g, '$1')
@@ -39,8 +39,11 @@ function adapt(md, { from = '' } = {}) {
       if (p === 'docs/KNOWN_ISSUES.md') return '](/docs/known-issues/)';
       return `](${repo}${p})`;
     })
-    // Each page has its own title, so "###" sections become "##".
-    .replace(/^### /gm, '## ');
+    // The website's own download link stays on the site.
+    .replace(/\]\(https:\/\/dmlx\.vercel\.app(\/[^)]*)?\)/g, (_, path) => `](${path || '/'})`)
+    // A page made from one README section has its own title, so its "###" sections become "##". Pages that
+    // combine sections under "##" headings keep "###" (promote: false).
+    .replace(/^### /gm, promote ? '## ' : '### ');
 }
 
 function page(slug, title, description, body) {
@@ -48,9 +51,9 @@ function page(slug, title, description, body) {
 }
 
 const readme = sections(readFileSync(join(root, 'README.md'), 'utf8'));
-const get = (name) => {
+const get = (name, options) => {
   if (!readme.has(name)) throw new Error(`README.md has no "## ${name}" section`);
-  return adapt(readme.get(name));
+  return adapt(readme.get(name), options);
 };
 const status = (readme.get('_intro').match(/> \*\*Status:[\s\S]*?(?=\n\n|\n<p|$)/) || [''])[0];
 
@@ -60,7 +63,7 @@ mkdirSync(out, { recursive: true });
 page('getting-started', 'Getting started', 'Requirements and how to install dMLX.',
   `${adapt(status)}\n\n## Requirements\n\n${get('Requirements')}\n\n## Install\n\n${get('Install')}`);
 page('using-dmlx', 'Using dMLX', 'Make and edit images with chat, with examples and a tour of the app.',
-  `${get('How to use dMLX')}\n\n## What you can make\n\n${get('What you can make')}\n\n## Tour of the app\n\n${get('Tour of the app')}`);
+  `${get('How to use dMLX')}\n\n## What you can make\n\n${get('What you can make', { promote: false })}\n\n## Tour of the app\n\n${get('Tour of the app', { promote: false })}`);
 page('crop-and-draw', 'Crop / Draw', 'Show the part of an image to change, then say what to do.', get('Edit with Crop / Draw'));
 page('agent', 'The agent', 'How the agent on your Mac plans each message.', get('The agent'));
 page('models', 'Models', 'The image models dMLX runs, and how to add more.', get('Image models'));
@@ -73,7 +76,12 @@ for (const [file, slug, title, description] of [
   ['KNOWN_ISSUES.md', 'known-issues', 'Known issues', 'Problems we know about in this release.'],
   ['RELEASE_NOTES.md', 'release-notes', 'Release notes', 'What changed in each release.'],
 ]) {
-  const md = readFileSync(join(root, 'docs', file), 'utf8').replace(/^# .+\n/, '');
-  page(slug, title, description, adapt(md, { from: 'docs/' }).replace(/\]\(https:\/\/github\.com\/rootonchair\/dmlx\/blob\/main\/docs\/\.\.\//g, `](${repo}`));
+  let md = readFileSync(join(root, 'docs', file), 'utf8');
+  // Release notes hold one "# dMLX vX" per release: those become "##" and their sections "###", so every
+  // version keeps its heading. Other files have one "#" title, which the page title replaces.
+  md = slug === 'release-notes'
+    ? md.replace(/^## /gm, '### ').replace(/^# /gm, '## ')
+    : md.replace(/^# .+\n/, '');
+  page(slug, title, description, adapt(md, { from: 'docs/', promote: false }).replace(/\]\(https:\/\/github\.com\/rootonchair\/dmlx\/blob\/main\/docs\/\.\.\//g, `](${repo}`));
 }
 console.log(`sync-docs: wrote ${out}`);

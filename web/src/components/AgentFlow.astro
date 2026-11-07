@@ -36,7 +36,7 @@ const job: Stage[] = [
       ['Images', 'exist in the chat; an edit has one; 3 at most'],
       ['Models', 'it wasn’t offered are ignored'],
       ['Retry', 'a plan that fails is sent back once, with the reason'],
-      ['Fallback', 'then simple rules take over'],
+      ['Still unusable', 'it asks you instead of guessing'],
     ], eg: 'image 1 exists · edit is possible',
   },
   {
@@ -57,11 +57,11 @@ const lanes = [
   <div class="lanes">
     {lanes.map((lane) => (
       <div class:list={['lane', lane.cls]} role="group" aria-label={lane.name}>
-        <h4 class="lane-h"><b>{lane.name}</b><span>{lane.note}</span></h4>
+        <p class="lane-h"><b>{lane.name}</b><span>{lane.note}</span></p>
         <ol class="stages" style={`--cols:${lane.stages.length}`}>
           {lane.stages.map((s) => (
             <li class="stage" data-i={s.n - 1}>
-              <div class="st-h"><span class="num">{s.n}</span><h5>{s.title}</h5></div>
+              <div class="st-h"><span class="num">{s.n}</span><h3>{s.title}</h3></div>
               {s.tag && <em class="tag">{s.tag}</em>}
               <dl>{s.items.map(([k, v]) => <div><dt>{k}</dt><dd>{v}</dd></div>)}</dl>
               <p class="eg"><span>e.g.</span>{s.eg}</p>
@@ -76,7 +76,7 @@ const lanes = [
 
 <style>
   .flow { margin: 72px 0 0; display: grid; gap: 16px }
-  .lanes { display: grid; grid-template-columns: 3fr 2fr; gap: 28px }
+  .lanes { display: grid; grid-template-columns: 3fr 2fr; gap: 28px 28px }
   .lane { display: grid; grid-template-rows: auto 1fr }
   .lane-h { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; margin: 0 0 12px; padding-top: 10px; border-top: 2px solid var(--line); font: 500 .78rem var(--mono); letter-spacing: .06em; text-transform: uppercase; color: var(--muted) }
   .lane-h b { color: var(--fg); font-weight: 600 }
@@ -90,9 +90,9 @@ const lanes = [
     clip-path: polygon(0 40%, 62% 40%, 62% 0, 100% 50%, 62% 100%, 62% 60%, 0 60%) }
   .lane-job .stage:last-child::after { display: none }
   .st-h { display: flex; align-items: center; gap: 8px; flex-wrap: wrap }
-  .num { display: grid; place-items: center; width: 22px; height: 22px; border-radius: 50%; background: var(--accent); color: var(--accent-ink); font: 600 .75rem var(--mono); flex: none }
+  .num { display: grid; place-items: center; width: 22px; height: 22px; border-radius: 50%; background: var(--accent-fill, var(--accent)); color: var(--accent-ink); font: 600 .75rem var(--mono); flex: none }
   .lane-job .num { background: var(--fg); color: var(--bg) }
-  h5 { flex: 1 1 0; min-width: 0; margin: 0; font: 600 1rem/1.3 var(--body); color: var(--fg) }
+  h3 { flex: 1 1 0; min-width: 0; margin: 0; font: 600 1rem/1.3 var(--body); color: var(--fg) }
   .tag { align-self: flex-start; margin: -6px 0 0 30px;  font: normal .7rem var(--mono); color: var(--muted); border: 1px solid var(--line); border-radius: 99px; padding: 1px 7px }
   dl { margin: 0; display: grid; gap: 8px; align-content: start }
   dl div { font-size: .86rem; line-height: 1.4; color: var(--muted) }
@@ -105,8 +105,9 @@ const lanes = [
 
   /* Narrower: each lane gets the full width. */
   @media (max-width: 1060px) {
-    .lanes { grid-template-columns: 1fr }
-    .lane-agent .stage:last-child::after { top: auto; bottom: -50px; right: auto; left: 50%; transform: translateX(-50%) rotate(90deg) }
+    .lanes { grid-template-columns: 1fr; row-gap: 44px }
+    /* From the agent lane down to the image job: under the last agent stage, in the gap between the lanes. */
+    .lane-agent .stage:last-child::after { top: auto; bottom: -31px; right: auto; left: 50%; transform: translateX(-50%) rotate(90deg) }
   }
   /* Phones: one column, arrows point down. */
   @media (max-width: 700px) {
