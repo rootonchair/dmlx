@@ -191,10 +191,6 @@ public final class EngineClient: @unchecked Sendable {
         return meta.parameters?.layout ?? []
     }
 
-    public func testRouter() async throws -> RouterTestResult {
-        try await send(try request("admin/intelligence/router/test", method: "POST", json: [:]), as: RouterTestResult.self)
-    }
-
     /// For an edit, `imageIds` lets the local prompt assistant see the images being edited.
     public func compilePrompt(prompt: String, operation: String, model: String?, imageIds: [String] = []) async throws -> CompiledPromptResponse {
         var body: [String: Any] = ["prompt": prompt, "operation": operation]

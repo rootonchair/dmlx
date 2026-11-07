@@ -19,10 +19,8 @@ from typing import Callable
 from dmlx import catalog, downloads, paths, sysmem
 from dmlx.adapters.base import GenRequest, JobAborted, NonFinite
 from dmlx.intelligence.base import IntelligenceError
-from dmlx.intelligence.openai_compatible import OpenAICompatibleProvider
-from dmlx.intelligence.local_llm import LocalLLMDecisionProvider
 from dmlx.memory import GB, InsufficientMemory, JobGuard, MemoryManager
-from dmlx.prompting import OpenAICompatiblePromptProvider, agent, formats, local_vlm, remote_agent
+from dmlx.prompting import agent, formats, local_vlm, remote_agent
 from dmlx.registry import ModelSpec, Registry
 from dmlx.results import ResultStore
 from dmlx.routing import WorkflowRouter
@@ -33,62 +31,6 @@ log = logging.getLogger("dmlx.engine")
 
 MAX_SIDE = 2048
 MIN_SIDE = 256
-
-
-def _router_from_environment() -> WorkflowRouter:
-    """Build the optional sidecar router without coupling it to diffusion models.
-
-    A partial or invalid configuration deliberately leaves routing manual. This
-    keeps generation available even when an external intelligence service is
-    unavailable or misconfigured.
-    """
-    kind = os.environ.get("DMLX_ROUTER_PROVIDER", "openai-compatible").strip().lower()
-    if kind in {"disabled", "manual", "none"}:
-        return WorkflowRouter()
-    if kind in {"local-llm", "mlx-lm", "qwen"}:
-        model_path = os.environ.get("DMLX_LOCAL_LLM_MODEL_PATH", "").strip()
-        revision = os.environ.get("DMLX_LOCAL_LLM_REVISION", "").strip()
-        if not model_path or not revision:
-            return WorkflowRouter()
-        try:
-            return WorkflowRouter(LocalLLMDecisionProvider(
-                model_path, revision=revision,
-                max_tokens=int(os.environ.get("DMLX_LOCAL_LLM_MAX_TOKENS", "192")),
-            ))
-        except (TypeError, ValueError) as exc:
-            log.warning("Ignoring invalid local LLM router configuration: %s", exc)
-            return WorkflowRouter()
-    if kind not in {"openai", "openai-compatible"}:
-        log.warning("Ignoring unknown semantic router provider: %s", kind)
-        return WorkflowRouter()
-    base_url = os.environ.get("DMLX_ROUTER_BASE_URL", "").strip()
-    model = os.environ.get("DMLX_ROUTER_MODEL", "").strip()
-    if not base_url or not model:
-        return WorkflowRouter()
-    try:
-        timeout = float(os.environ.get("DMLX_ROUTER_TIMEOUT", "15"))
-        provider = OpenAICompatibleProvider(
-            base_url, model, os.environ.get("DMLX_ROUTER_API_KEY") or None, timeout=max(0.1, timeout)
-        )
-        return WorkflowRouter(provider)
-    except (TypeError, ValueError) as exc:
-        log.warning("Ignoring invalid semantic router configuration: %s", exc)
-        return WorkflowRouter()
-
-
-def _prompt_provider_from_environment():
-    base_url = os.environ.get("DMLX_PROMPT_BASE_URL", "").strip()
-    model = os.environ.get("DMLX_PROMPT_MODEL", "").strip()
-    if not base_url or not model:
-        return None
-    try:
-        timeout = max(0.1, float(os.environ.get("DMLX_PROMPT_TIMEOUT", "30")))
-        return OpenAICompatiblePromptProvider(
-            base_url, model, os.environ.get("DMLX_PROMPT_API_KEY") or None, timeout=timeout
-        )
-    except (TypeError, ValueError) as exc:
-        log.warning("Ignoring invalid prompt provider configuration: %s", exc)
-        return None
 
 
 def selected_assistant_model() -> str:
@@ -214,15 +156,14 @@ def _blank(image) -> bool:
 
 class Engine:
     def __init__(
-        self, registry: Registry | None = None, results: ResultStore | None = None, adapter_factory=None, router=None
+        self, registry: Registry | None = None, results: ResultStore | None = None, adapter_factory=None
     ):
         self.registry = registry or Registry.load_builtin(extra_dir=paths.models_dir())
         self.results = results or ResultStore()
         self.memory = MemoryManager()
         self.downloader = downloads.Downloader()
         self._adapter_factory = adapter_factory or _default_adapter_factory
-        self.router = router or _router_from_environment()
-        self.prompt_provider = _prompt_provider_from_environment()
+        self.router = WorkflowRouter()
         self.prompt_assistant = _prompt_assistant_from_disk()
         self._adapters: dict[str, object] = {}
         self._jobs: dict[str, Job] = {}
@@ -407,8 +348,8 @@ class Engine:
             if planned is not None:
                 return self._layout_model(planned, layout, chosen, explicit_count, has_current)
             if note in ("rejected", "failed"):
-                # The agent was asked and has no usable plan: ask the user rather than let the rules or the
-                # router guess (a greeting became an edit of the latest image).
+                # The agent was asked and has no usable plan: ask the user rather than let the rules guess
+                # (a greeting became an edit of the latest image).
                 return {"intent": "ambiguous", "confidence": 0.0, "probabilities": {name: 0.0 for name in candidates},
                         "provider": "agent:unusable", "planning": note,
                         "ask": ("I couldn't work out what to do with that. Should I make a new image, or change "
@@ -435,62 +376,15 @@ class Engine:
         return {**decision, "model": best}
 
     def _route_without_agent(self, safe_state: dict, candidates: list[str]) -> dict:
-        deterministic = self.router.deterministic_decision(safe_state, candidates)
-        if deterministic is not None:
-            return deterministic.as_dict()
-        provider = self.router.provider
-        if provider is not None and getattr(provider, "uses_accelerator", False):
-            if not self._accelerator_lock.acquire(blocking=False):
-                return {
-                    "intent": "ambiguous", "confidence": 0.0,
-                    "probabilities": {name: 0.0 for name in candidates},
-                    "provider": f"{provider.name}:busy",
-                }
-            try:
-                return self.router.decide_with_provider(safe_state, candidates).as_dict()
-            finally:
-                self._accelerator_lock.release()
-        return self.router.decide_with_provider(safe_state, candidates).as_dict()
-
-    def test_router(self) -> dict:
-        provider = self.router.provider
-        if provider is None:
-            raise RequestError("router_not_configured", "No semantic routing provider is configured.", 409)
-        started = time.monotonic()
-        acquired = False
-        try:
-            if getattr(provider, "uses_accelerator", False):
-                acquired = self._accelerator_lock.acquire(blocking=False)
-                if not acquired:
-                    raise RequestError("router_busy", "The accelerator is currently running a generation job.", 409)
-            decision = provider.decide(
-                {"message": "Create a new image of a blue circle.", "current_result_id": "test-current"},
-                {
-                    "image.generate": "Create a new image independent of the current result.",
-                    "image.edit": "Change the current image.",
-                },
-            )
-        except RequestError:
-            raise
-        except Exception as exc:
-            raise RequestError("router_unavailable", f"Routing provider test failed: {exc}", 502) from exc
-        finally:
-            if acquired:
-                self._accelerator_lock.release()
-        return {
-            "ok": True,
-            "provider": provider.name,
-            "intent": decision.intent,
-            "latency_ms": round((time.monotonic() - started) * 1_000, 1),
-        }
+        """No agent: the fixed rules decide, and the user is asked when they can't tell."""
+        return self.router.decide(safe_state, candidates).as_dict()
 
     def compile_prompt(self, body: dict) -> dict:
         text = str(body.get("prompt", "")).strip()
         if not text or len(text) > 8_000:
             raise RequestError("invalid_prompt", "Prompt must contain 1 to 8,000 characters.", 422)
-        provider = self.enhancer()
-        if provider is None:
-            raise RequestError("prompt_provider_not_configured", "No prompt enhancement provider is configured.", 409)
+        if self.prompt_assistant is None:
+            raise RequestError("agent_not_available", "Rewriting a prompt needs the agent.", 409)
         operation = str(body.get("operation", "image.generate"))
         model_id = body.get("model")
         spec = self._spec(str(model_id)) if model_id else self.registry.default_for_operation(
@@ -498,20 +392,14 @@ class Engine:
         capability = spec.capabilities.get(operation) if spec else None
         if capability is None:
             raise RequestError("unsupported_operation", f"No selected model supports {operation}.", 422)
-        if provider is self.prompt_assistant:
-            images = []
-            for rid in body.get("image_ids") or []:
-                try:
-                    images.append(self.results.path(str(rid)))
-                except KeyError:
-                    raise RequestError("image_not_found", f"No image with id {rid}.", 404) from None
-            compiled = self._assist(text, operation=operation, images=images if operation == "image.edit" else [],
-                                    supports_negative=capability.negative_prompt)
-        else:
+        images = []
+        for rid in body.get("image_ids") or []:
             try:
-                compiled = provider.enhance(text, supports_negative=capability.negative_prompt)
-            except Exception as exc:
-                raise RequestError("prompt_provider_unavailable", f"Prompt enhancement failed: {exc}", 502) from exc
+                images.append(self.results.path(str(rid)))
+            except KeyError:
+                raise RequestError("image_not_found", f"No image with id {rid}.", 404) from None
+        compiled = self._assist(text, operation=operation, images=images if operation == "image.edit" else [],
+                                supports_negative=capability.negative_prompt)
         return {
             "user": text,
             "positive": compiled.positive,
@@ -774,21 +662,6 @@ class Engine:
         capability = spec.capabilities.get(step.operation)
         if capability is None:
             raise RequestError("unsupported_operation", f"{spec.name} cannot perform {step.operation}.", 422)
-        if step.prompt.enhancement_mode == "auto" and self.prompt_assistant is None:
-            provider = self.prompt_provider
-            if provider is None:
-                raise RequestError(
-                    "prompt_provider_not_configured", "Automatic prompt enhancement is enabled but no provider is configured.", 409
-                )
-            try:
-                compiled = provider.enhance(step.prompt.user, supports_negative=capability.negative_prompt)
-            except Exception as exc:
-                raise RequestError("prompt_provider_unavailable", f"Prompt enhancement failed: {exc}", 502) from exc
-            prompt = replace(
-                step.prompt, positive=compiled.positive, negative=compiled.negative, compiler=compiled.compiler
-            )
-            step = replace(step, prompt=prompt)
-            plan = replace(plan, steps=(step,))
         if step.prompt.negative and not capability.negative_prompt:
             raise RequestError("negative_prompt_unsupported", f"{spec.name} does not support negative prompts.", 422)
         if any(item.media_type != "image" or item.role in ("mask", "sketch") for item in step.inputs):
@@ -884,8 +757,6 @@ class Engine:
                 raise RequestError("model_not_downloaded", f"{spec.name} is not downloaded yet.", 409)
             if step.prompt.negative and not capability.negative_prompt:
                 raise RequestError("negative_prompt_unsupported", f"{spec.name} does not support negative prompts.", 422)
-            if step.prompt.enhancement_mode == "auto" and self.enhancer() is None:
-                raise RequestError("prompt_provider_not_configured", "Automatic prompt enhancement has no provider.", 409)
             if int(step.parameters.get("n", 1)) != 1:
                 raise RequestError("multi_output_step", "Multi-step workflows currently require n=1 per step.", 422)
             if any(item.media_type != "image" or item.role in ("mask", "sketch") for item in step.inputs):
@@ -1015,9 +886,6 @@ class Engine:
                 continue
             try:
                 with self._accelerator_lock:
-                    provider = self.router.provider
-                    if provider is not None and getattr(provider, "uses_accelerator", False):
-                        getattr(provider, "unload", lambda: None)()
                     if self.prompt_assistant is not None:
                         self.prompt_assistant.unload()
                     if job.workflow_plan is not None and len(job.workflow_plan.steps) > 1:
@@ -1246,10 +1114,6 @@ class Engine:
         job.emit("done", {"result_ids": job.result_ids, "report": job.report})
 
     # -- prompt assistant ---------------------------------------------------------------
-    def enhancer(self):
-        """The local, image-aware assistant when installed; otherwise a configured text-only provider."""
-        return self.prompt_assistant or self.prompt_provider
-
     def _model_choices(self, candidates: list[str], attached: int, has_current: bool,
                        layout: bool = False) -> dict[str, list[tuple[str, str]]]:
         """For each workflow, the downloaded image models that can run it here: (id, what the agent should
@@ -1271,7 +1135,7 @@ class Engine:
 
     def _plan(self, state: dict, candidates: list[str], wait: bool = False,
               models: dict[str, list[tuple[str, str]]] | None = None) -> tuple[dict | None, str | None]:
-        """The agent's decision for a sent message, or None to fall back to rules and the router, with a
+        """The agent's decision for a sent message, or None to fall back to the rules, with a
         note when it did not plan. While an image is being made it plans beside the job when both fit in
         memory, waits for the job when `wait` is set, and otherwise is skipped."""
         started = time.monotonic()
@@ -1297,7 +1161,7 @@ class Engine:
             result = agent.plan(self.prompt_assistant, state, workflows, image_path=self.results.path,
                                 models=models or None, free_gb=free_gb)
         except (IntelligenceError, KeyError, OSError) as exc:
-            log.warning("agent planning failed, using the router: %s", exc)
+            log.warning("agent planning failed: %s", exc)
             return None, "failed"
         finally:
             if not beside:
@@ -1305,7 +1169,7 @@ class Engine:
             if acquired:
                 self._accelerator_lock.release()
         if result is None:
-            log.warning("agent answer failed the checks; using the router")
+            log.warning("agent answer failed the checks")
             return None, "rejected"
         mode = "beside_job" if beside else "waited" if waited else None
         decision = {**result.as_decision(), "latency_ms": round((time.monotonic() - started) * 1_000, 1)}
@@ -1353,7 +1217,7 @@ class Engine:
 
     def _rewrite(self, job: Job, spec: ModelSpec) -> tuple[GenRequest, dict]:
         """The prompt the model gets: the plain rewrite, then, for a model with a `prompt_format`, its
-        structured caption. Every path (chat, API, Edit Prompt, router fallback) goes through here."""
+        structured caption. Every path (chat, API, Edit Prompt) goes through here."""
         req, info = self._plain_rewrite(job, spec)
         step = ((job.workflow or {}).get("steps") or [{}])[0]
         operation = step.get("operation") or ("image.edit" if job.task == "edit" else "image.generate")
@@ -1578,12 +1442,6 @@ class Engine:
         return self.prompt_assistant_status()
 
     def status(self) -> dict:
-        provider = self.router.provider
-        router_status = (
-            provider.status() if provider is not None and hasattr(provider, "status")
-            else {"kind": "remote" if provider is not None else "manual",
-                  "name": getattr(provider, "name", "manual"), "resident": False}
-        )
         return {
             "uptime_s": round(time.time() - self.started, 1),
             "queue": self.queue_depth(),
@@ -1591,7 +1449,6 @@ class Engine:
             "ram_tier_gb": round(self.memory.total / GB),
             "emulated": bool(__import__("os").environ.get("DMLX_EMULATE_TOTAL_GB")),
             "real_total_gb": round(sysmem._sysctl_int("hw.memsize") / GB),
-            "intelligence": {"router": router_status},
         }
 
     def _checkpoint_workflow(self, job: Job) -> None:

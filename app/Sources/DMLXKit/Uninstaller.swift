@@ -35,8 +35,7 @@ public enum Uninstaller {
     /// Deletes the folders, the settings and the API keys in the Keychain. Folders that are already gone
     /// are not an error; the first other failure is thrown after the rest are deleted.
     public static func removeData(bundleID: String, folders: [URL]) throws {
-        try? RouterSecretStore.save("")  // an empty key deletes the Keychain item
-        try? PromptSecretStore.save("")
+        LegacyIntelligenceSettings.clear(deleteCheckpoint: false)  // the checkpoint is in the data folder
         UserDefaults.standard.removePersistentDomain(forName: bundleID)
         try removeFolders(folders)
     }

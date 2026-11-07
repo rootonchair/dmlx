@@ -289,7 +289,7 @@ extension AppModel {
     }
 
     /// At engine start (and restart): run the agent where the user chose. A failure here is not shown;
-    /// the first planned message reports it.
+    /// the next sent message connects again and reports it (AppModel.send).
     func restoreAgentChoice() async {
         let choice = AgentChoice.load()
         agentChoice = choice

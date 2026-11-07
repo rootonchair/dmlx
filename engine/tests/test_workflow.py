@@ -149,16 +149,8 @@ def test_workflow_validation_is_explicit(make_engine, client_for):
     assert parsed_negative.json()["error"]["code"] == "negative_prompt_unsupported"
 
 
-def test_workflow_auto_prompt_enhancement_is_persisted(make_engine, client_for):
-    class Provider:
-        name = "test-compiler@1"
-
-        def enhance(self, text, *, supports_negative):
-            return CompiledPrompt("Detailed " + text, None, self.name)
-
-    engine = make_engine()
-    engine.prompt_provider = Provider()
-    response = client_for(engine).post(
+def test_auto_prompt_enhancement_without_the_agent_keeps_the_users_words(make_engine, client_for):
+    response = client_for(make_engine()).post(
         "/v1/workflows",
         json={
             "steps": [{
@@ -171,8 +163,7 @@ def test_workflow_auto_prompt_enhancement_is_persisted(make_engine, client_for):
     )
     assert response.status_code == 200, response.text
     prompt = response.json()["dmlx"]["workflow"]["steps"][0]["prompt"]
-    assert prompt["positive"] == "Detailed a fox"
-    assert prompt["compiler"] == "test-compiler@1"
+    assert prompt["positive"] == "a fox" and prompt["compiler"] == "passthrough@1"
 
 
 def test_supported_negative_prompt_reaches_request_and_metadata(make_engine, client_for):

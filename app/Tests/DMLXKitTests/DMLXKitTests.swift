@@ -202,22 +202,17 @@ final class WorkflowTests: XCTestCase {
         XCTAssertEqual(decoded.steps[0].inputs.map(\.id), ["img_1", "img_2", "img_3"])
     }
 
-    func testRouterSettingsRequireTLSAwayFromLoopback() throws {
-        XCTAssertNoThrow(try RouterProviderSettings(baseURL: "http://localhost:1234/v1", model: "router").validate())
-        XCTAssertThrowsError(try RouterProviderSettings(baseURL: "http://example.com/v1", model: "router").validate())
-        XCTAssertNoThrow(try RouterProviderSettings(baseURL: "https://example.com/v1", model: "router").validate())
-        XCTAssertThrowsError(try RouterProviderSettings(baseURL: "https://example.com/v1", model: "").validate())
-        let local = FileManager.default.temporaryDirectory.appendingPathComponent("local-llm-test-\(UUID())")
-        try FileManager.default.createDirectory(at: local, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: local) }
-        XCTAssertNoThrow(try RouterProviderSettings(
-            kind: .localLLM, localModelPath: local.path, localRevision: "pinned-revision").validate())
-        XCTAssertThrowsError(try RouterProviderSettings(
-            kind: .localLLM, localModelPath: local.path, localRevision: "").validate())
+    func testClearsTheRemovedRouterAndPromptSettings() throws {
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: "legacy-\(UUID())"))
+        defaults.set("local-llm", forKey: "routerProvider.kind")
+        defaults.set("auto", forKey: "promptEnhancementMode")
+        defaults.set("keep", forKey: "agentChoice")
+        LegacyIntelligenceSettings.clear(defaults: defaults, deleteCheckpoint: false)
+        XCTAssertNil(defaults.object(forKey: "routerProvider.kind"))
+        XCTAssertNil(defaults.object(forKey: "promptEnhancementMode"))
+        XCTAssertEqual(defaults.string(forKey: "agentChoice"), "keep")
     }
-}
 
-final class EditorTests: XCTestCase {
     func testEditorGeometryIsInvariantAcrossDisplayAndRetinaScales() {
         let small = EditorGeometry.fittedRect(imageWidth: 400, imageHeight: 200, in: CGSize(width: 300, height: 300))
         let large = EditorGeometry.fittedRect(imageWidth: 400, imageHeight: 200, in: CGSize(width: 600, height: 600))

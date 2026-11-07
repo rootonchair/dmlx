@@ -58,9 +58,6 @@ final class AppModel {
     var aspect: Aspect = .square
     var routeDecision: WorkflowDecision?
     var isResolvingRoute = false
-    var promptEnhancementMode: PromptEnhancementMode = AppModel.savedPromptMode() {
-        didSet { UserDefaults.standard.set(promptEnhancementMode.rawValue, forKey: "promptEnhancementMode") }
-    }
     var promptSuggestion: CompiledPromptResponse?
     var promptSuggestionApplied = false
     var isEnhancingPrompt = false
@@ -101,11 +98,6 @@ final class AppModel {
         return "auto"
     }
 
-    private static func savedPromptMode() -> PromptEnhancementMode {
-        UserDefaults.standard.string(forKey: "promptEnhancementMode")
-            .flatMap(PromptEnhancementMode.init(rawValue:)) ?? .off
-    }
-
     // UI
     var toast: String?
     var showOnboarding = false
@@ -139,6 +131,8 @@ final class AppModel {
     var promptAssistantInstalled = false
     /// Where the agent runs (AgentServiceForm.swift); restored when the engine starts.
     var agentChoice = AgentChoice.load()
+    /// Set while a send reconnects the agent's service, so a failed reconnect doesn't retry forever.
+    private var reconnectingAgent = false
     private let editorStore = EditorDocumentStore.default()
     let images = ImageCache()
 
@@ -188,6 +182,8 @@ final class AppModel {
             case .stopped: break
             }
         }
+        // The removed router and prompt-enhancement settings: their keys, Keychain items and 2.1 GB checkpoint.
+        _Concurrency.Task.detached(priority: .background) { LegacyIntelligenceSettings.clear() }
         engine.start()
         if let first = sessions.first {
             select(first.id)
@@ -639,7 +635,8 @@ final class AppModel {
         }
         guard routeDecisionKey == routingKey(message: message), let decision = routeDecision else {
             return isResolvingRoute ? "Determining workflow…"
-                : promptAssistantInstalled ? "Planned by the agent when you send" : "Ready to route"
+                : promptAssistantInstalled ? "Planned by the agent when you send"
+                : agentChoice.service != .local ? "The agent isn't connected" : "New image or edit: asked when you send"
         }
         switch decision.intent {
         case "image.generate":
@@ -658,8 +655,8 @@ final class AppModel {
         }
     }
 
-    /// Refreshes the non-binding route hint. Structural cases resolve locally; only
-    /// a continuation with a current image needs the configured decision provider.
+    /// Refreshes the non-binding route hint. Only structural cases (no current image, attachments) resolve
+    /// before sending; the rest is the agent's to plan when the message is sent.
     func scheduleRoutePreview() {
         // While a sent message is held (the agent's question, or a workflow to choose), what the user types
         // is the answer or the next message, and must not drop the held one.
@@ -687,53 +684,11 @@ final class AppModel {
             isResolvingRoute = false
             return
         }
-        // With the agent, a sent message is planned by it; a preview would only spend a router call.
-        if promptAssistantInstalled {
-            routeDecision = nil
-            routeDecisionKey = nil
-            routeRequest = nil
-            isResolvingRoute = false
-            return
-        }
+        // Anything the rules can't tell is planned by the agent when sent, or asked about without it.
         routeDecision = nil
         routeDecisionKey = nil
-        isResolvingRoute = true
-        let currentResultId = latestImageTurn?.current?.resultId
-        let currentPrompt = latestImageTurn?.current?.prompt
-        let attachmentIds = attachments.map(\.id)
-        let request = RouteRequestIdentity(context: routingContext(message: message))
-        routeRequest = request
-        routeTask = _Concurrency.Task { [weak self] in
-            do {
-                try await _Concurrency.Task.sleep(for: .milliseconds(300))
-                guard let self, !_Concurrency.Task.isCancelled,
-                      self.routeRequest?.accepts(
-                        context: self.routingContext(message: message), requestID: request.id) == true else { return }
-                guard let client = self.client else {
-                    self.routeDecision = Self.ambiguousDecision(provider: "unavailable")
-                    self.routeDecisionKey = key
-                    self.isResolvingRoute = false
-                    return
-                }
-                let decision = try await client.routeWorkflow(
-                    message: message, currentResultId: currentResultId,
-                    currentPrompt: currentPrompt, attachments: attachmentIds,
-                    history: self.routingHistory, selectedModels: self.selectedModels)
-                guard !_Concurrency.Task.isCancelled,
-                      self.routeRequest?.accepts(
-                        context: self.routingContext(message: message), requestID: request.id) == true else { return }
-                self.routeDecision = decision
-                self.routeDecisionKey = key
-                self.isResolvingRoute = false
-            } catch is CancellationError {
-            } catch {
-                guard let self, self.routeRequest?.accepts(
-                    context: self.routingContext(message: message), requestID: request.id) == true else { return }
-                self.routeDecision = Self.ambiguousDecision(provider: "unavailable")
-                self.routeDecisionKey = key
-                self.isResolvingRoute = false
-            }
-        }
+        routeRequest = nil
+        isResolvingRoute = false
     }
 
     private func routingKey(message: String) -> String {
@@ -836,6 +791,12 @@ final class AppModel {
             latestResultId: latestImageTurn?.current?.resultId, latestTurnId: latestImageTurn?.id,
             promptSpec: selectedPromptSpec(for: message), layout: layoutForNextMessage())
         let key = routingKey(message: message)
+        // An agent on a service is chosen but not connected (the engine restarted and reconnecting failed,
+        // or hasn't finished): connect now rather than let the rules decide without saying so.
+        if !promptAssistantInstalled, agentChoice.service != .local, !reconnectingAgent {
+            reconnectAgent(then: message, keepDraft: text != nil)
+            return
+        }
         // With the agent, every sent message is planned by it; the rules only check its answer (in the engine).
         let planned = promptAssistantInstalled
         if !planned, let decision = structuralDecision() {
@@ -880,6 +841,35 @@ final class AppModel {
                 self.planningMessage = nil
                 self.giveBack(message, because: "Could not plan it: \(error.localizedDescription)")
             }
+        }
+    }
+
+    /// Connects the chosen agent service again, then sends the message; if it can't, the message goes back
+    /// with the reason instead of being decided by the rules.
+    private func reconnectAgent(then message: String, keepDraft: Bool) {  // keepDraft: sent with a text, not the box
+        let choice = agentChoice
+        planningMessage = message
+        if !keepDraft { draft = "" }
+        reconnectingAgent = true
+        planTask = _Concurrency.Task { [weak self] in
+            guard let self else { return }
+            var problem: String?
+            do {
+                try await self.connectAgent(choice, apiKey: AgentKeyStore.load(choice.service), test: true)
+            } catch {
+                problem = error.localizedDescription
+            }
+            guard !_Concurrency.Task.isCancelled else { self.reconnectingAgent = false; return }
+            self.planningMessage = nil
+            if problem == nil && self.promptAssistantInstalled {
+                self.send(message)
+            } else {
+                self.giveBack(message, because: """
+                    The agent (\(choice.service.title)) isn't connected\(problem.map { ": \($0)" } ?? ""). \
+                    Check Settings → Intelligence → Agent.
+                    """)
+            }
+            self.reconnectingAgent = false
         }
     }
 
@@ -1039,7 +1029,7 @@ final class AppModel {
                 user: message, positive: suggestion.positive, negative: suggestion.negative,
                 enhancementMode: .ask, compiler: suggestion.compiler)
         }
-        return PromptSpec(user: message, enhancementMode: promptEnhancementMode == .auto ? .auto : .off)
+        return PromptSpec(user: message)  // a planned message's prompt is written by the agent
     }
 
     func enhanceDraft() {

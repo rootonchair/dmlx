@@ -169,7 +169,7 @@ struct ComposerView: View {
                                 .accessibilityLabel("Draw a layout")
                             }
 
-                            if model.promptEnhancementMode != .off {
+                            if model.promptAssistantInstalled {
                                 Button { model.enhanceDraft() } label: {
                                     if model.isEnhancingPrompt {
                                         ProgressView().controlSize(.small)
@@ -179,7 +179,7 @@ struct ComposerView: View {
                                 }
                                 .buttonStyle(.borderless)
                                 .disabled(model.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || model.isEnhancingPrompt)
-                                .help("Preview an enhanced prompt before sending")
+                                .help("Preview the agent's rewrite before sending")
                                 .accessibilityLabel("Enhance prompt")
                             }
 

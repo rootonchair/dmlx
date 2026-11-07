@@ -1,5 +1,8 @@
 # Local Qwen routing checkpoint evaluation
 
+> **Historical.** The router and its local Qwen model were removed on 2026-11-08 (task 19): the agent plans every
+> message, and without it the fixed rules decide. The commands below no longer run.
+
 Evaluated on 2026-10-20 on an Apple M5 with 24 GB unified memory.
 
 ## Configuration
