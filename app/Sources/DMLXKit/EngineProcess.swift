@@ -182,6 +182,22 @@ public final class EngineProcess {
         process?.terminate()
     }
 
+    /// Stops the engine and waits until it has exited (killed after the timeout), so it writes no more
+    /// files: Uninstall deletes the data folder right after.
+    public func stopAndWait(timeout: Duration = .seconds(5)) async {
+        stopping = true
+        guard let proc = process else { return }
+        proc.terminate()
+        let deadline = ContinuousClock.now + timeout
+        while proc.isRunning && ContinuousClock.now < deadline {
+            try? await _Concurrency.Task.sleep(for: .milliseconds(100))
+        }
+        if proc.isRunning {
+            kill(proc.processIdentifier, SIGKILL)
+            proc.waitUntilExit()
+        }
+    }
+
     public func restart() {
         restarts = 0
         if let p = process {

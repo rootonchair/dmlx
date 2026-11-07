@@ -19,6 +19,7 @@ struct SettingsView: View {
 }
 
 struct GeneralSettings: View {
+    @Environment(AppModel.self) private var model
     @AppStorage(AppAppearance.key) private var appearance = AppAppearance.system.rawValue
 
     var body: some View {
@@ -31,6 +32,15 @@ struct GeneralSettings: View {
             Text("System matches the appearance you set in macOS.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+            Section {
+                LabeledContent("Uninstall") {
+                    Button("Uninstall dMLX…", role: .destructive) { model.uninstall() }
+                }
+                Text("Deletes all of dMLX's models, chats, images and settings, then moves dMLX to the Trash. "
+                    + "Dragging dMLX to the Trash keeps the models on your Mac.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
         }
         .formStyle(.grouped)
         .onChange(of: appearance) { _, value in (AppAppearance(rawValue: value) ?? .system).apply() }

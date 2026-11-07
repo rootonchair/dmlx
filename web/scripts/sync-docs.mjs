@@ -61,7 +61,7 @@ rmSync(out, { recursive: true, force: true });
 mkdirSync(out, { recursive: true });
 
 page('getting-started', 'Getting started', 'Requirements and how to install dMLX.',
-  `${adapt(status)}\n\n## Requirements\n\n${get('Requirements')}\n\n## Install\n\n${get('Install')}`);
+  `${adapt(status)}\n\n## Requirements\n\n${get('Requirements')}\n\n## Install\n\n${get('Install')}\n\n## Uninstall\n\n${get('Uninstall')}`);
 page('using-dmlx', 'Using dMLX', 'Make and edit images with chat, with examples and a tour of the app.',
   `${get('How to use dMLX')}\n\n## What you can make\n\n${get('What you can make', { promote: false })}\n\n## Tour of the app\n\n${get('Tour of the app', { promote: false })}`);
 page('crop-and-draw', 'Crop / Draw', 'Show the part of an image to change, then say what to do.', get('Edit with Crop / Draw'));

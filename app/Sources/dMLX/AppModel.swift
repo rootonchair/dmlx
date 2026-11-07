@@ -1488,6 +1488,55 @@ final class AppModel {
     func shutdown() {
         engine.stop()
     }
+
+    /// Settings → General and the app menu: delete every model, chat, image and setting, move dMLX to the
+    /// Trash and quit. Dragging the app to the Trash cannot do this, because macOS runs no code then.
+    func uninstall() {
+        let bundleID = Bundle.main.bundleIdentifier ?? "io.github.dmlx.app"
+        let folders = Uninstaller.folders(bundleID: bundleID)
+        _Concurrency.Task {
+            let bytes = await _Concurrency.Task.detached { Uninstaller.size(of: folders) }.value
+            let alert = NSAlert()
+            alert.alertStyle = .critical
+            alert.messageText = "Uninstall dMLX?"
+            alert.informativeText = """
+                This deletes all of dMLX's models, your chats and images, and its settings \
+                (\(ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)) in all), then moves dMLX \
+                to the Trash. Save any images you want to keep first. You can't undo this.
+                """
+            alert.addButton(withTitle: "Uninstall")
+            alert.addButton(withTitle: "Cancel")
+            alert.buttons[0].hasDestructiveAction = true
+            guard alert.runModal() == .alertFirstButtonReturn else { return }
+            await engine.stopAndWait()
+            do {
+                try Uninstaller.removeData(bundleID: bundleID, folders: folders)
+            } catch {
+                showUninstallProblem("Some of dMLX's files could not be deleted: \(error.localizedDescription)")
+            }
+            // After the app is gone, delete what quitting writes again (settings, saved window state).
+            let cleanup = Process()
+            cleanup.executableURL = URL(fileURLWithPath: "/bin/sh")
+            cleanup.arguments = ["-c", Uninstaller.afterQuitScript(
+                pid: ProcessInfo.processInfo.processIdentifier, bundleID: bundleID, folders: folders)]
+            try? cleanup.run()
+            let app = Bundle.main.bundleURL
+            do {
+                try await NSWorkspace.shared.recycle([app])
+            } catch {
+                // Run from the disk image, or from a location macOS made read-only.
+                showUninstallProblem("dMLX's data is deleted. Drag dMLX to the Trash to finish.")
+            }
+            NSApp.terminate(nil)
+        }
+    }
+
+    private func showUninstallProblem(_ text: String) {
+        let alert = NSAlert()
+        alert.messageText = "Uninstall dMLX"
+        alert.informativeText = text
+        alert.runModal()
+    }
 }
 
 /// Loads result PNGs straight from the engine's results folder (same machine), with a small cache.

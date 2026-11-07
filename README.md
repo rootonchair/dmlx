@@ -231,6 +231,15 @@ uses simple rules to route messages. For more data, refer to
    shows the total download size. Click **Download**. You can change either model, or skip the agent, and
    change them later in **Settings**. After this step, dMLX operates offline.
 
+## Uninstall
+
+Select **dMLX → Uninstall dMLX…**, or **Settings → General → Uninstall dMLX…**. dMLX shows how much space it
+uses, and after you confirm, it deletes all of its models, your chats and images, its settings and its API
+keys. Then it moves `dMLX.app` to the Trash. Save the images that you want to keep before you start.
+
+If you drag `dMLX.app` to the Trash, macOS keeps the models and your data. To delete them after that, delete
+`~/Library/Application Support/dMLX`. To delete only one model, use **Remove…** in **Settings → Models**.
+
 ## How to use dMLX
 
 - **To make an image:** describe it. **To change an image:** write what to change. **To start again:**
@@ -264,7 +273,11 @@ model classes, so a new mflux family needs a table entry and a memory measuremen
 ([`docs/benchmarks/families.md`](docs/benchmarks/families.md)).
 Before dMLX downloads a repo, it does a check of the family, size and license. If a license has
 restrictions, dMLX asks you to accept it. **Remove…** deletes the files of a model. dMLX puts the weights in
-the standard Hugging Face cache (`~/.cache/huggingface`). The app bundle never contains weights. In Auto,
+its own folder, `~/Library/Application Support/dMLX/models-cache`, in the standard Hugging Face layout, so
+**Uninstall dMLX…** can delete all of them. The app bundle never contains weights. When dMLX starts, it moves
+its models from the shared Hugging Face cache (`~/.cache/huggingface`) into its own folder. This includes models
+from versions before 0.1.0 beta 5, and models that another tool downloaded first. dMLX does not download them
+again, but the other tool does if it needs them. In Auto,
 the engine uses Qwen Image 2.1 only if the agent selects it for a message.
 
 ## How dMLX controls memory
@@ -350,6 +363,8 @@ these environment variables.
 | `DMLX_ROUTER_BASE_URL`, `DMLX_ROUTER_MODEL`, `DMLX_ROUTER_API_KEY`, `DMLX_ROUTER_TIMEOUT` | Routes messages without the agent, through any OpenAI-compatible chat server (HTTPS, or HTTP on loopback) |
 | `DMLX_ROUTER_PROVIDER=local-llm`, `DMLX_LOCAL_LLM_MODEL_PATH`, `DMLX_LOCAL_LLM_REVISION` | Routes messages without the agent, through a local Qwen checkpoint ("Local Qwen MLX" in the app) |
 | `DMLX_PROMPT_BASE_URL`, `DMLX_PROMPT_MODEL`, `DMLX_PROMPT_API_KEY`, `DMLX_PROMPT_TIMEOUT` | Prompt enhancement through an OpenAI-compatible server |
+| `DMLX_HOME` | The data folder (default `~/Library/Application Support/dMLX`). The models go in its `models-cache` folder |
+| `HF_HUB_CACHE` | If you set it, the engine downloads models to this Hugging Face cache, and does not move models |
 
 If you set API keys in the app, the app keeps them in the macOS Keychain. When the agent plans, the engine
 also does a check of its answer. The images that the answer names must exist. An edit must use 1–3 images.

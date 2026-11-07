@@ -52,6 +52,8 @@ struct DMLXApp: App {
                     model.onboardingStep = .setup
                     model.showOnboarding = true
                 }
+                Divider()
+                Button("Uninstall dMLX…") { model.uninstall() }
             }
         }
 

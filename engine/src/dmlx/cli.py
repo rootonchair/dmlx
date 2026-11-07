@@ -82,6 +82,10 @@ def _models(_args) -> None:
 
 
 def main(argv: list[str] | None = None) -> None:
+    from dmlx import paths
+
+    # Before anything imports huggingface_hub or mflux: dMLX keeps its models in its own folder.
+    paths.use_own_caches()
     parser = argparse.ArgumentParser(prog="dmlx")
     sub = parser.add_subparsers(dest="cmd", required=True)
 
