@@ -23,8 +23,7 @@ public final class EngineProcess {
     private let logURL: URL
 
     public init() {
-        let logs = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("dMLX/logs")
+        let logs = Store.dataDirectory().appendingPathComponent("logs")
         try? FileManager.default.createDirectory(at: logs, withIntermediateDirectories: true)
         logURL = logs.appendingPathComponent("engine.log")
     }

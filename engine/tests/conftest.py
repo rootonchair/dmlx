@@ -1,7 +1,9 @@
+import dataclasses
 import os
 
 import pytest
 
+from dmlx import sysmem
 from dmlx.registry import GB, ComponentSpec, ModelSpec, Registry
 
 
@@ -40,6 +42,13 @@ def make_engine(tmp_path, monkeypatch):
         engine.memory.total = 64 * GB
         if headroom_gb is not None:
             engine.memory.headroom = lambda: int(headroom_gb * GB)
+        # The guard reads this Mac's real swap and pressure. A model loading in another process (the app,
+        # a benchmark) made fake jobs stop with "memory_pressure", so the tests see a calm machine; a test
+        # that wants pressure sets it (test_swapin_thrash_aborts_and_degrades).
+        calm = dataclasses.replace(sysmem.snapshot(), pressure=sysmem.PRESSURE_NORMAL)
+        engine.memory.monitor.last = lambda: calm
+        engine.memory.monitor.window_max_pressure = lambda: sysmem.PRESSURE_NORMAL
+        engine.memory.monitor.swapin_rate = lambda window=3.0: 0.0
         engines.append(engine)
         return engine
 

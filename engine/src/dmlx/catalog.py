@@ -20,6 +20,8 @@ from dmlx import paths
 from dmlx.registry import ModelSpec, _parse
 
 COMPONENTS = ("text_encoder", "transformer", "vae")
+MOSS_NOTE = ("New images only; very slow (about 8 minutes at 1024 px, 2 minutes at 512 px); "
+             "use only when the user asks for it.")
 _PERMISSIVE = {"apache-2.0", "mit", "bsd-3-clause", "openrail", "creativeml-openrail-m"}
 
 # Per family: what the adapter needs, and measured working memory (docs/benchmarks/b1.md, b2.md).
@@ -84,14 +86,16 @@ FAMILIES = {
         "max_references": 0,
         "match": ("moss-image",),
         "variants": [{"when": "sft", "config": "moss_image_sft", "name": "MOSS Image",
-                      "defaults": {"steps": 50, "guidance": 3.0}}],
+                      # 30, not the model card's 50 (2026-11-07): 40% less time.
+                      "defaults": {"steps": 30, "guidance": 3.0}}],
         "stream": {"text_encoder": ["auto"], "transformer": ["auto"]},
         # Measured 2026-11-02 at 1024 px: denoise +0.86 GB, decode +7.04 GB full, +2.02 GB tiled.
         "activation_gb_per_mp": 1.0,
         "decode_gb_per_mp": 7.4,
         "decode_tiled_gb_per_mp": 2.3,
-        "agent_note": "New images only; very slow (about 13 minutes at 1024 px, 3 minutes at 512 px); "
-        "use only when the user asks for it.",
+        "agent_note": MOSS_NOTE,
+        # Takes a JSON layout for exact placement of text and objects (OpenMOSS USERGUIDE.md, task 17).
+        "prompt_format": "moss-layout",
     },
     "flux3-klein": {
         "adapter": "mflux.flux3_klein",
@@ -138,6 +142,55 @@ FAMILIES = {
         "decode_gb_per_mp": 10.3,
         "decode_tiled_gb_per_mp": 3.5,
         "agent_note": "New images only; about 2.5 minutes at 1024 px; strong photographic realism.",
+    },
+    # FIBO 2 by Bria (task 17): a JSON caption, the format it was trained on. mflux 0.24 ("fibo2").
+    "fibo2": {
+        "adapter": "mflux.fibo2",
+        "tasks": ["t2i"],
+        "max_references": 0,
+        "match": ("fibo-2-0-dev", "fibo-2.0-dev"),
+        "variants": [{"when": "dev", "config": "fibo2", "name": "FIBO 2",
+                      # 30, not mflux's 50: 1.7x faster in mflux's own measurements (fibo2/README.md).
+                      "defaults": {"steps": 30, "guidance": 5.0}}],
+        "stream": {"text_encoder": ["auto"], "transformer": ["auto"]},
+        # Measured 2026-11-07 on the q6 pack, M5 24 GB (bench-family, 512 and 1024): encode 0.45 GB above
+        # the weights, denoise 1.3 GB at 1 MP, decode 1.3 GB in either mode (its VAE is small). About
+        # 16 s a step at 1024 px, so 30 steps take about 8 minutes.
+        "activation_gb_per_mp": 1.4,
+        "decode_gb_per_mp": 1.4,
+        "decode_tiled_gb_per_mp": 1.4,
+        "agent_note": "New images only; about 8 minutes at 1024 px; follows detailed descriptions and draws text well; "
+        "non-commercial license.",
+        "prompt_format": "fibo-json",
+    },
+    # Ideogram 4 (task 17): a JSON caption with exact boxes. Two transformers, conditional and
+    # unconditional, both used at every denoise step. Steps pick one of its sampler presets: 12, 20 or 48.
+    "ideogram4": {
+        "adapter": "mflux.ideogram4",
+        "tasks": ["t2i"],
+        "max_references": 0,
+        "match": ("ideogram-4-",),
+        "variants": [{"when": "ideogram", "config": "ideogram4_fp8", "name": "Ideogram 4",
+                      "defaults": {"steps": 20, "guidance": 7.0}}],
+        "parts": {
+            "text_encoder": {"phase": "encode", "stream": ["auto"]},
+            # Streamed, both: 4.9 GB each, so held together they need about 12.4 GB at 1024 px. Streamed,
+            # each keeps 0.15 GB and the 512 px run was faster (62 s against 72 s for 12 steps), with the
+            # same image; its quantized layers are rebuilt before any weights go in (`before_apply`).
+            "conditional_transformer": {"phase": "denoise", "stream": ["auto"]},
+            "unconditional_transformer": {"phase": "denoise", "stream": ["auto"]},
+            "vae": {"phase": "decode", "keep": True},
+        },
+        "stream": {"text_encoder": ["auto"], "transformer": ["auto"]},
+        # Measured 2026-11-07 on the q4 pack, M5 24 GB (bench-family, streamed, 12 steps): denoise 1.9 GB at
+        # 512 px but 4.9 GB at 1024 (attention grows faster than the area), so 5.2 per MP with the margin;
+        # encode 2.2 GB; decode 1.3 GB in either mode. About 25 s a step at 1024 px: 20 steps, 8.5 minutes.
+        "activation_gb_per_mp": 5.2,
+        "decode_gb_per_mp": 1.5,
+        "decode_tiled_gb_per_mp": 1.5,
+        "agent_note": "New images only; about 8.5 minutes at 1024 px; the strongest at typography and exact placement; "
+        "non-commercial license.",
+        "prompt_format": "ideogram-json",
     },
     "iris": {
         "adapter": "mflux.iris",
@@ -218,7 +271,7 @@ class Inspection:
             "user_added": True,
             # Shown as the size before the model is downloaded.
             "download_gb": round(self.size_bytes / 1024**3, 2),
-            "components": {
+            "components": family.get("parts") or {
                 "text_encoder": {
                     "phase": "encode",
                     "stream": family["stream"]["text_encoder"],
@@ -237,6 +290,8 @@ class Inspection:
             data["components"][name]["subdir"] = subdir
         if family.get("agent_note"):
             data["agent_note"] = family["agent_note"]
+        if family.get("prompt_format"):
+            data["prompt_format"] = family["prompt_format"]
         if family.get("negative_prompt"):
             data["capabilities"] = {
                 "image.generate": {"inputs": {}, "prompt": {"positive": True, "negative": True}},

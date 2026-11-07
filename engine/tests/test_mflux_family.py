@@ -291,3 +291,71 @@ def test_a_family_can_set_the_tiled_decode_tile_size(tmp_path):
     plain = _adapter(tmp_path)
     plain.set_decode_mode("tiled")
     assert plain.pipe.tiling_config.vae_decode_tile_size == 512
+
+
+TWO_TRANSFORMERS = yaml.safe_load("""
+id: two
+name: Two transformers
+adapter: mflux.fake_family
+repo: x/two
+license: apache-2.0
+tasks: [t2i]
+components:
+  text_encoder:              { phase: encode, size_gb: 4 }
+  conditional_transformer:   { phase: denoise, size_gb: 3 }
+  unconditional_transformer: { phase: denoise, size_gb: 3 }
+  vae:                       { phase: decode, keep: true, size_gb: 0.2 }
+defaults: { steps: 20, guidance: 7.0, width: 64, height: 64 }
+""")
+
+
+def test_both_transformers_count_together_in_the_low_memory_plans():
+    # Ideogram 4 runs its conditional and unconditional transformers in the same loop.
+    from dmlx.memory import GB, MemoryManager
+
+    spec = _parse(TWO_TRANSFORMERS)
+    assert spec.parts("denoise") == ["conditional_transformer", "unconditional_transformer"]
+    manager = MemoryManager()
+    try:
+        needs = manager._needs(spec, 0)
+    finally:
+        manager.monitor.stop()
+    assert round(needs["phase_free"] / GB, 1) == 6.2  # both transformers (6) and the VAE, not the 4 GB encoder
+    assert round(needs["sequential"] / GB, 1) == 6.2
+    assert round(needs["eager"] / GB, 1) == 10.2
+
+
+def test_a_preset_family_passes_the_nearest_preset_instead_of_steps(tmp_path):
+    seen = {}
+
+    class PresetPipe(Pipe):
+        def generate_image(self, seed, prompt, num_inference_steps, width, height, guidance=None, preset=None):
+            seen.update(steps=num_inference_steps, guidance=guidance, preset=preset)
+            return super().generate_image(seed, prompt, 2, width, height)
+
+    class PresetAdapter(Adapter):
+        family = {**Adapter.family, "pipelines": {"t2i": PresetPipe},
+                  "presets": {12: "TURBO_12", 20: "DEFAULT_20", 48: "QUALITY_48"}}
+
+    PresetAdapter.loaded = []
+    adapter = PresetAdapter(_parse(SPEC), tmp_path)
+    request = _request()
+    request.steps, request.guidance = 30, 7.0
+    adapter.generate(request, Hooks(adapter))
+    assert seen == {"steps": None, "guidance": None, "preset": "DEFAULT_20"}
+
+
+def test_a_family_hook_runs_before_a_parts_weights_go_in(tmp_path):
+    from dmlx.adapters.mflux_adapter import _MfluxAdapterBase
+
+    calls = []
+
+    class HookAdapter(Adapter):
+        family = {**Adapter.family, "before_apply": {"transformer": lambda module, weights: calls.append(module.name)}}
+
+    HookAdapter.loaded = []
+    adapter = HookAdapter(_parse(SPEC), tmp_path)
+    adapter._before_apply("transformer", adapter._construct("transformer"), None)
+    adapter._before_apply("vae", adapter._construct("vae"), None)
+    assert calls == ["transformer"]
+    assert _MfluxAdapterBase._before_apply(adapter, "vae", None, None) is None  # the base does nothing

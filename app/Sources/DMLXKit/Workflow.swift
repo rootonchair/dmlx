@@ -61,12 +61,15 @@ public struct WorkflowParameters: Codable, Hashable, Sendable {
     public var force: Bool?
     public var scale: Int?
     public var softness: Double?
+    /// The user's boxes, for models with a prompt format (task 17).
+    public var layout: [LayoutBox]?
 
     public init(
         size: String? = nil, width: Int? = nil, height: Int? = nil, steps: Int? = nil,
         seed: Int? = nil, n: Int? = nil, strategy: String? = nil, force: Bool? = nil,
-        scale: Int? = nil, softness: Double? = nil
+        scale: Int? = nil, softness: Double? = nil, layout: [LayoutBox]? = nil
     ) {
+        self.layout = layout
         self.size = size
         self.width = width
         self.height = height

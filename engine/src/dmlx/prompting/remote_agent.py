@@ -97,7 +97,8 @@ class RemoteAgent(ChatPromptProvider):
     def status(self) -> dict:
         return {"kind": "remote", "name": self.name, "resident": False, **self.config.public()}
 
-    def chat(self, messages: list[dict], images: list) -> str:
+    def chat(self, messages: list[dict], images: list, max_tokens: int | None = None) -> str:
+        # `max_tokens` is ignored: the service's limit already holds a caption and leaves room to think.
         pictures = [_jpeg(item) for item in images]
         if self.config.kind == "anthropic":
             return self._claude(messages, pictures)

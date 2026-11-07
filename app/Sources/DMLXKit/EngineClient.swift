@@ -1,5 +1,13 @@
 import Foundation
 
+/// How a structured caption went (task 17). The caption itself is never shown; only `note`, in plain words.
+public struct StructureReport: Codable, Hashable, Sendable {
+    public var format: String?
+    public var structured: Bool?
+    public var fallback: String?
+    public var note: String?
+}
+
 public struct JobReport: Codable, Hashable, Sendable {
     public var strategy: String?
     public var loads: [String]?
@@ -10,6 +18,7 @@ public struct JobReport: Codable, Hashable, Sendable {
     public var max_pressure: String?
     public var swap_delta_gb: Double?
     public var total_seconds: Double?
+    public var structure: StructureReport?
 }
 
 /// Payload of one server-sent event. Fields are optional; which ones are set depends on the event.
@@ -151,7 +160,7 @@ public final class EngineClient: @unchecked Sendable {
         message: String, currentResultId: String?, currentPrompt: String?, attachments: [String],
         attachmentNotes: [String: String] = [:],
         history: [RoutingHistoryItem] = [], selectedModel: String? = nil, selectedModels: [String: String] = [:],
-        plan: Bool = false, wait: Bool = false
+        plan: Bool = false, wait: Bool = false, layout: [LayoutBox]? = nil
     ) async throws -> WorkflowDecision {
         var body: [String: Any] = [
             "message": message, "attachments": attachments,
@@ -167,7 +176,19 @@ public final class EngineClient: @unchecked Sendable {
         if let selectedModel { body["selected_model"] = selectedModel }
         // The model the user chose per workflow ("image.generate", "image.edit"); the others are on Auto.
         if !selectedModels.isEmpty { body["selected_models"] = selectedModels }
+        // Boxes drawn in the composer: in Auto the engine offers only models that can use them.
+        if let layout, !layout.isEmpty { body["layout"] = layout.map(\.jsonObject) }
         return try await send(try request("v1/workflows/route", method: "POST", json: body), as: WorkflowDecision.self)
+    }
+
+    /// The layout saved with a result: the boxes the user placed and the ones the agent planned.
+    public func resultLayout(_ resultId: String) async throws -> [LayoutBox] {
+        struct Meta: Decodable {
+            struct Parameters: Decodable { var layout: [LayoutBox]? }
+            var parameters: Parameters?
+        }
+        let meta = try await send(try request("v1/results/\(resultId)/meta"), as: Meta.self)
+        return meta.parameters?.layout ?? []
     }
 
     public func testRouter() async throws -> RouterTestResult {
@@ -280,7 +301,7 @@ public final class EngineClient: @unchecked Sendable {
         task: GenTask, prompt: String, model: String?, size: String?, seed: Int? = nil,
         sourceIds: [String] = [], mediaInputs: [MediaInput]? = nil,
         force: Bool = false, route: WorkflowRoute? = nil, promptSpec: PromptSpec? = nil,
-        operation requestedOperation: String? = nil
+        operation requestedOperation: String? = nil, layout: [LayoutBox]? = nil
     ) -> AsyncThrowingStream<EngineEvent, Error> {
         let fallbackInputs = sourceIds.enumerated().map { index, id in
             MediaInput(id: id, role: index == 0 ? .source : .reference, order: index)
@@ -292,7 +313,7 @@ public final class EngineClient: @unchecked Sendable {
             executor: model,
             inputs: inputs,
             prompt: promptSpec ?? PromptSpec(user: prompt),
-            parameters: WorkflowParameters(size: size, seed: seed, force: force))
+            parameters: WorkflowParameters(size: size, seed: seed, force: force, layout: layout))
         return runWorkflow(WorkflowPlan(steps: [step], route: route ?? WorkflowRoute(intent: operation)))
     }
 

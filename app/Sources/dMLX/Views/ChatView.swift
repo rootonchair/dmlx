@@ -78,8 +78,11 @@ struct ChatView: View {
             if let document = model.editorDocument, let image = model.editorImage {
                 EditorView(
                     document: document, source: image, isExporting: model.isExportingEditor,
-                    startTool: model.editorStartTool,
-                    onCancel: { model.closeEditor() }, onApply: { model.applyEditor($0) })
+                    startTool: model.editorBlankLayout ? "Layout" : model.editorStartTool,
+                    layout: model.editorLayout, blankLayout: model.editorBlankLayout,
+                    placesByWords: model.editorPlacesByWords,
+                    onCancel: { model.closeEditor() }, onApply: { model.applyEditor($0) },
+                    onLayout: { model.applyLayout($0) })
             }
         }
     }

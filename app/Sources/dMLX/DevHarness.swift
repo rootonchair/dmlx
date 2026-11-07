@@ -15,6 +15,9 @@ import SwiftUI
 ///          {"flags": "label"} (logs whether this or another chat is making an image, and a waiting message),
 ///          {"appearance": "system"|"light"|"dark"}, {"settingsTab": "intelligence"} (with {"settings": true}, which hosts SettingsView in its own window), {"closeSettings": true},
 ///          {"addModel": ""|"<group>"} (Add Model over Settings → Models), {"openModelMenu": "name", "keys": [125]},
+///          Layout (task 17): {"layoutBoxes": [<LayoutBox json>]} (the composer's chip), {"openLayout": true} (▭ Layout,
+///          a blank canvas), {"layoutTool": true} (with openEditor: open on Layout), {"applyLayout": {"move": {"<label>":
+///          [y0, x0, y1, x1]}, "describe": {"<label>": "text"}}} (what Redraw with layout sends), {"logLayout": true},
 ///          {"capture": "name", "window": "main"|"settings"|"settingsSheet"} (the real window through screencapture, native
 ///          controls included; needs Screen Recording for the launching terminal),
 ///          {"scroll": "top"|"bottom", "overscroll": 60} (the chat transcript, to capture a chat taller than the
@@ -296,7 +299,32 @@ enum DevHarness {
         if let name = step["openModelMenu"] as? String {
             openMenu(labeled: "Models", in: mainWindow(), keys: step["keys"] as? [Int] ?? [], name: name, out: out)
         }
+        if let raw = step["layoutBoxes"], let data = try? JSONSerialization.data(withJSONObject: raw),
+           let boxes = try? JSONDecoder().decode([LayoutBox].self, from: data) {
+            model.pendingLayout = boxes
+        }
+        if step["openLayout"] != nil { model.openBlankLayout() }
+        if step["layoutTool"] != nil { model.editorStartTool = "Layout" }
         if step["openEditor"] != nil, let t = model.latestImageTurn { model.openEditor(t.id) }
+        if let spec = step["applyLayout"] as? [String: Any], var boxes = model.editorLayout {
+            for (label, box) in spec["move"] as? [String: [Int]] ?? [:] {
+                if let i = boxes.firstIndex(where: { $0.label == label }), box.count == 4 {
+                    boxes[i].place(NormalizedRect(x: Double(box[1]) / 1000, y: Double(box[0]) / 1000,
+                                                  width: Double(box[3] - box[1]) / 1000, height: Double(box[2] - box[0]) / 1000))
+                }
+            }
+            for (label, text) in spec["describe"] as? [String: String] ?? [:] {
+                if let i = boxes.firstIndex(where: { $0.label == label }) {
+                    boxes[i].desc = text; boxes[i].descByUser = true; boxes[i].byUser = true
+                }
+            }
+            model.applyLayout(LayoutBox.sendable(boxes))
+        }
+        if step["logLayout"] != nil {
+            let v = model.latestImageTurn?.current
+            log("layout v\((model.latestImageTurn?.activeVersion ?? 0) + 1) note=\(v?.note ?? "-") sent=\(v?.layoutRequest?.map { "\($0.label)\($0.box)" } ?? []) "
+                + "saved=\(v?.layout?.map { "\($0.label)\($0.box)\($0.byUser ? "*" : "")" } ?? []) pending=\(model.pendingLayout?.count ?? 0)")
+        }
         if step["closeEditor"] != nil { model.closeEditor() }
         // {"editorDoc": {"tool": "Paint", "crop": [x, y, w, h], "paint": [[[x, y], ...]], "erase": [[[x, y], ...]],
         //  "width": 0.03}}: reopen the editor on the latest image with this crop and these strokes (normalized).

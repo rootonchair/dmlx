@@ -70,6 +70,7 @@ def default_model(total_bytes: int) -> str:
 ACTIVATION_BYTES = int(1.5 * 1024**3)
 _MAX_SIDE = 768  # what the rewriter needs to read layout and text; larger only costs prefill
 _MAX_TOKENS = 400
+STRUCTURE_MAX_TOKENS = 1200  # a JSON caption with a few boxes runs 300-900 tokens
 _CACHE_ENTRIES = 32
 
 EDIT_INSTRUCTIONS = (
@@ -201,7 +202,8 @@ class ChatPromptProvider:
     _lock: threading.RLock
     _cache: OrderedDict
 
-    def chat(self, messages: list[dict], images: list) -> str:  # pragma: no cover - implemented by subclasses
+    def chat(self, messages: list[dict], images: list,
+             max_tokens: int | None = None) -> str:  # pragma: no cover - implemented by subclasses
         raise NotImplementedError
 
     def cached(self, text: str, *, operation: str, supports_negative: bool, images: list[Path]) -> CompiledPrompt | None:
@@ -233,6 +235,18 @@ class ChatPromptProvider:
             while len(self._cache) > _CACHE_ENTRIES:
                 self._cache.popitem(last=False)
             return compiled
+
+    def structure(self, text: str, *, fmt: str, operation: str = "image.generate", layout: list | None = None,
+                  images: list[Path] | None = None, retry: str | None = None) -> str:
+        """The model's caption for `text` in a structured prompt format (task 17), as it wrote it; the
+        caller checks it with `formats.normalize`. Longer replies than a plain prompt are allowed."""
+        from dmlx.prompting import formats
+
+        messages = [
+            {"role": "system", "content": formats.instructions(fmt, operation)},
+            {"role": "user", "content": formats.request_text(text, list(layout or []), retry=retry)},
+        ]
+        return self.chat(messages, list(images or []), max_tokens=STRUCTURE_MAX_TOKENS)
 
     @staticmethod
     def _key(text: str, operation: str, supports_negative: bool, images: list[Path]) -> tuple:
@@ -270,13 +284,14 @@ class LocalVLMPromptProvider(ChatPromptProvider):
         """Free memory a call needs now: its working memory, plus the weights unless they are loaded."""
         return ACTIVATION_BYTES + (0 if self.resident else self.weights_bytes)
 
-    def chat(self, messages: list[dict], images: list) -> str:
+    def chat(self, messages: list[dict], images: list, max_tokens: int | None = None) -> str:
         """One reply from the model, loading it if needed; it stays loaded until `unload`."""
         with self._lock:
             if self._model is None:
                 self._model, self._processor = self._loader(self.model_path)
             try:
-                return self._generator(self._model, self._processor, messages, [self._feed(p) for p in images])
+                extra = {"max_tokens": max_tokens} if max_tokens else {}
+                return self._generator(self._model, self._processor, messages, [self._feed(p) for p in images], **extra)
             except IntelligenceError:
                 raise
             except Exception as exc:  # noqa: BLE001
@@ -320,11 +335,11 @@ class LocalVLMPromptProvider(ChatPromptProvider):
         return model, processor
 
     @staticmethod
-    def _default_generator(model, processor, messages: list[dict], images: list) -> str:
+    def _default_generator(model, processor, messages: list[dict], images: list, max_tokens: int = _MAX_TOKENS) -> str:
         from mlx_vlm import generate
         from mlx_vlm.prompt_utils import apply_chat_template
 
         prompt = apply_chat_template(processor, model.config, messages, num_images=len(images))
         result = generate(
-            model, processor, prompt, images or None, max_tokens=_MAX_TOKENS, temperature=0.0, verbose=False)
+            model, processor, prompt, images or None, max_tokens=max_tokens, temperature=0.0, verbose=False)
         return getattr(result, "text", result)

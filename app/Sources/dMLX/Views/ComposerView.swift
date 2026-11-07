@@ -92,6 +92,22 @@ struct ComposerView: View {
                     }
                 }
 
+                if let layout = model.pendingLayout, !layout.isEmpty {
+                    HStack(spacing: 6) {
+                        Image(systemName: "rectangle.dashed").foregroundStyle(.secondary)
+                        Text("Layout · \(layout.count) box\(layout.count == 1 ? "" : "es")\(model.pendingLayoutSource.map { " · \($0)" } ?? "")")
+                            .font(.caption)
+                        Button("Change") { model.openBlankLayout() }
+                            .buttonStyle(.borderless).controlSize(.small)
+                        Button { model.clearPendingLayout() } label: { Image(systemName: "xmark").font(.caption2.weight(.bold)) }
+                            .buttonStyle(.borderless)
+                            .accessibilityLabel("Remove layout")
+                    }
+                    .padding(.horizontal, 8).padding(.vertical, 4)
+                    .background(Theme.accent.opacity(0.18), in: RoundedRectangle(cornerRadius: 7))
+                    .help("These boxes go with your next message; the agent writes the rest")
+                }
+
                 if !model.attachments.isEmpty {
                     FlowLayout(spacing: 6) {
                         ForEach(Array(model.attachments.enumerated()), id: \.element.id) { index, a in
@@ -143,6 +159,15 @@ struct ComposerView: View {
                             .help("Attach up to 3 reference images")
                             .accessibilityLabel("Attach reference images")
                             .guideTip(AttachTip.self, in: Guide.shared.chat, edge: .bottom)
+
+                            if model.layoutAvailable {
+                                Button { model.openBlankLayout() } label: {
+                                    Label("Layout", systemImage: "rectangle.dashed").font(.caption)
+                                }
+                                .buttonStyle(.borderless)
+                                .help("Draw where things go before the image is made")
+                                .accessibilityLabel("Draw a layout")
+                            }
 
                             if model.promptEnhancementMode != .off {
                                 Button { model.enhanceDraft() } label: {

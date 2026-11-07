@@ -11,17 +11,18 @@ import random
 import secrets
 import threading
 import time
+from collections import OrderedDict
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Callable
 
 from dmlx import catalog, downloads, paths, sysmem
-from dmlx.adapters.base import GenRequest, JobAborted
+from dmlx.adapters.base import GenRequest, JobAborted, NonFinite
 from dmlx.intelligence.base import IntelligenceError
 from dmlx.intelligence.openai_compatible import OpenAICompatibleProvider
 from dmlx.intelligence.local_llm import LocalLLMDecisionProvider
 from dmlx.memory import GB, InsufficientMemory, JobGuard, MemoryManager
-from dmlx.prompting import OpenAICompatiblePromptProvider, agent, local_vlm, remote_agent
+from dmlx.prompting import OpenAICompatiblePromptProvider, agent, formats, local_vlm, remote_agent
 from dmlx.registry import ModelSpec, Registry
 from dmlx.results import ResultStore
 from dmlx.routing import WorkflowRouter
@@ -205,6 +206,12 @@ class Job:
         }
 
 
+def _blank(image) -> bool:
+    """An image of one flat colour: what a model's NaNs become when they are cast to pixels."""
+    lo, hi = image.convert("L").getextrema()
+    return hi - lo < 2
+
+
 class Engine:
     def __init__(
         self, registry: Registry | None = None, results: ResultStore | None = None, adapter_factory=None, router=None
@@ -223,6 +230,7 @@ class Engine:
         self._queue: "queue.Queue[Job]" = queue.Queue()
         self._lock = threading.Lock()
         self._accelerator_lock = threading.Lock()
+        self._structure_cache: OrderedDict[tuple, formats.Structured] = OrderedDict()
         self.started = time.time()
         for spec in self.registry.all():
             path = self._resolve_local(spec)
@@ -338,6 +346,11 @@ class Engine:
             "attachment_notes": attachment_notes,
             "history": history,
         }
+        # Boxes the user drew in the composer (task 17): only models with a prompt format can use them.
+        try:
+            layout = formats.parse_layout(state.get("layout"))
+        except formats.FormatError as exc:
+            raise RequestError("invalid_route", f"Routing layout: {exc}.", 422) from None
         explicit_count = len(attachments)
         has_current = bool(safe_state["current_result_id"])
         available: set[str] = set()
@@ -357,7 +370,14 @@ class Engine:
                     chosen[str(operation)] = self.registry.get(str(model_id).strip()).id
         except KeyError as exc:
             raise RequestError("unknown_model", str(exc), 404) from exc
+        if layout and selected_model and not self.registry.get(selected_model).prompt_format:
+            name = self.registry.get(selected_model).name
+            raise RequestError("layout_unsupported", f"{name} can't place things from a layout.", 422)
         for spec in self.registry.all():
+            # With a layout only models with a prompt format count: a filter, not a hint, since the local
+            # planner could ignore a hint and drop the boxes.
+            if layout and not spec.prompt_format:
+                continue
             if not self.is_downloaded(spec):
                 continue
             auto = spec.auto_select and spec.min_ram_gb <= self.memory.total / GB + 0.5
@@ -374,6 +394,9 @@ class Engine:
                         available.add(operation)
                 elif input_count == 0:
                     available.add(operation)
+        if layout and not available:
+            raise RequestError("layout_unsupported",
+                               "Download a model that can place things (MOSS Image) to use a layout.", 409)
         requested = state.get("candidates")
         if requested is not None and not isinstance(requested, list):
             raise RequestError("invalid_route", "Routing candidates must be a list.", 422)
@@ -386,11 +409,12 @@ class Engine:
             # On Auto, the agent may pick the image model per message; only for workflows on Auto, since a
             # model the user chose is not the agent's to change.
             models = None if selected_model else {
-                op: choices for op, choices in self._model_choices(candidates, explicit_count, has_current).items()
+                op: choices for op, choices in self._model_choices(candidates, explicit_count, has_current,
+                                                                   layout=bool(layout)).items()
                 if op not in chosen}
             planned, note = self._plan(safe_state, candidates, wait=bool(state.get("wait")), models=models)
             if planned is not None:
-                return planned
+                return self._layout_model(planned, layout, chosen, explicit_count, has_current)
             if note in ("rejected", "failed"):
                 # The agent was asked and has no usable plan: ask the user rather than let the rules or the
                 # router guess (a greeting became an edit of the latest image).
@@ -402,7 +426,22 @@ class Engine:
         decision = self._route_without_agent(safe_state, candidates)
         if note:
             decision["planning"] = note  # e.g. "skipped_busy": the client can tell the agent did not plan this
-        return decision
+        return self._layout_model(decision, layout, chosen, explicit_count, has_current)
+
+    def _layout_model(self, decision: dict, layout: list, chosen: dict[str, str], attached: int,
+                      has_current: bool) -> dict:
+        """On Auto with a layout, the decision always names a model that can use the boxes: the agent's
+        pick when it made one among them, otherwise the preferred one (exact boxes first). A workflow
+        the user chose a model for keeps it."""
+        if not layout or decision.get("intent", "ambiguous") == "ambiguous" or decision["intent"] in chosen:
+            return decision
+        choices = self._model_choices([decision["intent"]], attached, has_current, layout=True).get(decision["intent"], [])
+        offered = [model_id for model_id, _ in choices]
+        if decision.get("model") in offered or not offered:
+            return decision
+        rank = {fmt: i for i, fmt in enumerate(formats.LAYOUT_PREFERENCE)}
+        best = min(offered, key=lambda model_id: rank.get(self.registry.get(model_id).prompt_format, 99))
+        return {**decision, "model": best}
 
     def _route_without_agent(self, safe_state: dict, candidates: list[str]) -> dict:
         deterministic = self.router.deterministic_decision(safe_state, candidates)
@@ -516,7 +555,7 @@ class Engine:
         plan = self.memory.plan(spec, spec.activation_bytes(1024, 1024), strategy="auto")
         if hasattr(adapter, "stream_mode"):
             adapter.stream_mode = plan.strategy == "streamed"
-        names = list(spec.components) if plan.strategy == "eager" else [n for n, c in spec.components.items() if c.keep or n == "transformer"]
+        names = list(spec.components) if plan.strategy == "eager" else [n for n, c in spec.components.items() if c.keep or c.phase == "denoise"]
         for name in names:
             self.memory.ensure(spec.id, name)
         del adapter
@@ -643,6 +682,13 @@ class Engine:
             raise RequestError("negative_prompt_unsupported", f"{spec.name} does not support negative prompts.", 422)
         if not self.is_downloaded(spec):
             raise RequestError("model_not_downloaded", f"{spec.name} is not downloaded yet.", 409)
+        if (extras or {}).get("layout") is not None:
+            if not spec.prompt_format:
+                raise RequestError("layout_unsupported", f"{spec.name} can't place things from a layout.", 422)
+            try:
+                extras = {**extras, "layout": [b.as_dict() for b in formats.parse_layout(extras["layout"])]}
+            except formats.FormatError as exc:
+                raise RequestError("invalid_layout", f"Layout: {exc}.", 422) from None
 
         image_paths: list[Path] = []
         for rid in image_ids or []:
@@ -1138,7 +1184,21 @@ class Engine:
             for i in range(job.n):
                 req = run_request if i == 0 else GenRequest(**{**run_request.__dict__, "seed": run_request.seed + i})
                 gen_started = time.monotonic()
-                image = adapter.generate(req, guard)
+                try:
+                    image, bad = adapter.generate(req, guard), None
+                except NonFinite as exc:
+                    image, bad = None, exc
+                structured = (req.extras.get("structure") or {}).get("structured")
+                if bad is not None and not structured:
+                    raise JobAborted("invalid_output", "The model's numbers went invalid; try another seed.")
+                if structured and (bad is not None or _blank(image)):
+                    # MOSS turned some of the agent's layouts into NaNs: draw it again from the plain
+                    # sentence rather than hand back a black square. The loop stops at the first bad step.
+                    req = self._unstructured(job, req)
+                    rewrite = {**rewrite, "structure": req.extras["structure"]}
+                    if i == 0:
+                        run_request = req
+                    image = adapter.generate(req, guard)
                 meta = {
                     "kind": "generation",
                     "model": spec.id,
@@ -1184,12 +1244,16 @@ class Engine:
         """The local, image-aware assistant when installed; otherwise a configured text-only provider."""
         return self.prompt_assistant or self.prompt_provider
 
-    def _model_choices(self, candidates: list[str], attached: int, has_current: bool) -> dict[str, list[tuple[str, str]]]:
+    def _model_choices(self, candidates: list[str], attached: int, has_current: bool,
+                       layout: bool = False) -> dict[str, list[tuple[str, str]]]:
         """For each workflow, the downloaded image models that can run it here: (id, what the agent should
-        know about it). Experimental models are offered too; the user accepted their license on download."""
+        know about it). Experimental models are offered too; the user accepted their license on download.
+        With a layout, only models with a prompt format, and a single one is kept (it is the only choice)."""
         choices: dict[str, list[tuple[str, str]]] = {}
         for spec in self.registry.all():
             if not self.is_downloaded(spec) or spec.min_ram_gb > self.memory.total / GB + 0.5:
+                continue
+            if layout and not spec.prompt_format:
                 continue
             for operation in candidates:
                 capability = spec.capabilities.get(operation)
@@ -1197,7 +1261,7 @@ class Engine:
                 count = attached if attached else (1 if has_current and constraint else 0)
                 if capability and (constraint.minimum <= count <= constraint.maximum if constraint else count == 0):
                     choices.setdefault(operation, []).append((spec.id, f"{spec.name}: {spec.agent_note}".rstrip(": ")))
-        return {op: models for op, models in choices.items() if len(models) > 1}
+        return {op: models for op, models in choices.items() if layout or len(models) > 1}
 
     def _plan(self, state: dict, candidates: list[str], wait: bool = False,
               models: dict[str, list[tuple[str, str]]] | None = None) -> tuple[dict | None, str | None]:
@@ -1282,6 +1346,110 @@ class Engine:
                 self._accelerator_lock.release()
 
     def _rewrite(self, job: Job, spec: ModelSpec) -> tuple[GenRequest, dict]:
+        """The prompt the model gets: the plain rewrite, then, for a model with a `prompt_format`, its
+        structured caption. Every path (chat, API, Edit Prompt, router fallback) goes through here."""
+        req, info = self._plain_rewrite(job, spec)
+        step = ((job.workflow or {}).get("steps") or [{}])[0]
+        operation = step.get("operation") or ("image.edit" if job.task == "edit" else "image.generate")
+        if spec.prompt_format and operation in ("image.generate", "image.edit") and req.prompt:
+            return self._structure(job, spec, req, info, operation)
+        return req, info
+
+    def _structure(self, job: Job, spec: ModelSpec, req: GenRequest, info: dict,
+                   operation: str) -> tuple[GenRequest, dict]:
+        """Turn the plain prompt into the model's caption (task 17), checked before the model loads.
+
+        The agent writes it in a second, short call and gets one more try when the check refuses it.
+        Without a usable caption the user's boxes are still built in where the format has boxes;
+        otherwise the model runs on its fallback and the chat says so in plain words."""
+        fmt, plain = spec.prompt_format, req.prompt
+        try:
+            layout = formats.parse_layout(req.extras.get("layout"))
+        except formats.FormatError:
+            layout = []  # checked at submit; a hand-edited retry must not stop the job
+        extras = {key: value for key, value in req.extras.items() if key != "layout"}
+        extras.update({"prompt_format": fmt, "plain_prompt": plain})
+        if not formats.wants_structure(fmt, plain, layout):
+            status = {"format": fmt, "skipped": "no_placement"}
+            return replace(req, extras={**extras, "structure": status}), {**info, "structure": status}
+        images = list(req.image_paths) if operation == "image.edit" else []
+        key = (fmt, operation, plain, json.dumps([b.as_dict() for b in layout], sort_keys=True), req.width,
+               req.height, tuple(str(p) for p in images))
+        started = time.monotonic()
+        result, reason = self._structure_cache.get(key), None
+        if result is None and self.prompt_assistant is not None:
+            result, reason = self._write_caption(job, fmt, plain, layout, images, req, operation)
+            if result is not None:
+                self._structure_cache[key] = result
+                while len(self._structure_cache) > 32:
+                    self._structure_cache.popitem(last=False)
+        elif result is None:
+            reason = "no prompt assistant"
+        status: dict = {"format": fmt}
+        if result is not None:
+            status["structured"] = True
+            if result.fixes:
+                status["fixes"] = result.fixes
+        else:
+            result = formats.from_layout(fmt, plain, layout, width=req.width, height=req.height, operation=operation)
+            status.update({"fallback": "layout" if result else ("wrapped" if fmt == formats.FIBO else "plain"),
+                           "reason": reason})
+            note = None if result else formats.fallback_note(fmt, spec.name, had_layout=bool(layout))
+            if note:
+                status["note"] = note
+            log.warning("structured prompt for %s fell back (%s): %s", job.id, status["fallback"], reason)
+        prompt = result.prompt if result else formats.fallback(fmt, plain, operation)
+        status["seconds"] = round(time.monotonic() - started, 3)
+        extras.update({"rewritten_prompt": prompt, "structure": status})
+        if result and result.layout:
+            extras["layout"] = [b.as_dict() for b in result.layout]
+        elif layout:
+            extras["layout"] = [b.as_dict() for b in layout]
+        job.emit("rewritten", {"prompt": prompt, "format": fmt})
+        return replace(req, prompt=prompt, extras=extras), {**info, "structure": status}
+
+    def _unstructured(self, job: Job, req: GenRequest) -> GenRequest:
+        """The request again on its plain sentence after the caption gave a blank image; the caption is
+        forgotten so a variation does not reuse it, and the chat says the layout was not used."""
+        for key, value in list(self._structure_cache.items()):
+            if value.prompt == req.prompt:
+                del self._structure_cache[key]
+        plain = req.extras.get("plain_prompt") or req.prompt
+        status = {**req.extras["structure"], "structured": False, "fallback": "plain", "reason": "blank image",
+                  "note": "The layout gave a blank image, so this one follows your words only."}
+        log.warning("structured prompt for %s gave a blank image; drawing it from the plain prompt", job.id)
+        job.emit("rewritten", {"prompt": plain, "format": status["format"]})
+        extras = {key: value for key, value in req.extras.items() if key != "layout"}
+        return replace(req, prompt=plain, extras={**extras, "rewritten_prompt": plain, "structure": status})
+
+    def _write_caption(self, job: Job, fmt: str, plain: str, layout: list, images: list[Path], req: GenRequest,
+                       operation: str):
+        """The agent's caption, checked, or None with the reason. Two tries in one load of the assistant."""
+        assistant, reason = self.prompt_assistant, None
+        # The words the user quoted must come back as text: the planner may have changed the quote marks.
+        user = (((job.workflow or {}).get("steps") or [{}])[0].get("prompt") or {}).get("user") or ""
+        words = formats.quoted_words(user, plain)
+        if not self.memory.make_room(assistant.need_bytes):
+            log.warning("prompt assistant structuring with less free memory than it needs")
+        job.emit("loading", {"component": "prompt_assistant"})
+        job.emit("rewriting", {})
+        try:
+            for _attempt in range(2):
+                try:
+                    reply = assistant.structure(plain, fmt=fmt, operation=operation, layout=layout, images=images,
+                                                retry=reason)
+                except IntelligenceError as exc:
+                    return None, str(exc)
+                try:
+                    return formats.normalize(fmt, reply, layout=layout, width=req.width, height=req.height,
+                                             operation=operation, words=words), None
+                except formats.FormatError as exc:
+                    reason = str(exc)
+            return None, reason
+        finally:
+            assistant.unload()  # on the worker: the image model loads next
+
+    def _plain_rewrite(self, job: Job, spec: ModelSpec) -> tuple[GenRequest, dict]:
         """Edits, and new images in Auto mode, are rewritten on this Mac before the image model loads.
 
         A prompt the user already enhanced (✨) is used as is. Without the assistant, or when it fails,

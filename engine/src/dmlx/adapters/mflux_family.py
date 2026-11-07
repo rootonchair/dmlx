@@ -50,6 +50,41 @@ _M = "mflux.models"
 #   skip_from      {part: {stack: first unused layer}} never read while streaming
 #   decode_tile_size  pixels per tile in the tiled decode (default 512)
 #   min_side       smaller requests are generated at this size and scaled down (Iris breaks up below 640 px)
+#   init_config    fn(model, model_config): for an initializer that sets its pipeline up inside init() only
+#   pipe_setup     fn(adapter, pipe): run after the pipeline's tokenizers load (FIBO 2's image processor)
+#   before_apply   {part: fn(module, weights)} before a part's weights go in
+#   presets        {steps: name}: the pipeline takes a sampler preset, not steps and guidance (Ideogram 4)
+
+
+def _fibo2_init_config(model, model_config) -> None:
+    from mflux.callbacks.callback_registry import CallbackRegistry
+
+    model.prompt_cache = {}
+    model.model_config = model_config
+    model.callbacks = CallbackRegistry()
+    model.tiling_config = None
+    model.processor = None
+    model.fonts_dir = None
+
+
+def _fibo2_pipe_setup(adapter, pipe) -> None:
+    """What Fibo2Initializer.init() adds after the weights: the Qwen3-VL image processor (it draws the
+    caption's words as images for the encoder) and the fonts the words are drawn in."""
+    from mflux.models.common_models.qwen3_vl.qwen3_vl_processor import Qwen3VLProcessor
+
+    pipe.processor = Qwen3VLProcessor(adapter.path / "processor", pipe.tokenizers["qwen3_vl"].tokenizer)
+    fonts = adapter.path / "fonts"
+    pipe.fonts_dir = fonts if fonts.is_dir() else None
+
+
+def _ideogram_rebuild(module, weights, name: str) -> None:
+    from mflux.models.ideogram4.ideogram4_initializer import Ideogram4Initializer
+
+    tree = weights.components.get(name)
+    if tree:
+        Ideogram4Initializer._rebuild_q8_folded_layers(module, tree)
+
+
 FAMILIES: dict[str, dict] = {
     "mflux.flux2_klein": {
         "initializer": f"{_M}.flux2.flux2_initializer:Flux2Initializer",
@@ -111,6 +146,28 @@ FAMILIES: dict[str, dict] = {
         # Its own cache check comes after it reads the text encoder, which would load it.
         "encode": "_encode_prompts",
         "decode_tile_size": 256,
+    },
+    # FIBO 2 (task 17): a JSON caption; it draws the caption's words with its fonts for the encoder.
+    "mflux.fibo2": {
+        "initializer": f"{_M}.fibo2.fibo2_initializer:Fibo2Initializer",
+        "weights": f"{_M}.fibo2.weights.fibo2_weight_definition:Fibo2WeightDefinition",
+        "pipelines": {"t2i": f"{_M}.fibo2.variants.txt2img.fibo2:Fibo2"},
+        "config": "fibo2",
+        "init_config": _fibo2_init_config,
+        "pipe_setup": _fibo2_pipe_setup,
+    },
+    # Ideogram 4 (task 17): two transformers, both in the denoise loop, and a JSON caption. A quantized
+    # pack folds its fp8 layers into MLX's quantized form; Ideogram's initializer rebuilds them first.
+    "mflux.ideogram4": {
+        "initializer": f"{_M}.ideogram4.ideogram4_initializer:Ideogram4Initializer",
+        "weights": f"{_M}.ideogram4.weights.ideogram4_weight_definition:Ideogram4WeightDefinition",
+        "pipelines": {"t2i": f"{_M}.ideogram4.variants.txt2img.ideogram4:Ideogram4"},
+        "config": "ideogram4_fp8",
+        "before_apply": {
+            "conditional_transformer": lambda module, weights: _ideogram_rebuild(module, weights, "conditional_transformer"),
+            "unconditional_transformer": lambda module, weights: _ideogram_rebuild(module, weights, "unconditional_transformer"),
+        },
+        "presets": {12: "V4_TURBO_12", 20: "V4_DEFAULT_20", 48: "V4_QUALITY_48"},
     },
     # Iris has no VAE: the transformer works in pixels, so its spec has no vae part.
     "mflux.iris": {
@@ -203,7 +260,8 @@ class MfluxFamilyAdapter(_MfluxAdapterBase):
         self.prompt_cache = _PromptCache()
         self.initializer = _load(self.family["initializer"])
         self.model_config = self._model_config(ModelConfig, spec)
-        self._init_config = getattr(self.initializer, "_init_config", None) or self.initializer.init_config
+        self._init_config = (self.family.get("init_config") or getattr(self.initializer, "_init_config", None)
+                             or self.initializer.init_config)
         if getattr(self, "weight_definition", None) is None:
             weights = self.family.get("weights")
             self.weight_definition = _load(weights) if weights else self.initializer.weight_definition(self.model_config)
@@ -238,11 +296,16 @@ class MfluxFamilyAdapter(_MfluxAdapterBase):
         # Build every part on a scratch object and keep one. MLX is lazy: the unused parts are
         # never evaluated (measured: 11-27 ms and under 1 MB across eight families).
         scratch = SimpleNamespace(model_config=self.model_config)
-        _call(self._init_config, model=scratch, model_config=self.model_config)
+        _call(self._init_config, model=scratch, model_config=self.model_config, model_path=self.path)
         for key, value in self.family.get("attrs", {}).items():
             setattr(scratch, key, value)
         _call(self.initializer._init_models, model=scratch, model_config=self.model_config, model_path=self.path)
         return getattr(scratch, name)
+
+    def _before_apply(self, name: str, module, weights) -> None:
+        hook = self.family.get("before_apply", {}).get(name)
+        if hook:
+            hook(module, weights)
 
     def _after_transformer_load(self, module: nn.Module) -> None:
         hook = self.family.get("after_load", {}).get("transformer")
@@ -290,7 +353,7 @@ class MfluxFamilyAdapter(_MfluxAdapterBase):
         from mflux.models.common.tokenizer import TokenizerLoader
 
         nn.Module.__init__(pipe)
-        _call(self._init_config, model=pipe, model_config=self.model_config)
+        _call(self._init_config, model=pipe, model_config=self.model_config, model_path=self.path)
         pipe.prompt_cache = self.prompt_cache
         pipe.tokenizers = TokenizerLoader.load_all(
             definitions=self.weight_definition.get_tokenizers(), model_path=str(self.path)
@@ -301,6 +364,9 @@ class MfluxFamilyAdapter(_MfluxAdapterBase):
         pipe.compute_precision = ComputePrecision(None)
         for key, value in self.family.get("attrs", {}).items():
             setattr(pipe, key, value)
+        setup = self.family.get("pipe_setup")
+        if setup:
+            setup(self, pipe)
 
     def _empty(self, base: type):
         adapter = self
@@ -362,7 +428,12 @@ class MfluxFamilyAdapter(_MfluxAdapterBase):
             "width": width,
             "height": height,
         }
-        if req.guidance is not None and "guidance" in accepted:
+        presets = self.family.get("presets")
+        if presets:
+            # Each preset carries its own guidance schedule; the nearest one to the steps asked for.
+            kwargs["num_inference_steps"] = None
+            kwargs["preset"] = presets[min(presets, key=lambda n: abs(n - (req.steps or 20)))]
+        elif req.guidance is not None and "guidance" in accepted:
             kwargs["guidance"] = req.guidance
         if req.negative_prompt and "negative_prompt" in accepted:
             kwargs["negative_prompt"] = req.negative_prompt

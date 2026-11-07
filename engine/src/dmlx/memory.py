@@ -230,14 +230,18 @@ class MemoryManager:
         """
         comps = {n: c for n, c in spec.components.items() if n not in skip}
         small_missing = self._missing(spec, [n for n, c in comps.items() if c.keep])
-        big = [n for n in ("text_encoder", "transformer") if n in comps]
+        # The big parts by phase: the encoder side, then the denoise side (two transformers on Ideogram 4).
+        groups = [g for g in ([n for n in spec.parts(p) if n in comps and not comps[n].keep]
+                              for p in ("encode", "denoise")) if g]
+        big = [n for g in groups for n in g]
         eager = self._missing(spec, list(comps)) + activation
-        phase_free = max((self._missing(spec, [n]) for n in big), default=0) + small_missing + activation
+        phase_free = max((self._missing(spec, g) for g in groups), default=0) + small_missing + activation
         resident_big = sum(comps[n].size for n in big if (spec.id, n) in self._resident)
-        sequential = max(max((comps[n].size for n in big), default=0) - resident_big, 0) + small_missing + activation
+        sequential = (max(max((sum(comps[n].size for n in g) for g in groups), default=0) - resident_big, 0)
+                      + small_missing + activation)
         needs = {"eager": eager, "phase_free": phase_free, "sequential": sequential}
         if any(comps[n].stream_size for n in big):
-            peak = max(comps[n].stream_size or comps[n].size for n in big)
+            peak = max(sum(comps[n].stream_size or comps[n].size for n in g) for g in groups)
             needs["streamed"] = max(peak - resident_big, 0) + small_missing + activation
         return needs
 
@@ -341,6 +345,16 @@ class JobGuard:
         self.max_swapin_rate = 0.0
         manager.monitor.start_window()
 
+    def _ensure_phase(self, phase: str) -> None:
+        for name in self.spec.parts(phase):
+            if not self.spec.components[name].keep:
+                self._ensure(name)
+
+    def _free_phase(self, phase: str) -> None:
+        for name in self.spec.parts(phase):
+            if not self.spec.components[name].keep:
+                self.m.free(self.spec.id, name)
+
     def _ensure(self, name: str) -> None:
         if name not in self.spec.components:
             return
@@ -362,8 +376,8 @@ class JobGuard:
             # at phase callbacks. A cached prompt can skip the encode callbacks,
             # otherwise leaving eager components from the preceding job resident
             # during reference-image preprocessing.
-            self.m.free(self.spec.id, "text_encoder")
-            self.m.free(self.spec.id, "transformer")
+            self._free_phase("encode")
+            self._free_phase("denoise")
         for name, comp in self.spec.components.items():
             if comp.keep:
                 self._ensure(name)
@@ -376,8 +390,8 @@ class JobGuard:
         self._phase_started[phase] = time.monotonic()
         if phase == "encode":
             if self.plan.strategy in ("sequential", "streamed"):
-                self.m.free(self.spec.id, "transformer")
-            self._ensure("text_encoder")
+                self._free_phase("denoise")
+            self._ensure_phase("encode")
             self.emit("encoding", {})
         elif phase == "denoise":
             # Image-conditioned pipelines may use the VAE before denoising.
@@ -385,14 +399,14 @@ class JobGuard:
             self.after_phase("preprocess")
             if self.plan.strategy in ("sequential", "streamed"):
                 self.m.free(self.spec.id, "vae")
-            self._ensure("transformer")
+            self._ensure_phase("denoise")
         elif phase == "preprocess":
             # Image-conditioned pipelines encode their source with the VAE before denoising.
             self._ensure("vae")
         elif phase == "layout":
             # Some multimodal pipelines need transformer metadata before their
             # normal denoise callback, while the VAE is still encoding references.
-            self._ensure("transformer")
+            self._ensure_phase("denoise")
         elif phase == "decode":
             self._ensure("vae")
             self._choose_decode()
@@ -414,9 +428,9 @@ class JobGuard:
         if started is not None:
             self.timings[phase] = self.timings.get(phase, 0.0) + time.monotonic() - started
         if phase == "encode" and self.plan.strategy in ("phase_free", "sequential", "streamed"):
-            self.m.free(self.spec.id, "text_encoder")
+            self._free_phase("encode")
         elif phase == "denoise" and self.plan.strategy in ("sequential", "streamed"):
-            self.m.free(self.spec.id, "transformer")
+            self._free_phase("denoise")
 
     def on_step(self, step: int, total: int) -> None:
         self.emit("step", {"step": step, "total": total})

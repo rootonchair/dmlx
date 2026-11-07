@@ -49,6 +49,12 @@ public struct ImageVersion: Codable, Identifiable, Hashable, Sendable {
     public var workflowRoute: WorkflowRoute?
     public var mediaInputs: [MediaInput]?
     public var workflowPrompt: PromptSpec?
+    /// A note in plain words under the image, e.g. when the model's detailed description couldn't be written.
+    public var note: String?
+    /// Boxes sent with the request (the user's), and the layout saved with the result (the user's and the
+    /// agent's), which the overlay and the Layout tool show.
+    public var layoutRequest: [LayoutBox]?
+    public var layout: [LayoutBox]?
 
     public init(
         id: String = UUID().uuidString, status: VersionStatus = .queued, jobId: String? = nil, resultId: String? = nil,
@@ -164,8 +170,12 @@ public struct EngineModel: Codable, Identifiable, Hashable, Sendable {
     public var group_name: String?
     /// Ids of added models this built-in one replaced (same repo); an old choice may name one.
     public var aliases: [String]?
+    /// The structured caption the model wants (task 17); set for models that can take a layout.
+    public var prompt_format: String?
 
     public func supports(_ task: GenTask) -> Bool { tasks.contains(task.rawValue) }
+    /// Ideogram 4, FIBO and MOSS Image place things from boxes; other models get no Layout tool.
+    public var takesLayout: Bool { prompt_format != nil }
     /// Added from the app (removable); built-in models can only have their files deleted.
     public var isUserAdded: Bool { user_added ?? false }
     public var autoSelectable: Bool { auto_select ?? true }

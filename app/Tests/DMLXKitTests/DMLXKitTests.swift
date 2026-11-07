@@ -401,3 +401,70 @@ final class ModelGroupTests: XCTestCase {
         XCTAssertEqual(group.defaultVariant?.repo, "a/m-q6")
     }
 }
+
+final class LayoutTests: XCTestCase {
+    func testSameGeometryIgnoresWordsButNotPlaces() {
+        let a = LayoutBox(id: "d", label: "FRIDAY", rect: NormalizedRect(x: 0.2, y: 0.4, width: 0.5, height: 0.1))
+        var renamed = a
+        renamed.label = "SATURDAY"
+        XCTAssertTrue(LayoutBox.sameGeometry([a], [renamed]))
+        var moved = a
+        moved.place(NormalizedRect(x: 0.5, y: 0.88, width: 0.4, height: 0.08))
+        XCTAssertFalse(LayoutBox.sameGeometry([a], [moved]))
+        XCTAssertFalse(LayoutBox.sameGeometry([a], []))
+    }
+
+    func testMovingABoxClearsTheAgentsDescriptionButNotTheUsers() {
+        var agents = LayoutBox(label: "FRIDAY 9 PM", desc: "smaller, below main title",
+                               rect: NormalizedRect(x: 0.2, y: 0.37, width: 0.5, height: 0.13), byUser: false)
+        agents.place(NormalizedRect(x: 0.56, y: 0.88, width: 0.4, height: 0.08))
+        XCTAssertEqual(agents.desc, "")
+        XCTAssertTrue(agents.byUser)
+
+        var mine = LayoutBox(label: "sax", desc: "gold sax", descByUser: true,
+                             rect: NormalizedRect(x: 0.1, y: 0.3, width: 0.3, height: 0.4))
+        mine.place(NormalizedRect(x: 0.5, y: 0.3, width: 0.3, height: 0.4))
+        XCTAssertEqual(mine.desc, "gold sax")
+    }
+
+    func testDecodesTheEnginesLayoutAndKeepsOldVersionsReadable() throws {
+        let json = #"[{"id":"date","kind":"text","label":"FRIDAY 9 PM","box":[880,520,960,960],"desc":"","desc_by_user":false,"by_user":true},{"id":"a1","kind":"obj","label":"sax","box":[260,300,820,700]}]"#
+        let boxes = try JSONDecoder().decode([LayoutBox].self, from: Data(json.utf8))
+        XCTAssertEqual(boxes[0].kind, .text)
+        XCTAssertTrue(boxes[0].byUser)
+        XCTAssertFalse(boxes[1].byUser)
+        XCTAssertEqual(boxes[0].rect.x, 0.52, accuracy: 1e-9)
+        XCTAssertEqual(boxes[0].rect.height, 0.08, accuracy: 1e-9)
+        // A version saved before task 17 has no layout fields.
+        let old = #"{"id":"v","status":"done","prompt":"boat","model":"m","task":"t2i","size":"auto","sourceIds":[],"step":0,"totalSteps":0,"phase":"Done","loads":[]}"#
+        let version = try JSONDecoder().decode(ImageVersion.self, from: Data(old.utf8))
+        XCTAssertNil(version.layout)
+        XCTAssertNil(version.note)
+    }
+
+    func testMovingABoxMakesItTheUsersAndRoundTrips() {
+        var box = LayoutBox(kind: .obj, label: "fox", rect: NormalizedRect(x: 0.1, y: 0.2, width: 0.3, height: 0.4), byUser: false)
+        XCTAssertEqual(box.box, [200, 100, 600, 400])
+        box.place(NormalizedRect(x: 0.7, y: 0.7, width: 0.25, height: 0.25))
+        XCTAssertTrue(box.byUser)
+        XCTAssertEqual(box.box, [700, 700, 950, 950])
+        XCTAssertEqual(LayoutWords.location(box), "bottom right")
+    }
+
+    func testOnlySendableBoxesGoWithTheRequest() throws {
+        let empty = LayoutBox(kind: .text, label: "  ", rect: .full)
+        var described = LayoutBox(kind: .obj, label: "sax", desc: "  ", descByUser: true, rect: .full)
+        described.label = " sax "
+        let sent = LayoutBox.sendable([empty, described])
+        XCTAssertEqual(sent.count, 1)
+        XCTAssertEqual(sent[0].label, "sax")
+        XCTAssertFalse(sent[0].descByUser)  // an empty description is the agent's to write
+
+        let parameters = WorkflowParameters(size: "1024x768", layout: sent)
+        let encoded = try JSONSerialization.jsonObject(with: JSONEncoder().encode(parameters)) as? [String: Any]
+        let first = (encoded?["layout"] as? [[String: Any]])?.first
+        XCTAssertEqual(first?["by_user"] as? Bool, true)
+        XCTAssertEqual(first?["desc_by_user"] as? Bool, false)
+        XCTAssertEqual(first?["box"] as? [Int], [0, 0, 1000, 1000])
+    }
+}

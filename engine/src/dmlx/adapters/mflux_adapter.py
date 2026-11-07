@@ -18,7 +18,7 @@ from mlx import nn
 from mlx.utils import tree_flatten
 from PIL import Image
 
-from dmlx.adapters.base import GenRequest, JobAborted, PhaseHooks
+from dmlx.adapters.base import GenRequest, JobAborted, NonFinite, PhaseHooks
 from dmlx.registry import ModelSpec
 
 _EMBED_CACHE_ENTRIES = 32
@@ -51,6 +51,9 @@ class _LoopHooks:
     def call_in_loop(self, t, seed, prompt, latents, config, time_steps, **_kwargs):
         if self.hooks:
             mx.eval(latents)
+            # Stop at the first bad step, not after the whole run: the decode would be a black square.
+            if not bool(mx.isfinite(latents).all()):
+                raise NonFinite(t + 1)
             self.hooks.on_step(t + 1, config.num_inference_steps)
             self.hooks.check()
 
@@ -87,6 +90,9 @@ def _install_mflux_fixes() -> None:
         return latents.astype(ModelConfig.precision) if latents.dtype == mx.float32 else latents
 
     VAEUtil.encode = staticmethod(encode)
+    from dmlx.adapters.mflux_fixes import install_gated_delta_fix
+
+    install_gated_delta_fix()  # MOSS Image's text encoder: wrong past one chunk, NaN past ~250 tokens
     _FIXES_INSTALLED = True
 
 
@@ -141,6 +147,7 @@ class _MfluxAdapterBase:
             component = self._components[name]
             weights = WeightLoader.load_single_local(component=component, root_path=self.path)
             module = self._construct(name)
+            self._before_apply(name, module, weights)
             bits = WeightApplier.apply_and_quantize_single(
                 weights=weights, model=module, component=component, quantize_arg=None
             )
@@ -154,6 +161,9 @@ class _MfluxAdapterBase:
             self._streamed[name] = False
             gc.collect()
             return _module_bytes(module)
+
+    def _before_apply(self, name: str, module, weights) -> None:
+        """A family's own step before its weights go in (Ideogram 4 rebuilds its quantized layers)."""
 
     def _load_streamed(self, name: str) -> int:
         from dmlx.adapters.streaming import make_streamed

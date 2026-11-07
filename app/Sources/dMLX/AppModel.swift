@@ -68,6 +68,15 @@ final class AppModel {
     var editorImage: NSImage?
     var editorTurnNumber = 0
     var isExportingEditor = false
+    // Layout (task 17). The editor's boxes, when the image's model places things from a layout.
+    var editorLayout: [LayoutBox]?
+    var editorBlankLayout = false
+    var editorPlacesByWords = false
+    private var editorTurnId: String?
+    /// Boxes for the next message: drawn from ▭ Layout in the composer, or kept after a redraw with a layout.
+    var pendingLayout: [LayoutBox]?
+    var pendingLayoutSource: String?
+    var showBoxes = true
     /// The model for new images and the model for edits: "auto" or a model id, each chosen in the composer's
     /// model menu (and in Settings → Models).
     var generateChoice: String = AppModel.savedModelChoice(.t2i) {
@@ -141,6 +150,7 @@ final class AppModel {
         var promptSpec: PromptSpec
         /// False for an answer to the agent's question: the attachments are shown on the message it answers.
         var showsAttachments = true
+        var layout: [LayoutBox]? = nil
 
         var attachmentIds: [String] { attachmentInputs.map(\.id) }
     }
@@ -410,6 +420,21 @@ final class AppModel {
 
     func defaultModel(for task: GenTask) -> EngineModel? {
         defaultModel(for: task == .edit ? "image.edit" : "image.generate")
+    }
+
+    /// ▭ Layout shows when the chosen model places things from boxes; in Auto, when one such model is
+    /// downloaded (the engine then offers the agent only those models).
+    var layoutAvailable: Bool {
+        if let chosen = chosenModel(for: .t2i) { return chosen.takesLayout }
+        return choosableModels.contains(where: \.takesLayout)
+    }
+
+    func takesLayout(_ modelId: String) -> Bool {
+        models.first(where: { $0.id == modelId })?.takesLayout ?? false
+    }
+
+    func placesByWords(_ modelId: String) -> Bool {
+        models.first(where: { $0.id == modelId })?.prompt_format == "fibo-json"
     }
 
     /// On Auto, the model the agent picked for this message when it can run it; otherwise the usual choice.
@@ -771,6 +796,7 @@ final class AppModel {
 
     private func clearComposerContext() {
         attachments = []
+        clearPendingLayout()
         routeTask?.cancel()
         routeDecision = nil
         routeDecisionKey = nil
@@ -808,7 +834,7 @@ final class AppModel {
         let snapshot = PendingRoute(
             message: message, attachmentInputs: attachments.enumerated().map { $0.element.mediaInput(order: $0.offset) },
             latestResultId: latestImageTurn?.current?.resultId, latestTurnId: latestImageTurn?.id,
-            promptSpec: selectedPromptSpec(for: message))
+            promptSpec: selectedPromptSpec(for: message), layout: layoutForNextMessage())
         let key = routingKey(message: message)
         // With the agent, every sent message is planned by it; the rules only check its answer (in the engine).
         let planned = promptAssistantInstalled
@@ -842,7 +868,7 @@ final class AppModel {
                     message: message, currentResultId: snapshot.latestResultId, currentPrompt: currentPrompt,
                     attachments: snapshot.attachmentIds, attachmentNotes: notes, history: history,
                     selectedModels: self?.selectedModels ?? [:],
-                    plan: planned, wait: waits)
+                    plan: planned, wait: waits, layout: snapshot.layout)
                 guard let self, !_Concurrency.Task.isCancelled else { return }
                 self.planningMessage = nil
                 self.routeDecision = decision
@@ -855,6 +881,23 @@ final class AppModel {
                 self.giveBack(message, because: "Could not plan it: \(error.localizedDescription)")
             }
         }
+    }
+
+    /// The composer's layout, if the chosen model can use it; it goes with this message only.
+    private func layoutForNextMessage() -> [LayoutBox]? {
+        guard let layout = pendingLayout, !layout.isEmpty else { return nil }
+        pendingLayout = nil
+        pendingLayoutSource = nil
+        guard layoutAvailable else {
+            show("Layout not used: \(chosenModel(for: .t2i)?.name ?? "this model") can't place things from boxes.")
+            return nil
+        }
+        return layout
+    }
+
+    func clearPendingLayout() {
+        pendingLayout = nil
+        pendingLayoutSource = nil
     }
 
     /// A sent message waiting on the user (the agent's question, or a workflow to choose), shown in the chat.
@@ -1058,7 +1101,8 @@ final class AppModel {
         case "image.generate":
             guard let model = model(for: "image.generate", decision: decision) else { return noModel(sessionId) }
             startImageTurn(sessionId: sessionId, prompt: message, model: model, task: .t2i, inputs: [], route: "Generated",
-                           size: aspect.size, decision: decision, promptSpec: pending.promptSpec, operation: decision.intent)
+                           size: aspect.size, decision: decision, promptSpec: pending.promptSpec, operation: decision.intent,
+                           layout: model.takesLayout ? pending.layout : nil)
         case "image.edit":
             guard let model = model(for: "image.edit", decision: decision) else { return noModel(sessionId) }
             let inputs = routedInputs(pending, decision: decision)
@@ -1136,17 +1180,18 @@ final class AppModel {
 
     private func startImageTurn(
         sessionId: String, prompt: String, model: EngineModel, task: GenTask, inputs: [MediaInput], route: String, size: String?,
-        decision: WorkflowDecision, promptSpec: PromptSpec, operation: String? = nil
+        decision: WorkflowDecision, promptSpec: PromptSpec, operation: String? = nil, layout: [LayoutBox]? = nil
     ) {
         let workflowRoute = WorkflowRoute(
             intent: decision.intent, confidence: decision.confidence, router: decision.provider,
             probabilities: decision.probabilities, modelVersion: decision.model_version,
             latencyMS: decision.latency_ms, memoryMB: decision.memory_mb)
-        let version = ImageVersion(
+        var version = ImageVersion(
             prompt: prompt, model: model.id, task: task,
             operation: operation ?? (task == .edit ? "image.edit" : "image.generate"),
             size: size ?? "auto", sourceIds: inputs.map(\.id),
             workflowRoute: workflowRoute, mediaInputs: inputs, workflowPrompt: promptSpec)
+        version.layoutRequest = layout
         let turn = Turn(sessionId: sessionId, index: turns.count, kind: .image, text: prompt, number: nextImageNumber,
                         route: route, versions: [version], activeVersion: 0)
         appendTurn(turn)
@@ -1169,7 +1214,7 @@ final class AppModel {
                     size: version.size == "auto" ? nil : version.size, seed: version.seed,
                     sourceIds: version.sourceIds, mediaInputs: version.mediaInputs,
                     force: force, route: version.workflowRoute, promptSpec: version.workflowPrompt,
-                    operation: version.operation)
+                    operation: version.operation, layout: version.layoutRequest)
                 for try await event in stream {
                     self?.apply(event, turnId: turnId, versionId: versionId)
                 }
@@ -1235,7 +1280,9 @@ final class AppModel {
                 v.loads = p.report?.loads ?? v.loads
                 v.strategy = p.report?.strategy ?? v.strategy
                 v.seconds = p.report?.total_seconds
+                v.note = p.report?.structure?.note
                 v.phase = "Done"
+                if p.report?.structure?.format != nil, let rid = v.resultId { fetchLayout(turnId, versionId, rid) }
             case "error":
                 v.status = .error
                 v.errorCode = p.code
@@ -1270,6 +1317,16 @@ final class AppModel {
         case "sequential": return "low-memory mode"
         case "streamed": return "lowest-memory mode"
         default: return nil
+        }
+    }
+
+    /// The layout saved with a result (the user's boxes and the agent's), for the overlay and the Layout tool.
+    private func fetchLayout(_ turnId: String, _ versionId: String, _ resultId: String) {
+        guard let client else { return }
+        _Concurrency.Task { [weak self] in
+            guard let boxes = try? await client.resultLayout(resultId), !boxes.isEmpty else { return }
+            self?.update(turnId, versionId) { $0.layout = boxes }
+            self?.persistTurn(turnId)
         }
     }
 
@@ -1325,6 +1382,7 @@ final class AppModel {
                              sourceIds: base.sourceIds, label: "Variation", workflowRoute: base.workflowRoute,
                              mediaInputs: base.mediaInputs, workflowPrompt: base.workflowPrompt)
         v.seed = nil
+        v.layoutRequest = base.layoutRequest
         turns[t].versions.append(v)
         turns[t].activeVersion = turns[t].versions.count - 1
         persist(t)
@@ -1355,6 +1413,7 @@ final class AppModel {
                              sourceIds: base.sourceIds, workflowRoute: base.workflowRoute,
                              mediaInputs: base.mediaInputs, workflowPrompt: spec)
         v.seed = base.seed
+        v.layoutRequest = base.layoutRequest
         turns[u].text = prompt
         turns[t].text = prompt
         turns[t].versions = [v]
@@ -1392,6 +1451,68 @@ final class AppModel {
             ?? EditorDocument(baseResultId: resultId, baseWidth: cgImage.width, baseHeight: cgImage.height)
         editorImage = image
         editorTurnNumber = turn.number
+        editorTurnId = turn.id
+        editorBlankLayout = false
+        if let v = turn.current, takesLayout(v.model) {
+            editorLayout = v.layout ?? v.layoutRequest ?? []
+            editorPlacesByWords = placesByWords(v.model)
+        } else {
+            editorLayout = nil
+        }
+    }
+
+    /// ▭ Layout in the composer: the same sheet on a blank canvas at the chosen aspect.
+    func openBlankLayout() {
+        let parts = aspect.size.split(separator: "x").compactMap { Int($0) }
+        let width = parts.first ?? 1024, height = parts.last ?? 1024
+        let blank = NSImage(size: NSSize(width: width / 8, height: height / 8))
+        editorDocument = EditorDocument(baseResultId: "layout", baseWidth: width, baseHeight: height)
+        editorImage = blank
+        editorTurnId = nil
+        editorTurnNumber = 0
+        editorBlankLayout = true
+        editorLayout = pendingLayout ?? []
+        editorPlacesByWords = chosenModel(for: .t2i).map { placesByWords($0.id) } ?? false
+    }
+
+    /// Redraw with layout (a new version on the same turn), or Use layout from the composer.
+    func applyLayout(_ boxes: [LayoutBox]) {
+        if editorBlankLayout {
+            pendingLayout = boxes.isEmpty ? nil : boxes
+            pendingLayoutSource = nil
+        } else if let turnId = editorTurnId {
+            redraw(turnId, layout: boxes)
+        }
+        closeEditor()
+    }
+
+    private func redraw(_ turnId: String, layout: [LayoutBox]) {
+        guard let t = turns.firstIndex(where: { $0.id == turnId }), let base = turns[t].current else { return }
+        var v = ImageVersion(prompt: base.prompt, model: base.model, task: base.task, operation: base.operation, size: base.size,
+                             sourceIds: base.sourceIds, label: "Your layout", workflowRoute: base.workflowRoute,
+                             mediaInputs: base.mediaInputs, workflowPrompt: base.workflowPrompt)
+        // The same seed keeps the look, but it also holds the old composition: on MOSS a moved date stayed
+        // under the title with the same seed and went where it was put on two other seeds (2026-11-07).
+        // So the seed is kept only when no box moved, appeared or went away.
+        v.seed = LayoutBox.sameGeometry(layout, base.layout ?? []) ? base.seed : nil
+        // Redraw with layout approves the whole canvas: every box is the user's now, so none is lost if
+        // the agent leaves it out (the engine puts the user's boxes back).
+        let approved = layout.map { box -> LayoutBox in
+            var box = box
+            box.byUser = true
+            return box
+        }
+        v.layoutRequest = approved
+        v.layout = approved
+        turns[t].versions.append(v)
+        turns[t].activeVersion = turns[t].versions.count - 1
+        persist(t)
+        run(turnId: turnId, versionId: v.id)
+        // The next message keeps the boxes the user placed ("make it warmer"); the chip shows it and ✕ drops it.
+        if !approved.isEmpty {
+            pendingLayout = approved
+            pendingLayoutSource = "kept from image \(turns[t].number)"
+        }
     }
 
     /// Dev harness only: the tool the editor opens on ("Crop", "Paint" or "Erase").
@@ -1401,6 +1522,9 @@ final class AppModel {
         guard !isExportingEditor else { return }
         editorDocument = nil
         editorImage = nil
+        editorLayout = nil
+        editorBlankLayout = false
+        editorTurnId = nil
     }
 
     func applyEditor(_ document: EditorDocument) {

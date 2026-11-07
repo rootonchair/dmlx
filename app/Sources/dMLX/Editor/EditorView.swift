@@ -7,6 +7,7 @@ private enum EditorTool: String, CaseIterable, Identifiable {
     case crop = "Crop"
     case paint = "Paint"
     case erase = "Erase"
+    case layout = "Layout"
     var id: String { rawValue }
 }
 
@@ -20,22 +21,47 @@ struct EditorView: View {
     @State private var dragStart: NormalizedPoint?
     @State private var gestureSnapshot: EditorDocument?
     @State private var comparing = false
+    // Layout (task 17): only for models that place things from boxes.
+    @State private var boxes: [LayoutBox]
+    @State private var selectedBox: String?
+    @State private var boxHistory: [[LayoutBox]] = []
+    @State private var boxFuture: [[LayoutBox]] = []
+    @FocusState private var describing: Bool
 
     let source: NSImage
     let isExporting: Bool
     let onCancel: () -> Void
     let onApply: (EditorDocument) -> Void
+    /// The result's layout when its model takes one; nil hides the Layout tool.
+    let initialLayout: [LayoutBox]?
+    /// A blank canvas from the composer's ▭ Layout: no image yet, so only Layout works.
+    let blankLayout: Bool
+    let placesByWords: Bool
+    let onLayout: ([LayoutBox]) -> Void
 
     init(
         document: EditorDocument, source: NSImage, isExporting: Bool, startTool: String? = nil,
-        onCancel: @escaping () -> Void, onApply: @escaping (EditorDocument) -> Void
+        layout: [LayoutBox]? = nil, blankLayout: Bool = false, placesByWords: Bool = false,
+        onCancel: @escaping () -> Void, onApply: @escaping (EditorDocument) -> Void,
+        onLayout: @escaping ([LayoutBox]) -> Void = { _ in }
     ) {
         _document = State(initialValue: document)
-        _tool = State(initialValue: startTool.flatMap(EditorTool.init(rawValue:)) ?? .crop)
+        let start = startTool.flatMap(EditorTool.init(rawValue:))
+        _tool = State(initialValue: blankLayout ? .layout : (start == .layout && layout == nil ? .crop : start ?? .crop))
+        _boxes = State(initialValue: layout ?? [])
         self.source = source
         self.isExporting = isExporting
         self.onCancel = onCancel
         self.onApply = onApply
+        self.initialLayout = layout
+        self.blankLayout = blankLayout
+        self.placesByWords = placesByWords
+        self.onLayout = onLayout
+    }
+
+    private var tools: [EditorTool] {
+        if blankLayout { return [.layout] }
+        return EditorTool.allCases.filter { $0 != .layout || initialLayout != nil }
     }
 
     var body: some View {
@@ -43,12 +69,13 @@ struct EditorView: View {
             ScrollView(.horizontal) {
                 HStack(spacing: 12) {
                     Picker("Tool", selection: $tool) {
-                        ForEach(EditorTool.allCases) { Text($0.rawValue).tag($0) }
+                        ForEach(tools) { Text($0.rawValue).tag($0) }
                     }
                     .pickerStyle(.segmented)
-                    .frame(width: 260)
+                    .frame(width: CGFloat(65 * tools.count))
+                    .help(blankLayout ? "No image yet: draw where things go, then make the image" : "")
 
-                    if tool != .crop {
+                    if tool == .paint || tool == .erase {
                         ColorPicker("Color", selection: $brushColor, supportsOpacity: true)
                             .labelsHidden()
                         Slider(value: $brushWidth, in: 0.003...0.1)
@@ -57,12 +84,14 @@ struct EditorView: View {
                     }
                     Spacer()
                     Button { undo() } label: { Image(systemName: "arrow.uturn.backward") }
-                        .disabled(history.isEmpty)
+                        .disabled(tool == .layout ? boxHistory.isEmpty : history.isEmpty)
                     Button { redo() } label: { Image(systemName: "arrow.uturn.forward") }
-                        .disabled(future.isEmpty)
-                    Button("Original") { comparing.toggle() }
-                        .buttonStyle(.borderedProminent)
-                        .tint(comparing ? .secondary : .accentColor)
+                        .disabled(tool == .layout ? boxFuture.isEmpty : future.isEmpty)
+                    if !blankLayout {
+                        Button("Original") { comparing.toggle() }
+                            .buttonStyle(.borderedProminent)
+                            .tint(comparing ? .secondary : .accentColor)
+                    }
                 }
                 .fixedSize(horizontal: true, vertical: false)
             }
@@ -74,16 +103,49 @@ struct EditorView: View {
                 .padding(.horizontal)
                 .padding(.bottom, 10)
 
-            EditorCanvas(
-                source: source, document: comparing ? originalView : document,
-                showEdits: !comparing, tool: tool,
-                onChanged: updateGesture, onEnded: finishGesture)
+            Group {
+                if tool == .layout {
+                    ZStack {
+                        if !blankLayout {
+                            GeometryReader { geometry in
+                                let rect = EditorGeometry.fittedRect(
+                                    imageWidth: document.baseWidth, imageHeight: document.baseHeight, in: geometry.size)
+                                Image(nsImage: source).resizable()
+                                    .frame(width: rect.width, height: rect.height)
+                                    .position(x: rect.midX, y: rect.midY)
+                            }
+                        } else {
+                            GeometryReader { geometry in
+                                let rect = EditorGeometry.fittedRect(
+                                    imageWidth: document.baseWidth, imageHeight: document.baseHeight, in: geometry.size)
+                                Rectangle().fill(Color.white.opacity(0.08))
+                                    .frame(width: rect.width, height: rect.height)
+                                    .position(x: rect.midX, y: rect.midY)
+                            }
+                        }
+                        if !comparing {
+                            LayoutCanvas(
+                                boxes: $boxes, selected: $selectedBox, imageWidth: document.baseWidth,
+                                imageHeight: document.baseHeight, placesByWords: placesByWords,
+                                onBeginChange: rememberBoxes, onDescribe: { describing = true })
+                        }
+                    }
+                } else {
+                    EditorCanvas(
+                        source: source, document: comparing ? originalView : document,
+                        showEdits: !comparing, tool: tool,
+                        onChanged: updateGesture, onEnded: finishGesture)
+                }
+            }
                 .frame(minWidth: 320, minHeight: 220, maxHeight: .infinity)
                 .background(Color.black.opacity(0.88))
 
             ScrollView(.horizontal) {
                 HStack(spacing: 8) {
-                    if tool == .crop {
+                    if tool == .layout {
+                        LayoutBar(boxes: $boxes, selected: $selectedBox, placesByWords: placesByWords,
+                                  blank: blankLayout, describing: $describing, onBeginChange: rememberBoxes)
+                    } else if tool == .crop {
                         Text("Crop:").foregroundStyle(.secondary)
                         Button("Full") { setCrop(.full) }
                         Button("Square") { setAspect(1) }
@@ -95,6 +157,17 @@ struct EditorView: View {
                             .font(.caption).foregroundStyle(.secondary)
                     }
                     Spacer()
+                    if tool == .layout {
+                        Button("Reset") { rememberBoxes(); boxes = initialLayout ?? []; selectedBox = nil }
+                        Button("Cancel", action: onCancel)
+                        Button(blankLayout ? "Use layout" : "Redraw with layout") {
+                            onLayout(LayoutBox.sendable(boxes))
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(LayoutBox.sendable(boxes).isEmpty && blankLayout)
+                        .help(blankLayout ? "Attach the boxes to your next message"
+                              : "A new version of this image with your boxes (the same seed when no box moved)")
+                    } else {
                     Button("Reset") { mutate { $0.crop = .full; $0.strokes = [] } }
                     Button("Cancel", action: onCancel)
                     Button {
@@ -106,6 +179,7 @@ struct EditorView: View {
                     }
                     .buttonStyle(.borderedProminent)
                     .disabled(isExporting)
+                    }
                 }
                 .fixedSize(horizontal: true, vertical: false)
             }
@@ -173,13 +247,30 @@ struct EditorView: View {
         dragStart = nil
     }
 
+    private func rememberBoxes() {
+        boxHistory.append(boxes)
+        boxFuture = []
+    }
+
     private func undo() {
+        if tool == .layout {
+            guard let previous = boxHistory.popLast() else { return }
+            boxFuture.append(boxes)
+            boxes = previous
+            return
+        }
         guard let previous = history.popLast() else { return }
         future.append(document)
         document = previous
     }
 
     private func redo() {
+        if tool == .layout {
+            guard let next = boxFuture.popLast() else { return }
+            boxHistory.append(boxes)
+            boxes = next
+            return
+        }
         guard let next = future.popLast() else { return }
         history.append(document)
         document = next

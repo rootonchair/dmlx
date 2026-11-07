@@ -242,6 +242,10 @@ struct ImageTurnView: View {
                 if version?.isActive == true {
                     Button("Cancel") { model.cancel(turn.id) }
                 } else if !hasNoImage {
+                    if let boxes = version?.layout, !boxes.isEmpty {
+                        Button(model.showBoxes ? "Hide boxes" : "Show boxes") { model.showBoxes.toggle() }
+                            .help("Show where things were placed. Change them in Crop / Draw → Layout")
+                    }
                     Button("Variations") { model.variation(turn.id) }
                         .help("Same prompt, new seed")
                         .guideTip(VersionsTip.self, in: isLatest ? Guide.shared.image : nil, edge: .top)
@@ -262,6 +266,9 @@ struct ImageTurnView: View {
 
             if let v = version {
                 Text(metaLine(v)).font(.caption).foregroundStyle(.secondary)
+                if let note = v.note, v.status == .done {
+                    NoticeRow(text: note)
+                }
             }
         }
         .onAppear { if version?.status == .done { Guide.shared.imageShown() } }
@@ -319,6 +326,13 @@ struct ResultImage: View {
                     .aspectRatio(contentMode: .fit)
                     .onDrag { NSItemProvider(contentsOf: ImageCache.fileURL(rid)) ?? NSItemProvider() }
                     .accessibilityLabel(Text(v?.prompt ?? "Generated image"))
+                    .overlay {
+                        // The layout saved with the result: dashed for text, solid for pictures, amber for yours.
+                        if model.showBoxes, let boxes = v?.layout, !boxes.isEmpty {
+                            LayoutOverlay(boxes: boxes, imageWidth: Int(image.size.width), imageHeight: Int(image.size.height),
+                                          placesByWords: model.placesByWords(v?.model ?? ""))
+                        }
+                    }
             } else {
                 placeholder(v)
             }

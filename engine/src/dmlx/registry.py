@@ -9,6 +9,7 @@ from pathlib import Path
 import yaml
 
 from dmlx.capabilities import CapabilitySpec, parse_capabilities
+from dmlx.prompting.formats import FORMAT_BY_ADAPTER, FORMATS
 
 GB = 1024**3
 
@@ -63,6 +64,7 @@ class ModelSpec:
     license_url: str | None = None
     license_acceptance_id: str | None = None
     agent_note: str = ""  # what the planning agent should know when it picks a model for a message
+    prompt_format: str | None = None  # a structured caption the model wants (task 17): fibo-json, ideogram-json, moss-layout
     user_added: bool = False  # added from the app; stored in the user's models folder and removable
     download_size: int = 0  # the repo's files on Hugging Face, for showing the size before the model is downloaded
     aliases: list[str] = field(default_factory=list)  # ids of added models of the same repo it replaces
@@ -82,6 +84,11 @@ class ModelSpec:
     def low_memory_decode(self) -> str:
         """Decode mode used whenever the full decode does not clearly fit."""
         return "banded" if self.decode_banded_gb_per_mp else "tiled"
+
+    def parts(self, phase: str) -> list[str]:
+        """The parts of a phase: one text encoder and one transformer for most models; Ideogram 4 has
+        two transformers (conditional and unconditional) that both run in the denoise loop."""
+        return [name for name, component in self.components.items() if component.phase == phase]
 
     def activation_bytes(self, width: int, height: int, references: int = 0) -> int:
         """Peak working memory of the cheapest safe path: denoise, or a low-memory decode, whichever is larger."""
@@ -130,6 +137,7 @@ class ModelSpec:
             "repo": self.repo,
             "user_added": self.user_added,
             "defaults": self.defaults,
+            "prompt_format": self.prompt_format,
             "size_gb": round(self.listed_size / GB, 2) if self.listed_size else None,
             "capabilities": {name: capability.as_dict() for name, capability in self.capabilities.items()},
             **self.grouping(),
@@ -141,6 +149,37 @@ class ModelSpec:
         from dmlx.catalog import group  # catalog imports this module
 
         return group(self.repo, self.quantization)
+
+
+def _prompt_format(data: dict) -> str | None:
+    """The spec's format, or its family's for specs saved before task 17; unknown names are ignored."""
+    value = data.get("prompt_format", FORMAT_BY_ADAPTER.get(data.get("adapter", "")))
+    return value if value in FORMATS else None
+
+
+# Catalog values that have since changed, per adapter: a spec saved with the old value (it is a snapshot
+# taken when the model was added) moves to the new one. A value the user set themselves is kept.
+_RETIRED_DEFAULTS = {"mflux.moss_image": {"steps": (50, 30)}}
+_RETIRED_NOTES = {
+    "mflux.moss_image": ("New images only; very slow (about 13 minutes at 1024 px, 3 minutes at 512 px); "
+                         "use only when the user asks for it.",
+                         "New images only; very slow (about 8 minutes at 1024 px, 2 minutes at 512 px); "
+                         "use only when the user asks for it."),
+}
+
+
+def _current_defaults(data: dict) -> dict:
+    defaults = dict(data.get("defaults", {}))
+    for key, (old, new) in _RETIRED_DEFAULTS.get(data.get("adapter", ""), {}).items():
+        if defaults.get(key) == old:
+            defaults[key] = new
+    return defaults
+
+
+def _current_note(data: dict) -> str:
+    note = str(data.get("agent_note", ""))
+    old, new = _RETIRED_NOTES.get(data.get("adapter", ""), (None, None))
+    return new if note == old else note
 
 
 def _parse(data: dict) -> ModelSpec:
@@ -167,7 +206,7 @@ def _parse(data: dict) -> ModelSpec:
         license=data["license"],
         tasks=tasks,
         components=comps,
-        defaults=dict(data.get("defaults", {})),
+        defaults=_current_defaults(data),
         quantization=data.get("quantization"),
         max_references=max_references,
         min_steps=int(data.get("min_steps", 1)),
@@ -183,7 +222,8 @@ def _parse(data: dict) -> ModelSpec:
         experimental=bool(data.get("experimental", False)),
         license_url=data.get("license_url"),
         license_acceptance_id=data.get("license_acceptance_id"),
-        agent_note=str(data.get("agent_note", "")),
+        agent_note=_current_note(data),
+        prompt_format=_prompt_format(data),
         user_added=bool(data.get("user_added", False)),
         download_size=int(float(data.get("download_gb", 0)) * GB),
         capabilities=parse_capabilities(data.get("capabilities"), tasks, max_references),

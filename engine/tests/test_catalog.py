@@ -157,7 +157,8 @@ def test_suggestions_keep_supported_families_only(monkeypatch):
 
     monkeypatch.setattr(huggingface_hub, "HfApi", Api)
     monkeypatch.setattr(catalog, "_suggestions", None)
-    assert [s["repo"] for s in catalog.suggestions()] == [repos[0], repos[1], repos[3], repos[5]]
+    # Ideogram 4 is a supported family since task 17 (two transformers in the denoise phase).
+    assert [s["repo"] for s in catalog.suggestions()] == [repos[0], repos[1], repos[3], repos[5], repos[6]]
     monkeypatch.setattr(catalog, "_suggestions", None)
 
 

@@ -25,6 +25,14 @@ class JobAborted(Exception):
         self.message = message
 
 
+class NonFinite(Exception):
+    """The denoise loop went to NaN or infinity: the image would come out a flat black square."""
+
+    def __init__(self, step: int):
+        super().__init__(f"the model's numbers went invalid at step {step}")
+        self.step = step
+
+
 @dataclass
 class GenRequest:
     task: str  # t2i | edit
