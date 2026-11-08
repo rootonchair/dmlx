@@ -16,13 +16,20 @@ import SwiftUI
 ///          {"appearance": "system"|"light"|"dark"}, {"settingsTab": "intelligence"} (with {"settings": true}, which hosts SettingsView in its own window), {"closeSettings": true},
 ///          {"addModel": ""|"<group>"} (Add Model over Settings → Models), {"openModelMenu": "name", "keys": [125]},
 ///          Layout (task 17): {"layoutBoxes": [<LayoutBox json>]} (the composer's chip), {"openLayout": true} (▭ Layout,
-///          a blank canvas), {"layoutTool": true} (with openEditor: open on Layout), {"sheetSize": [w, h]}, {"pickVersion": 0}, {"moveBoxes": {"<label>": [y0, x0, y1, x1]}}, {"applyLayout": {"move": {"<label>":
+///          a blank canvas), {"layoutTool": true} (with openEditor: open on Layout),
+///          {"editorTool": "Crop"|"Paint"|"Erase"|"Layout"} (with openEditor: open on that tool), {"selectBox": "<label>"|"*"} (in the
+///          open editor's Layout tool: select that box, "*" the first, as a click does), {"sheetSize": [w, h]}, {"pickVersion": 0}, {"moveBoxes": {"<label>": [y0, x0, y1, x1]}}, {"applyLayout": {"move": {"<label>":
 ///          [y0, x0, y1, x1]}, "describe": {"<label>": "text"}}} (what Redraw with layout sends), {"logLayout": true},
 ///          {"capture": "name", "window": "main"|"settings"|"settingsSheet"} (the real window through screencapture, native
 ///          controls included; needs Screen Recording for the launching terminal),
 ///          {"scroll": "top"|"bottom", "overscroll": 60} (the chat transcript, to capture a chat taller than the
 ///          window in parts),
 ///          {"quit": true}]}
+extension Notification.Name {
+    /// The harness's selectBox: the open editor selects the box with this label (the object).
+    static let dmlxHarnessSelectBox = Notification.Name("dmlx.harness.selectBox")
+}
+
 @MainActor
 enum DevHarness {
     /// When no SwiftUI window is on screen (e.g. the Mac is locked), render RootView in our own window.
@@ -307,6 +314,10 @@ enum DevHarness {
         }
         if step["openLayout"] != nil { model.openBlankLayout() }
         if step["layoutTool"] != nil { model.editorStartTool = "Layout" }
+        if let tool = step["editorTool"] as? String { model.editorStartTool = tool }
+        if let label = step["selectBox"] as? String {
+            NotificationCenter.default.post(name: .dmlxHarnessSelectBox, object: label)
+        }
         // {"pickVersion": n}: shows version n (0-based) of the latest image, as its v1 / v2 buttons do.
         if let n = step["pickVersion"] as? Int, let t = model.latestImageTurn { model.pickVersion(t.id, n) }
         if step["openEditor"] != nil, let t = model.latestImageTurn { model.openEditor(t.id) }
@@ -340,8 +351,11 @@ enum DevHarness {
             sheet.setContentSize(NSSize(width: size[0], height: size[1]))
         }
         // {"editorDoc": {"tool": "Paint", "crop": [x, y, w, h], "paint": [[[x, y], ...]], "erase": [[[x, y], ...]],
-        //  "width": 0.03}}: reopen the editor on the latest image with this crop and these strokes (normalized).
-        if let spec = step["editorDoc"] as? [String: Any], let t = model.latestImageTurn {
+        //  "width": 0.03, "turn": 1}}: reopen the editor on the latest image with this crop and these strokes (normalized).
+        // "turn": n (1-based image number) reopens an older image instead of the latest.
+        if let spec = step["editorDoc"] as? [String: Any],
+           let t = (spec["turn"] as? Int).flatMap({ n in model.turns.first { $0.kind == .image && $0.number == n } })
+               ?? model.latestImageTurn {
             if model.editorDocument != nil {
                 // Let the sheet go away first, or SwiftUI keeps the old editor (its tool and strokes).
                 model.closeEditor()

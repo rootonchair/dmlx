@@ -66,36 +66,28 @@ struct EditorView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            ScrollView(.horizontal) {
-                HStack(spacing: 12) {
-                    Picker("Tool", selection: $tool) {
-                        ForEach(tools) { Text($0.rawValue).tag($0) }
-                    }
-                    .pickerStyle(.segmented)
-                    .frame(width: CGFloat(65 * tools.count))
-                    .help(blankLayout ? "No image yet: draw where things go, then make the image" : "")
-
-                    if tool == .paint || tool == .erase {
-                        ColorPicker("Color", selection: $brushColor, supportsOpacity: true)
-                            .labelsHidden()
-                        Slider(value: $brushWidth, in: 0.003...0.1)
-                            .frame(width: 110)
-                            .help("Brush size")
-                    }
-                    Spacer()
-                    Button { undo() } label: { Image(systemName: "arrow.uturn.backward") }
-                        .disabled(tool == .layout ? boxHistory.isEmpty : history.isEmpty)
-                    Button { redo() } label: { Image(systemName: "arrow.uturn.forward") }
-                        .disabled(tool == .layout ? boxFuture.isEmpty : future.isEmpty)
-                    if !blankLayout {
-                        Button("Original") { comparing.toggle() }
-                            .buttonStyle(.borderedProminent)
-                            .tint(comparing ? .secondary : .accentColor)
-                    }
+            // The same in every tool, and narrow enough for the sheet's minimum width: Paint's and Erase's brush
+            // controls live in the footer.
+            HStack(spacing: 12) {
+                Picker("Tool", selection: $tool) {
+                    ForEach(tools) { Text($0.rawValue).tag($0) }
                 }
-                .fixedSize(horizontal: true, vertical: false)
+                .pickerStyle(.segmented)
+                // One tool (the blank canvas) at a fixed 65 pt squeezed its "Tool" label into a tall, empty bar.
+                .frame(width: tools.count > 1 ? CGFloat(65 * tools.count) : nil)
+                .fixedSize()
+                .help(blankLayout ? "No image yet: draw where things go, then make the image" : "")
+                Spacer(minLength: 12)
+                Button { undo() } label: { Image(systemName: "arrow.uturn.backward") }
+                    .disabled(tool == .layout ? boxHistory.isEmpty : history.isEmpty)
+                Button { redo() } label: { Image(systemName: "arrow.uturn.forward") }
+                    .disabled(tool == .layout ? boxFuture.isEmpty : future.isEmpty)
+                if !blankLayout {
+                    Button("Original") { comparing.toggle() }
+                        .buttonStyle(.borderedProminent)
+                        .tint(comparing ? .secondary : .accentColor)
+                }
             }
-            .scrollIndicators(.hidden)
             .padding()
 
             // First time in the editor: what the tools do.
@@ -140,55 +132,87 @@ struct EditorView: View {
                 .frame(minWidth: 320, minHeight: 220, maxHeight: .infinity)
                 .background(Color.black.opacity(0.88))
 
-            ScrollView(.horizontal) {
+            // The footer: the tool's controls, then the buttons. One row when it fits; otherwise the buttons
+            // get their own row, so they are never cut off or behind a scroll.
+            ViewThatFits(in: .horizontal) {
                 HStack(spacing: 8) {
-                    if tool == .layout {
-                        LayoutBar(boxes: $boxes, selected: $selectedBox, placesByWords: placesByWords,
-                                  blank: blankLayout, describing: $describing, onBeginChange: rememberBoxes)
-                    } else if tool == .crop {
-                        Text("Crop:").foregroundStyle(.secondary)
-                        Button("Full") { setCrop(.full) }
-                        Button("Square") { setAspect(1) }
-                        Button("3:2") { setAspect(3.0 / 2.0) }
-                        Button("2:3") { setAspect(2.0 / 3.0) }
-                        Text("or drag a crop rectangle").font(.caption).foregroundStyle(.secondary)
-                    } else {
-                        Text(tool == .erase ? "Drag to erase paint. The original image is never erased." : "Drag over the image to paint.")
-                            .font(.caption).foregroundStyle(.secondary)
-                    }
-                    Spacer()
-                    if tool == .layout {
-                        Button("Reset") { rememberBoxes(); boxes = initialLayout ?? []; selectedBox = nil }
-                        Button("Cancel", action: onCancel)
-                        Button(blankLayout ? "Use layout" : "Redraw with layout") {
-                            onLayout(LayoutBox.sendable(boxes))
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .disabled(LayoutBox.sendable(boxes).isEmpty && blankLayout)
-                        .help(blankLayout ? "Attach the boxes to your next message"
-                              : "A new version of this image with your boxes (the same seed when no box moved)")
-                    } else {
-                    Button("Reset") { mutate { $0.crop = .full; $0.strokes = [] } }
-                    Button("Cancel", action: onCancel)
-                    Button {
-                        var saved = document
-                        saved.updated = .now
-                        onApply(saved)
-                    } label: {
-                        if isExporting { ProgressView().controlSize(.small) } else { Text("Attach edited image") }
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(isExporting)
+                    toolControls
+                    Spacer(minLength: 12)
+                    footerButtons
+                }
+                VStack(alignment: .leading, spacing: 10) {
+                    HStack(spacing: 8) { toolControls }
+                    HStack(spacing: 8) {
+                        Spacer(minLength: 0)
+                        footerButtons
                     }
                 }
-                .fixedSize(horizontal: true, vertical: false)
             }
-            .scrollIndicators(.hidden)
             .buttonStyle(.bordered)
             .padding()
         }
         .frame(minWidth: 520, idealWidth: 900, minHeight: 420, idealHeight: 680)
         .interactiveDismissDisabled(isExporting)
+        .onReceive(NotificationCenter.default.publisher(for: .dmlxHarnessSelectBox)) { note in
+            let label = note.object as? String
+            selectedBox = (label == "*" ? boxes.first : boxes.first { $0.label == label })?.id
+        }
+    }
+
+    /// The footer's left side: Crop's presets, the brush (color, size) and a hint for Paint / Erase, or the Layout bar.
+    @ViewBuilder private var toolControls: some View {
+        if tool == .layout {
+            LayoutBar(boxes: $boxes, selected: $selectedBox, placesByWords: placesByWords,
+                      blank: blankLayout, describing: $describing, onBeginChange: rememberBoxes)
+        } else if tool == .crop {
+            Text("Crop:").foregroundStyle(.secondary).fixedSize()
+            Button("Full") { setCrop(.full) }.fixedSize()
+            Button("Square") { setAspect(1) }.fixedSize()
+            Button("3:2") { setAspect(3.0 / 2.0) }.fixedSize()
+            Button("2:3") { setAspect(2.0 / 3.0) }.fixedSize()
+            Text("or drag a crop rectangle").font(.caption).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        } else {
+            ColorPicker("Color", selection: $brushColor, supportsOpacity: true)
+                .labelsHidden()
+                .fixedSize()
+            Slider(value: $brushWidth, in: 0.003...0.1)
+                .frame(width: 110)
+                .help("Brush size")
+            Text(tool == .erase ? "Drag to erase paint. The original image is never erased." : "Drag over the image to paint.")
+                .font(.caption).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    /// The footer's right side, never squeezed: Reset, Cancel and the primary action.
+    @ViewBuilder private var footerButtons: some View {
+        HStack(spacing: 8) {
+            if tool == .layout {
+                Button("Reset") { rememberBoxes(); boxes = initialLayout ?? []; selectedBox = nil }
+                Button("Cancel", action: onCancel)
+                Button(blankLayout ? "Use layout" : "Redraw with layout") {
+                    onLayout(LayoutBox.sendable(boxes))
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(LayoutBox.sendable(boxes).isEmpty && blankLayout)
+                .help(blankLayout ? "Attach the boxes to your next message"
+                      : "A new version of this image with your boxes (the same seed when no box moved)")
+            } else {
+                Button("Reset") { mutate { $0.crop = .full; $0.strokes = [] } }
+                Button("Cancel", action: onCancel)
+                Button {
+                    var saved = document
+                    saved.updated = .now
+                    onApply(saved)
+                } label: {
+                    if isExporting { ProgressView().controlSize(.small) } else { Text("Attach edited image") }
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(isExporting)
+            }
+        }
+        .fixedSize()
     }
 
     private var originalView: EditorDocument {

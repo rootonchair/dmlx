@@ -165,34 +165,27 @@ struct LayoutBar: View {
 
     var body: some View {
         if let i = boxes.firstIndex(where: { $0.id == selected }) {
-            Text("Box:").foregroundStyle(.secondary)
-            Picker("Kind", selection: kindBinding(i)) {
-                Text("Picture").tag(LayoutBox.Kind.obj)
-                Text("Text").tag(LayoutBox.Kind.text)
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .frame(width: 140)
-            TextField(boxes[i].kind == .text ? "Exact words to draw" : "Name, e.g. saxophonist", text: labelBinding(i))
-                .textFieldStyle(.roundedBorder)
-                .frame(width: 170)
-            TextField(boxes[i].kind == .text ? "Lettering style (optional): the agent picks one"
-                      : "What it looks like (optional): the agent writes it", text: descBinding(i))
-                .textFieldStyle(.roundedBorder)
-                .frame(width: 280)
-                .focused(describing)
-            if boxes[i].descByUser {
-                Button("Let the agent write it") {
-                    onBeginChange()
-                    boxes[i].desc = ""
-                    boxes[i].descByUser = false
+            // One row in a wide sheet; in a narrow one the description moves to a second row and the
+            // fields shrink, so nothing is cut off.
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 8) {
+                    boxHeader(i)
+                    nameField(i).frame(width: 170)
+                    descField(i).frame(width: 280)
+                    letAgentButton(i)
+                    deleteButton(i)
                 }
-                .help("Clear your description; the agent writes one")
-            }
-            Button("Delete") {
-                onBeginChange()
-                boxes.remove(at: i)
-                selected = nil
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(spacing: 8) {
+                        boxHeader(i)
+                        nameField(i).frame(minWidth: 100, maxWidth: .infinity)
+                        deleteButton(i)
+                    }
+                    HStack(spacing: 8) {
+                        descField(i).frame(minWidth: 120, maxWidth: .infinity)
+                        letAgentButton(i)
+                    }
+                }
             }
         } else {
             // Wraps, so the long hint never pushes Redraw with layout out of the sheet.
@@ -200,6 +193,50 @@ struct LayoutBar: View {
                 .frame(maxWidth: 420, alignment: .leading)
                 .fixedSize(horizontal: false, vertical: true)
         }
+    }
+
+    @ViewBuilder private func boxHeader(_ i: Int) -> some View {
+        Text("Box:").foregroundStyle(.secondary).fixedSize()
+        Picker("Kind", selection: kindBinding(i)) {
+            Text("Picture").tag(LayoutBox.Kind.obj)
+            Text("Text").tag(LayoutBox.Kind.text)
+        }
+        .pickerStyle(.segmented)
+        .labelsHidden()
+        .frame(width: 140)
+    }
+
+    private func nameField(_ i: Int) -> some View {
+        TextField(boxes[i].kind == .text ? "Exact words to draw" : "Name, e.g. saxophonist", text: labelBinding(i))
+            .textFieldStyle(.roundedBorder)
+    }
+
+    private func descField(_ i: Int) -> some View {
+        TextField(boxes[i].kind == .text ? "Lettering style (optional): the agent picks one"
+                  : "What it looks like (optional): the agent writes it", text: descBinding(i))
+            .textFieldStyle(.roundedBorder)
+            .focused(describing)
+    }
+
+    @ViewBuilder private func letAgentButton(_ i: Int) -> some View {
+        if boxes[i].descByUser {
+            Button("Let the agent write it") {
+                onBeginChange()
+                boxes[i].desc = ""
+                boxes[i].descByUser = false
+            }
+            .help("Clear your description; the agent writes one")
+            .fixedSize()
+        }
+    }
+
+    private func deleteButton(_ i: Int) -> some View {
+        Button("Delete") {
+            onBeginChange()
+            boxes.remove(at: i)
+            selected = nil
+        }
+        .fixedSize()
     }
 
     private var hint: String {

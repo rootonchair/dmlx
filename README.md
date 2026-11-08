@@ -85,15 +85,15 @@ Click **Attach edited image**. Then write what to do. The app does not change th
 
 | 1 · Crop | 2 · Paint a mark | 3 · Erase an incorrect mark |
 |---|---|---|
-| <img src="docs/screenshots/edit-1-crop.jpg" alt="The Crop / Draw editor with the Crop tool. A dashed crop frame surrounds a white teapot on a wooden table. The area outside the frame is dark."> | <img src="docs/screenshots/edit-2-paint.jpg" alt="The Paint tool. A red circle surrounds the body of the teapot. An incorrect red line goes from the circle onto the table."> | <img src="docs/screenshots/edit-3-erase.jpg" alt="The Erase tool. The incorrect red line is gone. The red circle stays. The text below the image says 'Drag to erase paint. The original image is never erased.'"> |
-| The dark area is not in the prepared image. | The circle shows the area to change. The line onto the table is an error. | Erase removes only paint. The image below the paint does not change. |
+| <img src="docs/screenshots/edit-1-crop.jpg" alt="The Crop / Draw editor with the Crop tool. The toolbar shows Tool: Crop, Paint, Erase, then undo, redo and Original. A dashed crop frame surrounds a white teapot on a wooden table; the area outside the frame is dimmed. Below the image: Crop: Full, Square, 3:2, 2:3, then Reset, Cancel and Attach edited image."> | <img src="docs/screenshots/edit-2-paint.jpg" alt="The Paint tool. A red circle surrounds the body of the teapot, and an incorrect red line is on the table below it. Below the image: the red color, the brush size slider and 'Drag over the image to paint.'"> | <img src="docs/screenshots/edit-3-erase.jpg" alt="The Erase tool. The incorrect red line is gone. The red circle stays. Below the image: the brush size slider and 'Drag to erase paint. The original image is never erased.'"> |
+| The dimmed area is not in the prepared image. | The circle shows the area to change. The line on the table is an error. The color and brush size are below the image. | Erase removes only paint. The image below the paint does not change. |
 
 **4 · Attach and ask.** **Attach edited image** puts the prepared image in the message box. The agent
 gets the prepared image, a note that tells it the image is image 1 after Crop / Draw, and your words.
 The marks are part of the prepared image. Write "remove the marks" in your message, or the result can
 keep them. The prepared image is one of the 3 images that you can attach.
 
-<img src="docs/screenshots/edit-4-attach.jpg" alt="The message box with 'Prepared image 1' attached and the message 'paint a blue and white floral pattern on the teapot where I circled in red, and remove the red marks'. Above the message box: 'Will edit the attached image · FLUX.2 Klein 4B'.">
+<img src="docs/screenshots/edit-4-attach.jpg" alt="The message box with 'Prepared image 1' attached and the message 'paint a blue and white floral pattern on the teapot where I circled in red, and remove the red marks'. Below the message: 'Will edit the attached image · FLUX.2 Klein 4B'.">
 
 | Before (the prepared image 1) | After (image 2, "Edited from the prepared image 1") |
 |---|---|
