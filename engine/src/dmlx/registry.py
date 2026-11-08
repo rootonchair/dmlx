@@ -160,10 +160,12 @@ def _prompt_format(data: dict) -> str | None:
 # Catalog values that have since changed, per adapter: a spec saved with the old value (it is a snapshot
 # taken when the model was added) moves to the new one. A value the user set themselves is kept.
 _RETIRED_DEFAULTS = {"mflux.moss_image": {"steps": (50, 30)}}
-_RETIRED_NOTES = {
-    "mflux.moss_image": ("New images only; very slow (about 13 minutes at 1024 px, 3 minutes at 512 px); "
-                         "use only when the user asks for it.",
-                         "New images only; very slow (about 8 minutes at 1024 px, 2 minutes at 512 px); "
+_RETIRED_NOTES = {  # adapter -> (notes saved by earlier versions, the current note)
+    "mflux.moss_image": (("New images only; very slow (about 13 minutes at 1024 px, 3 minutes at 512 px); "
+                          "use only when the user asks for it.",
+                          "New images only; very slow (about 8 minutes at 1024 px, 2 minutes at 512 px); "
+                          "use only when the user asks for it."),
+                         "New images only; very slow (about 5 minutes at 1024 px at 30 steps, 2 minutes at 512 px); "
                          "use only when the user asks for it."),
 }
 
@@ -178,8 +180,8 @@ def _current_defaults(data: dict) -> dict:
 
 def _current_note(data: dict) -> str:
     note = str(data.get("agent_note", ""))
-    old, new = _RETIRED_NOTES.get(data.get("adapter", ""), (None, None))
-    return new if note == old else note
+    old, new = _RETIRED_NOTES.get(data.get("adapter", ""), ((), None))
+    return new if note in old else note
 
 
 def _parse(data: dict) -> ModelSpec:

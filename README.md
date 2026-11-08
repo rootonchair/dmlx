@@ -29,6 +29,9 @@ A small agent on your Mac plans each message.
 - **Your Mac stays available for use.** The engine does a check of the memory before each image job. If
   memory is low, the engine loads models in parts. The engine stops a job before macOS starts to swap.
   dMLX is for Macs with 16 GB of memory or more.
+- **Put things where you want them.** With MOSS Image, Ideogram 4 or FIBO 2, the agent plans a layout:
+  a box for each part of the image. Move a box, then redraw. The title stays where it was, and the part
+  that you moved goes to its new place.
 - **The app keeps all versions.** It does not overwrite an image. Variations show as v1, v2, v3. You can
   edit each version. You can also edit your prompt and run it again.
 - **Private and offline.** After you download the models, all work occurs on your Mac. You do not need an
@@ -97,6 +100,38 @@ keep them. The prepared image is one of the 3 images that you can attach.
 | <img src="docs/screenshots/edit-prepared.jpg" alt="The prepared image: the cropped area of image 1, a plain white teapot on a wooden table, with a red circle around its body."> | <img src="docs/screenshots/edit-after.jpg" alt="Image 2: the same teapot. A blue and white floral pattern covers it. No red marks remain."> |
 
 The result has the size and the framing of the cropped area, not of the full image 1.
+
+## Place things with Layout
+
+Some image models can put each part of an image in a box. For these models, the agent writes a layout
+with the prompt: a box for each title, each line of text and each main object. After the image is done,
+the boxes show on it. Click **Hide boxes** to see the image only.
+
+To change the layout, open **Crop / Draw** and select **Layout**. Drag a box to move it, or drag on an
+empty area to add a box. Click a box to rename it or to describe it. Then click **Redraw with layout**.
+The app makes a new version of the image. All boxes on the canvas count as yours, so the agent keeps them
+where they are. If no box moved, the new version uses the same seed.
+
+You can also draw a layout before the first image: click **Layout** in the message box, draw the boxes,
+and click **Use layout**. The boxes go with your next message.
+
+<img src="docs/screenshots/layout-chat.jpg" width="640" alt="Chat: the message 'a poster for a jazz night with the words JAZZ NIGHT and FRIDAY 9 PM'. Image 1, version v2, made with Ideogram 4: JAZZ NIGHT at the top and FRIDAY 9 PM at the bottom right, each in a dashed box with its name. Below the image: v1, v2, Hide boxes, Variations and Crop / Draw.">
+
+| v1: the agent's layout | v2: FRIDAY 9 PM moved to the bottom right |
+|---|---|
+| <img src="docs/screenshots/layout-before.jpg" alt="Ideogram 4 jazz poster: JAZZ NIGHT at the top, FRIDAY 9 PM below it, musicians in silhouette on red and gold waves."> | <img src="docs/screenshots/layout-after.jpg" alt="The redraw: JAZZ NIGHT still at the top, FRIDAY 9 PM in the bottom right corner."> |
+
+| Model | How exact | Time at 1024² on an M5 | License |
+|---|---|---|---|
+| Ideogram 4 (4-bit, 13.9 GB) | Exact boxes; the best at text | about 8.5 min | non-commercial |
+| MOSS Image (4-bit) | Exact boxes | about 5 min | Apache-2.0 |
+| FIBO 2 (6-bit, 10.3 GB) | Each box becomes a place word, such as "top center" | about 8 min | non-commercial |
+
+Add these models in **Settings → Models → Add Model…**. The **Layout** button shows when the selected
+model can use a layout, or in **Auto** when one of these models is downloaded. In **Auto**, a message with
+a layout goes only to these models. FIBO 2
+gets no boxes from the agent, only the boxes that you draw. FIBO 2 sometimes adds small text that you did
+not ask for.
 
 ## Tour of the app
 
@@ -267,7 +302,7 @@ If you drag `dMLX.app` to the Trash, macOS keeps the models and your data. To de
 | Qwen Image 2.1 Base (4-bit) | generate, edit, a maximum of 10 images in a set order | Qwen Research License (non-commercial) | ~10.6 GB | Experimental; best for exact words in the image; ~4 min per image; needs ~9.5 GB of free memory |
 
 **Settings → Models → Add Model…** shows community versions of the supported families (FLUX.2 Klein
-4B/9B, FLUX.3 Klein, Z-Image Turbo/base, Qwen Image 2.1 Base, ERNIE Image Turbo, MOSS Image, Boogu Image Turbo, Iris 3B Turbo, Krea 2 Turbo). It also
+4B/9B, FLUX.3 Klein, Z-Image Turbo/base, Qwen Image 2.1 Base, ERNIE Image Turbo, MOSS Image, FIBO 2, Ideogram 4, Boogu Image Turbo, Iris 3B Turbo, Krea 2 Turbo). It also
 accepts any Hugging Face repo in mflux format. One adapter runs all of these families from mflux's own
 model classes, so a new mflux family needs a table entry and a memory measurement
 ([`docs/benchmarks/families.md`](docs/benchmarks/families.md)).

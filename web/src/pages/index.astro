@@ -204,7 +204,23 @@ const examples = [
   </div>
 </section>
 
-<section class="alt" id="api">
+<section class="alt" id="layout">
+  <div class="wrap">
+    <div class="head">
+      <span class="eyebrow">Layout</span>
+      <h2>Move the title. Keep the rest.</h2>
+      <p class="lede">With MOSS Image, Ideogram 4 or FIBO 2, the agent plans a box for each title, line of text and main object. Drag a box in Crop / Draw → Layout, click Redraw with layout, and the part you moved goes to its new place while the rest stays put. You can also draw the boxes before the first image.</p>
+    </div>
+    <div class="edit layout">
+      <figure><Image src={shot('layout-before')} widths={[300, 600]} sizes="(max-width: 480px) 100vw, 340px" alt="An Ideogram 4 jazz poster: JAZZ NIGHT at the top, FRIDAY 9 PM below it." /><figcaption><b>1 · The agent's layout</b>The title at the top, the date under it.</figcaption></figure>
+      <figure><Image src={shot('layout-after')} widths={[300, 600]} sizes="(max-width: 480px) 100vw, 340px" alt="The redraw: JAZZ NIGHT still at the top, FRIDAY 9 PM in the bottom right corner." /><figcaption><b>2 · Move a box, redraw</b>The date moved to the bottom right; the title stayed.</figcaption></figure>
+      <figure><Image src={shot('layout-chat')} widths={[340, 680]} sizes="(max-width: 480px) 100vw, 340px" alt="The chat: image 1, version v2, with dashed boxes named JAZZ NIGHT and FRIDAY 9 PM, and the buttons v1, v2, Hide boxes, Variations and Crop / Draw." /><figcaption><b>3 · See the boxes</b>They show on the image; Hide boxes turns them off.</figcaption></figure>
+    </div>
+    <p class="sub foot">Ideogram 4 and MOSS Image place things in exact boxes; FIBO 2 places them by words like "top center", from boxes you draw. Each takes about 5–9 minutes per image on a 24 GB Mac. Ideogram 4 and FIBO 2 have non-commercial licenses.</p>
+  </div>
+</section>
+
+<section id="api">
   <div class="wrap api">
     <div class="head flush">
       <span class="eyebrow">Local API</span>
@@ -216,7 +232,7 @@ const examples = [
   </div>
 </section>
 
-<section id="models">
+<section class="alt" id="models">
   <div class="wrap">
     <div class="head">
       <span class="eyebrow">Models</span>
@@ -235,7 +251,7 @@ const examples = [
             <tr><td>Qwen Image 2.1</td><td class="note">Experimental. Best for exact words; about 4 min per image; needs about 9.5 GB free, so it is often refused on 16–24 GB Macs. Non-commercial license.</td><td>10.6 GB</td></tr>
           </tbody>
         </table>
-        <p class="sub foot">Also addable: FLUX.2 Klein 9B, FLUX.3 Klein, Z-Image base, ERNIE Image Turbo, MOSS Image, Boogu Image Turbo, Iris 3B Turbo and Krea 2 Turbo. Some of these take minutes per image.</p>
+        <p class="sub foot">Also addable: FLUX.2 Klein 9B, FLUX.3 Klein, Z-Image base, ERNIE Image Turbo, MOSS Image, FIBO 2 and Ideogram 4 (for layouts), Boogu Image Turbo, Iris 3B Turbo and Krea 2 Turbo. Some of these take minutes per image.</p>
       </div>
       <div class="tbl">
         <h3>Agent models</h3>
@@ -254,7 +270,7 @@ const examples = [
   </div>
 </section>
 
-<section class="alt" id="start">
+<section id="start">
   <div class="wrap">
     <div class="head">
       <span class="eyebrow">Get started</span>
@@ -467,7 +483,9 @@ a:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outlin
 .facts svg { width: 18px; height: 18px; stroke: var(--accent); fill: none; stroke-width: 2; margin-top: 4px }
 
 .edit { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px }
+.edit.layout { grid-template-columns: repeat(3, minmax(0, 1fr)) }
 @media (max-width: 900px) { .edit { grid-template-columns: repeat(2, minmax(0, 1fr)) } }
+@media (max-width: 700px) { .edit.layout { grid-template-columns: 1fr; max-width: 420px; margin: 0 auto } }
 @media (max-width: 480px) { .edit { grid-template-columns: 1fr } }
 .edit figure { margin: 0; display: grid; gap: 10px; align-content: start }
 .edit img { border-radius: 10px; border: 1px solid var(--line); aspect-ratio: 1; object-fit: cover; width: 100% }

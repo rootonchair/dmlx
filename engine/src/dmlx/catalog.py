@@ -20,7 +20,7 @@ from dmlx import paths
 from dmlx.registry import ModelSpec, _parse
 
 COMPONENTS = ("text_encoder", "transformer", "vae")
-MOSS_NOTE = ("New images only; very slow (about 8 minutes at 1024 px, 2 minutes at 512 px); "
+MOSS_NOTE = ("New images only; very slow (about 5 minutes at 1024 px at 30 steps, 2 minutes at 512 px); "
              "use only when the user asks for it.")
 _PERMISSIVE = {"apache-2.0", "mit", "bsd-3-clause", "openrail", "creativeml-openrail-m"}
 
