@@ -285,11 +285,12 @@ extension AppModel {
         }
         choice.save()
         agentChoice = choice
-        promptAssistantInstalled = status.installed
+        promptAssistantInstalled = runsChosenAgent(status)
     }
 
     /// At engine start (and restart): run the agent where the user chose. A failure here is not shown;
-    /// the next sent message connects again and reports it (AppModel.send).
+    /// until it succeeds the agent doesn't count as installed (runsChosenAgent), so the next sent message
+    /// connects again and reports the problem (AppModel.send).
     func restoreAgentChoice() async {
         let choice = AgentChoice.load()
         agentChoice = choice

@@ -22,6 +22,7 @@ import SwiftUI
 ///          controls included; needs Screen Recording for the launching terminal),
 ///          {"scroll": "top"|"bottom", "overscroll": 60} (the chat transcript, to capture a chat taller than the
 ///          window in parts),
+///          {"uninstall": true} (Uninstall dMLX…; only with a throwaway DMLX_HOME and a copy of the app),
 ///          {"quit": true}]}
 @MainActor
 enum DevHarness {
@@ -108,7 +109,7 @@ enum DevHarness {
             window.orderFrontRegardless()
             addModelWindow = window
         }
-        if step["logPreview"] != nil { log("preview [\(model.generateChoice)|\(model.editChoice)] \(model.draft.isEmpty ? "(empty)" : model.draft): \(model.routePreview)") }
+        if step["logPreview"] != nil { log("preview [\(model.generateChoice)|\(model.editChoice)] \(model.draft.isEmpty ? "(empty)" : model.draft): \(model.routePreview)\(model.toast.map { " · toast: \($0)" } ?? "")") }
         if let text = step["planning"] as? String { model.harnessPlanning(text.isEmpty ? nil : text) }
         if let ask = step["ask"] as? [String: String], let message = ask["message"], let question = ask["question"] {
             model.harnessAsk(message: message, question: question)
@@ -152,6 +153,7 @@ enum DevHarness {
             a.apply()
         }
         if step["closeSettings"] != nil { settingsWindow()?.close() }
+        if step["uninstall"] != nil { model.uninstall() }  // Uninstall dMLX…, with its real alerts
         // {"overrideRoute": "image.generate"|"image.edit"}: as if picked in the composer's workflow menu.
         if let operation = step["overrideRoute"] as? String { model.overrideRoute(operation) }
         // With Settings → Models open: Add Model, at the top ("") or at one model's versions ("flux-2-klein-9b").

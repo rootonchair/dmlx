@@ -224,6 +224,13 @@ final class AppModel {
         activeRuns = [:]
     }
 
+    /// The engine runs the agent the user chose. The engine loads the local agent at start when its weights
+    /// are on disk, so with a service chosen whose restore failed (no key, no network), that local agent
+    /// does not count: sending reconnects the service and says why when it can't.
+    func runsChosenAgent(_ status: PromptAssistantStatus) -> Bool {
+        status.installed && (agentChoice.service == .local || status.provider?.kind == agentChoice.service.rawValue)
+    }
+
     func refreshModels(openOnboarding: Bool = false) async {
         guard let client else { return }
         if let list = try? await client.models() {
@@ -233,7 +240,7 @@ final class AppModel {
             normalizeModelChoices()
             let catalog = try? await client.capabilities()
             if catalog != capabilityCatalog { capabilityCatalog = catalog }
-            let installed = (try? await client.promptAssistant())?.installed ?? false
+            let installed = (try? await client.promptAssistant()).map(runsChosenAgent) ?? false
             if installed != promptAssistantInstalled { promptAssistantInstalled = installed }
             // First run, or no image model yet. Someone who finished setup without the agent is not asked again.
             let completed = UserDefaults.standard.bool(forKey: Self.onboardingCompletedKey)
@@ -857,7 +864,7 @@ final class AppModel {
             do {
                 try await self.connectAgent(choice, apiKey: AgentKeyStore.load(choice.service), test: true)
             } catch {
-                problem = error.localizedDescription
+                problem = error.localizedDescription.trimmingCharacters(in: CharacterSet(charactersIn: ". "))
             }
             guard !_Concurrency.Task.isCancelled else { self.reconnectingAgent = false; return }
             self.planningMessage = nil

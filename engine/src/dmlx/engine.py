@@ -349,17 +349,21 @@ class Engine:
                 op: choices for op, choices in self._model_choices(candidates, explicit_count, has_current,
                                                                    layout=bool(layout)).items()
                 if op not in chosen}
-            planned, note = self._plan(safe_state, candidates, wait=bool(state.get("wait")), models=models)
+            planned, note, error = self._plan(safe_state, candidates, wait=bool(state.get("wait")), models=models)
             if planned is not None:
                 return self._layout_model(planned, layout, chosen, explicit_count, has_current)
             if note in ("rejected", "failed"):
                 # The agent was asked and has no usable plan: ask the user rather than let the rules guess
                 # (a greeting became an edit of the latest image).
+                ask = ("I couldn't work out what to do with that. Should I make a new image, or change "
+                       "the current one?") if has_current or explicit_count else \
+                      "I couldn't work out what to do with that. What image should I make?"
+                if error and not getattr(self.prompt_assistant, "uses_accelerator", True):
+                    # A service the user chose: its message says what is wrong (not running, key refused).
+                    ask = f"The agent couldn't plan this: {error} Send it again once that's fixed, or choose " \
+                          "another agent in Settings → Intelligence."
                 return {"intent": "ambiguous", "confidence": 0.0, "probabilities": {name: 0.0 for name in candidates},
-                        "provider": "agent:unusable", "planning": note,
-                        "ask": ("I couldn't work out what to do with that. Should I make a new image, or change "
-                                "the current one?") if has_current or explicit_count else
-                               "I couldn't work out what to do with that. What image should I make?"}
+                        "provider": "agent:unusable", "planning": note, "ask": ask}
         decision = self._route_without_agent(safe_state, candidates)
         if note:
             decision["planning"] = note  # e.g. "skipped_busy": the client can tell the agent did not plan this
@@ -1171,9 +1175,9 @@ class Engine:
         return {op: models for op, models in choices.items() if layout or len(models) > 1}
 
     def _plan(self, state: dict, candidates: list[str], wait: bool = False,
-              models: dict[str, list[tuple[str, str]]] | None = None) -> tuple[dict | None, str | None]:
+              models: dict[str, list[tuple[str, str]]] | None = None) -> tuple[dict | None, str | None, str | None]:
         """The agent's decision for a sent message, or None to fall back to the rules, with a
-        note when it did not plan. While an image is being made it plans beside the job when both fit in
+        note when it did not plan and, when it failed, the error. While an image is being made it plans beside the job when both fit in
         memory, waits for the job when `wait` is set, and otherwise is skipped."""
         started = time.monotonic()
         acquired = self._accelerator_lock.acquire(blocking=False)
@@ -1187,7 +1191,7 @@ class Engine:
                 acquired = waited = True
             else:
                 log.warning("agent planning skipped: an image is being made")
-                return None, "skipped_busy"  # the cheap path answers now
+                return None, "skipped_busy", None  # the cheap path answers now
         try:
             # Beside a job, never free memory: the components to free would be the running job's.
             if not beside and not self.memory.make_room(self.prompt_assistant.need_bytes):
@@ -1199,7 +1203,7 @@ class Engine:
                                 models=models or None, free_gb=free_gb)
         except (IntelligenceError, KeyError, OSError) as exc:
             log.warning("agent planning failed: %s", exc)
-            return None, "failed"
+            return None, "failed", str(exc)
         finally:
             if not beside:
                 self._release_assistant()
@@ -1207,10 +1211,10 @@ class Engine:
                 self._accelerator_lock.release()
         if result is None:
             log.warning("agent answer failed the checks")
-            return None, "rejected"
+            return None, "rejected", None
         mode = "beside_job" if beside else "waited" if waited else None
         decision = {**result.as_decision(), "latency_ms": round((time.monotonic() - started) * 1_000, 1)}
-        return (decision | {"planning": mode} if mode else decision), None
+        return (decision | {"planning": mode} if mode else decision), None, None
 
     def _fits_beside_job(self) -> bool:
         """Big Macs: the agent and the running image job fit in memory together, with the reserve kept.

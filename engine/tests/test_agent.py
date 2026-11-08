@@ -585,3 +585,24 @@ def test_the_agent_is_told_what_a_prepared_image_is(make_engine, client_for, tmp
     body = model.calls[0][0][1]["content"]
     assert f"Attached to the new message: {source} (image 1 prepared in Crop / Draw)." in body
     assert "not attached" not in body
+
+
+def test_an_agent_service_that_fails_says_why(make_engine, client_for):
+    from dmlx.intelligence.base import IntelligenceError
+
+    class Unreachable:
+        uses_accelerator = False
+        need_bytes = 0
+        resident = False
+
+        def chat(self, *_args, **_kwargs):
+            raise IntelligenceError("Could not reach Ollama. Is it running?")
+
+        def unload(self):
+            pass
+
+    engine = make_engine()
+    engine.prompt_assistant = Unreachable()
+    decision = client_for(engine).post("/v1/workflows/route", json={"message": "a red apple", "plan": True}).json()
+    assert decision["intent"] == "ambiguous" and decision["planning"] == "failed"
+    assert "Could not reach Ollama" in decision["ask"] and "Settings → Intelligence" in decision["ask"]

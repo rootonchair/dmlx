@@ -121,7 +121,7 @@ struct PromptAssistantRow: View {
                     next = try await client.pullPromptAssistant(model: id)
                 }
                 status = next
-                app.promptAssistantInstalled = next.installed
+                app.promptAssistantInstalled = app.runsChosenAgent(next)
                 error = nil
             } catch {
                 self.error = error.localizedDescription
@@ -134,7 +134,7 @@ struct PromptAssistantRow: View {
         while !_Concurrency.Task.isCancelled {
             if let client = app.client {
                 status = try? await client.promptAssistant()
-                if let status { app.promptAssistantInstalled = status.installed }
+                if let status { app.promptAssistantInstalled = app.runsChosenAgent(status) }
             }
             let downloading = status?.models?.contains(where: \.isDownloading) ?? status?.isDownloading ?? false
             try? await _Concurrency.Task.sleep(for: .seconds(downloading ? 1 : 5))
