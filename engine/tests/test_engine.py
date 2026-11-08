@@ -493,3 +493,66 @@ def test_a_failed_delete_is_reported(make_engine, monkeypatch):
         raise AssertionError("expected an error")
     except RequestError as exc:
         assert exc.code == "delete_failed" and "denied" in exc.message
+
+
+class _ResidentAgent:
+    uses_accelerator = True
+
+    def __init__(self):
+        self.resident = True
+
+    def unload(self):
+        self.resident = False
+
+
+def _under_pressure(engine, level):
+    import dataclasses
+
+    from dmlx import sysmem
+
+    snap = dataclasses.replace(engine.memory.monitor.last(), pressure=level)
+    engine.memory.monitor.last = lambda: snap
+
+
+def test_idle_memory_is_given_back_under_pressure_agent_first(make_engine, client_for):
+    from dmlx import sysmem
+
+    engine = make_engine()
+    client = client_for(engine)
+    _gen(client)
+    engine.memory.pin("fake-b")  # nothing of a pinned model would be freed
+    engine.prompt_assistant = agent = _ResidentAgent()
+    assert not engine._free_under_pressure()  # calm: everything stays
+    assert agent.resident and len(engine.memory.resident_components()) == 3
+
+    _under_pressure(engine, sysmem.PRESSURE_WARN)
+    assert engine._free_under_pressure() and not agent.resident  # the agent goes first
+    assert len(engine.memory.resident_components()) == 3
+    while engine._free_under_pressure():
+        pass
+    assert engine.memory.resident_components() == []
+
+
+def test_a_pinned_model_and_a_running_job_keep_their_memory(make_engine, client_for):
+    from dmlx import sysmem
+
+    engine = make_engine()
+    _gen(client_for(engine))
+    _under_pressure(engine, sysmem.PRESSURE_WARN)
+    with engine._accelerator_lock:  # a job is running: its own guard handles pressure
+        assert not engine._free_under_pressure()
+    engine.memory.pin("fake-a")
+    assert not engine._free_under_pressure()
+    assert len(engine.memory.resident_components()) == 3
+
+
+def test_the_agent_is_not_kept_loaded_between_messages_under_pressure(make_engine):
+    from dmlx import sysmem
+
+    engine = make_engine()
+    engine.prompt_assistant = agent = _ResidentAgent()
+    engine._release_assistant()
+    assert agent.resident  # 64 GB, calm: kept for the next message
+    _under_pressure(engine, sysmem.PRESSURE_WARN)
+    engine._release_assistant()
+    assert not agent.resident

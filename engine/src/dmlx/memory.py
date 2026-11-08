@@ -307,19 +307,25 @@ class MemoryManager:
     def make_room(self, need: int) -> bool:
         """Free idle components, least recently used first and never a pinned model's, until `need` fits."""
         with self._lock:
-            if need <= self.headroom():
-                return True
-            victims = sorted(
-                (r for r in self._resident.values() if r.model_id not in self._pinned), key=lambda r: r.last_used)
-            for victim in victims:
-                self.free(victim.model_id, victim.name)
-                gc.collect()
-                mx.clear_cache()
+            while need > self.headroom():
+                if self.free_least_used() is None:
+                    return False
                 time.sleep(0.05)
                 self.monitor._last = sysmem.snapshot()
-                if need <= self.headroom():
-                    return True
-            return False
+            return True
+
+    def free_least_used(self) -> str | None:
+        """Free the component used longest ago, never a pinned model's; returns "model/component", or None
+        when nothing is left to free. Only call it while no job runs: the components could be the job's."""
+        with self._lock:
+            victims = [r for r in self._resident.values() if r.model_id not in self._pinned]
+            if not victims:
+                return None
+            victim = min(victims, key=lambda r: r.last_used)
+            self.free(victim.model_id, victim.name)
+            gc.collect()
+            mx.clear_cache()
+            return f"{victim.model_id}/{victim.name}"
 
     def degrade(self, seconds: float = 300.0) -> None:
         self.degraded_until = time.monotonic() + seconds

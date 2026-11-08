@@ -300,7 +300,9 @@ On Macs with less than 32 GB, FLUX.2 Klein decodes in exact bands (about 1.1 GB 
 no strategy fits, the engine refuses the job and shows a clear message. **Try anyway** runs the job in the
 mode that uses the least memory. While a job runs, the engine monitors memory pressure and swap-ins. The
 engine stops the job before the Mac starts to hang. The engine removes the agent from memory before each
-image job. Then the engine waits until that memory is free again. For more data, refer to
+image job. Then the engine waits until that memory is free again. When macOS reports memory pressure
+while no job runs, the engine gives back what it keeps loaded between requests: the agent first, then the
+image model's parts, least recently used first. A model you pinned stays. For more data, refer to
 [`dmlx-spec.md`](dmlx-spec.md) §8, [`docs/benchmarks/b1.md`](docs/benchmarks/b1.md),
 [`b2.md`](docs/benchmarks/b2.md) and [`agent-16gb.md`](docs/benchmarks/agent-16gb.md).
 

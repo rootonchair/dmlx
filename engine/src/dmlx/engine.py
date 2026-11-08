@@ -77,6 +77,8 @@ def prompt_assistant_spec(model_id: str | None = None) -> ModelSpec:
 
 RECLAIM_WAIT_S = 10.0  # how long an image job waits for memory that is still coming back
 RECLAIM_POLL_S = 1.0
+IDLE_CHECK_SECONDS = 2.0  # how often an idle engine looks at memory pressure
+IDLE_SETTLE_SECONDS = 5.0  # after freeing something, the time macOS gets to lower the pressure level
 
 
 class RequestError(Exception):
@@ -156,7 +158,8 @@ def _blank(image) -> bool:
 
 class Engine:
     def __init__(
-        self, registry: Registry | None = None, results: ResultStore | None = None, adapter_factory=None
+        self, registry: Registry | None = None, results: ResultStore | None = None, adapter_factory=None,
+        watch_pressure: bool = True,
     ):
         self.registry = registry or Registry.load_builtin(extra_dir=paths.models_dir())
         self.results = results or ResultStore()
@@ -179,6 +182,8 @@ class Engine:
         self._recover_workflow_jobs()
         self._worker = threading.Thread(target=self._work, name="dmlx-gpu", daemon=True)
         self._worker.start()
+        if watch_pressure:
+            threading.Thread(target=self._watch_pressure, name="dmlx-idle-memory", daemon=True).start()
 
     # -- catalog ----------------------------------------------------------------------
     def _resolve_local(self, spec: ModelSpec) -> Path | None:
@@ -905,6 +910,38 @@ class Engine:
                     self._checkpoint_workflow(job)
                 job.finished.set()
 
+    def _watch_pressure(self) -> None:
+        while True:
+            time.sleep(IDLE_SETTLE_SECONDS if self._free_under_pressure() else IDLE_CHECK_SECONDS)
+
+    def _free_under_pressure(self) -> bool:
+        """When macOS reports memory pressure while dMLX is idle, give back what it keeps loaded between
+        messages, one piece at a time: the agent first, then the image models' components, least recently
+        used first. A pinned model stays. MLX's memory doesn't count as purgeable for macOS, so without
+        this other apps go to swap. Returns True when something was freed."""
+        try:
+            if self.memory.monitor.last().pressure < sysmem.PRESSURE_WARN:
+                return False
+            if not self._accelerator_lock.acquire(blocking=False):
+                return False  # a job or the agent is running; the job's own guard watches pressure
+            try:
+                if self.queue_depth():
+                    return False  # the next job plans its own memory
+                assistant = self.prompt_assistant
+                if getattr(assistant, "resident", False):
+                    assistant.unload()
+                    log.info("memory pressure while idle: unloaded the agent")
+                    return True
+                freed = self.memory.free_least_used()
+                if freed:
+                    log.info("memory pressure while idle: freed %s", freed)
+                return freed is not None
+            finally:
+                self._accelerator_lock.release()
+        except Exception:  # noqa: BLE001 - never kill the watcher
+            log.exception("freeing idle memory failed")
+            return False
+
     def _run_multi(self, job: Job) -> None:
         plan = job.workflow_plan
         assert plan is not None
@@ -1184,8 +1221,9 @@ class Engine:
 
     def _release_assistant(self) -> None:
         """Between messages the assistant stays loaded where it leaves clear room (24 GB and up), so the
-        next message is planned in seconds; the worker always unloads it before an image job."""
-        if self.memory.total < 24 * GB:
+        next message is planned in seconds, unless macOS reports memory pressure; the worker always unloads it
+        before an image job."""
+        if self.memory.total < 24 * GB or self.memory.monitor.last().pressure >= sysmem.PRESSURE_WARN:
             self.prompt_assistant.unload()
 
     def _assist(self, text: str, *, operation: str, images: list[Path], supports_negative: bool, emit=None):
