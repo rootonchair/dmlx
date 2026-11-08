@@ -213,8 +213,16 @@ const examples = [
     </div>
     <div class="edit layout">
       <figure><Image src={shot('layout-before')} widths={[300, 600]} sizes="(max-width: 480px) 100vw, 340px" alt="An Ideogram 4 jazz poster: JAZZ NIGHT at the top, FRIDAY 9 PM below it." /><figcaption><b>1 · The agent's layout</b>The title at the top, the date under it.</figcaption></figure>
-      <figure><Image src={shot('layout-after')} widths={[300, 600]} sizes="(max-width: 480px) 100vw, 340px" alt="The redraw: JAZZ NIGHT still at the top, FRIDAY 9 PM in the bottom right corner." /><figcaption><b>2 · Move a box, redraw</b>The date moved to the bottom right; the title stayed.</figcaption></figure>
-      <figure><Image src={shot('layout-chat')} widths={[340, 680]} sizes="(max-width: 480px) 100vw, 340px" alt="The chat: image 1, version v2, with dashed boxes named JAZZ NIGHT and FRIDAY 9 PM, and the buttons v1, v2, Hide boxes, Variations and Crop / Draw." /><figcaption><b>3 · See the boxes</b>They show on the image; Hide boxes turns them off.</figcaption></figure>
+      <figure><Image src={shot('layout-editor')} widths={[340, 680]} sizes="(max-width: 480px) 100vw, 340px" alt="The Crop / Draw editor on Layout over v1: the agent's white box around JAZZ NIGHT, and the FRIDAY 9 PM box, now blue, dragged to the bottom right corner. Below: Redraw with layout." /><figcaption><b>2 · Move a box</b>Crop / Draw → Layout. Drag the date's box to the bottom right.</figcaption></figure>
+      <figure><Image src={shot('layout-after')} widths={[300, 600]} sizes="(max-width: 480px) 100vw, 340px" alt="The redraw: JAZZ NIGHT still at the top, FRIDAY 9 PM in the bottom right corner." /><figcaption><b>3 · Redraw with layout</b>The date moved; the title stayed.</figcaption></figure>
+    </div>
+    <div class="layout-first">
+      <figure><Image src={shot('layout-blank')} widths={[300, 600]} sizes="(max-width: 700px) 100vw, 300px" alt="A blank canvas with three boxes: JAZZ NIGHT · top, saxophone player · center, and FRIDAY 9 PM · bottom right, with Use layout." /></figure>
+      <div>
+        <h3>Or draw the layout first</h3>
+        <p>Click Layout in the message box, draw a box for each thing and name it, then click Use layout. The boxes go with your next message.</p>
+        <Image src={shot('layout-composer')} widths={[600, 1100]} sizes="(max-width: 700px) 100vw, 640px" alt="The message box with the chip Layout · 3 boxes above the message about a jazz night poster." />
+      </div>
     </div>
     <p class="sub foot">Ideogram 4 and MOSS Image place things in exact boxes; FIBO 2 places them by words like "top center", from boxes you draw. Each takes about 5–9 minutes per image on a 24 GB Mac. Ideogram 4 and FIBO 2 have non-commercial licenses.</p>
   </div>
@@ -484,6 +492,13 @@ a:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outlin
 
 .edit { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px }
 .edit.layout { grid-template-columns: repeat(3, minmax(0, 1fr)) }
+.layout-first { display: grid; grid-template-columns: 300px 1fr; gap: 28px; align-items: center; margin-top: 36px }
+.layout-first figure { margin: 0 }
+.layout-first img { border-radius: 10px; border: 1px solid var(--line); width: 100% }
+.layout-first h3 { margin: 0 0 8px }
+.layout-first p { margin: 0 0 16px; color: var(--muted) }
+#layout .foot { margin-top: 28px; color: var(--muted); font-size: .92rem }
+@media (max-width: 700px) { .layout-first { grid-template-columns: 1fr } .layout-first figure { max-width: 420px; margin: 0 auto } }
 @media (max-width: 900px) { .edit { grid-template-columns: repeat(2, minmax(0, 1fr)) } }
 @media (max-width: 700px) { .edit.layout { grid-template-columns: 1fr; max-width: 420px; margin: 0 auto } }
 @media (max-width: 480px) { .edit { grid-template-columns: 1fr } }

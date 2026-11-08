@@ -108,12 +108,20 @@ with the prompt: a box for each title, each line of text and each main object. A
 the boxes show on it. Click **Hide boxes** to see the image only.
 
 To change the layout, open **Crop / Draw** and select **Layout**. Drag a box to move it, or drag on an
-empty area to add a box. Click a box to rename it or to describe it. Then click **Redraw with layout**.
-The app makes a new version of the image. All boxes on the canvas count as yours, so the agent keeps them
-where they are. If no box moved, the new version uses the same seed.
+empty area to add a box. The boxes that you move or add turn blue. Click a box to rename it or to
+describe it. Then click **Redraw with layout**. The app makes a new version of the image. When you redraw,
+every box on the canvas counts as yours, so the agent keeps them where they are. If no box moved, the new version uses
+the same seed.
+
+<img src="docs/screenshots/layout-editor.jpg" width="640" alt="The Crop / Draw editor with the Layout tool selected, over version v1 of the Ideogram 4 jazz poster. A white dashed box from the agent, named JAZZ NIGHT, surrounds the title. The date FRIDAY 9 PM is still under the title in the image, but its blue dashed box has been dragged to the bottom right corner. Below the image: 'Blue boxes are yours.', with Reset, Cancel and Redraw with layout.">
 
 You can also draw a layout before the first image: click **Layout** in the message box, draw the boxes,
-and click **Use layout**. The boxes go with your next message.
+and click **Use layout**. The boxes go with your next message. Dashed boxes are for text, and solid boxes
+are for objects. For FIBO 2, each box shows the place word that the model gets.
+
+| Draw the boxes on a blank canvas | The layout goes with your next message |
+|---|---|
+| <img src="docs/screenshots/layout-blank.jpg" alt="The Layout sheet on a blank square canvas. Three boxes: a dashed box 'JAZZ NIGHT · top', a solid box 'saxophone player · center' and a dashed box 'FRIDAY 9 PM · bottom right'. Below: Reset, Cancel and Use layout."> | <img src="docs/screenshots/layout-composer.jpg" alt="The message box with the chip 'Layout · 3 boxes', Change and a remove button, above the message 'a poster for a jazz night with the words JAZZ NIGHT and FRIDAY 9 PM'. Below: Layout, Square · 1024², New: FIBO 2 and 'Will generate · FIBO 2 (6-bit)'."> |
 
 <img src="docs/screenshots/layout-chat.jpg" width="640" alt="Chat: the message 'a poster for a jazz night with the words JAZZ NIGHT and FRIDAY 9 PM'. Image 1, version v2, made with Ideogram 4: JAZZ NIGHT at the top and FRIDAY 9 PM at the bottom right, each in a dashed box with its name. Below the image: v1, v2, Hide boxes, Variations and Crop / Draw.">
 

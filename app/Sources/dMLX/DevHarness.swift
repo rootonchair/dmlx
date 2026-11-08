@@ -8,7 +8,7 @@ import SwiftUI
 ///
 /// Script: {"out": "/dir", "steps": [{"newSession": true}, {"send": "a boat"}, {"waitIdle": 300},
 ///          {"snapshot": "name"}, {"variation": true}, {"attachFile": "/path.png"}, {"draft": "text"}, {"sleep": 1},
-///          {"onboarding": true|false}, {"onboardingStep": "welcome"|"setup"}, {"onboardingDownload": true} (presses Download or Start Creating), {"agentService": {"service": "ollama", "model": "…"}}, {"guideNext": "chat"|"image"} (the tip's Next; DMLX_RESET_TIPS=1 shows the guide again), {"settings": true}, {"selectSession": 0}, {"renderChat": "name"},
+///          {"onboarding": true|false}, {"onboardingStep": "welcome"|"setup"}, {"onboardingDownload": true} (presses Download or Start Creating), {"agentService": {"service": "ollama", "model": "…"}}, {"guideNext": "chat"|"image"|"editor"} (the tip's Next; DMLX_RESET_TIPS=1 shows the guide again), {"settings": true}, {"selectSession": 0}, {"renderChat": "name"},
 ///          {"modelChoice": "auto"|"<model id>"} (both tasks), {"generateModel": "…"}, {"editModel": "…"}, {"logPreview": true},
 ///          {"windowSize": [w, h]}, {"measure": true}, {"fakeSessions": n},
 ///          {"ask": {"message": "…", "question": "…"}} (as if the agent asked), {"planning": "message"} (as if just sent; "" clears), {"waitRouted": 60},
@@ -16,7 +16,7 @@ import SwiftUI
 ///          {"appearance": "system"|"light"|"dark"}, {"settingsTab": "intelligence"} (with {"settings": true}, which hosts SettingsView in its own window), {"closeSettings": true},
 ///          {"addModel": ""|"<group>"} (Add Model over Settings → Models), {"openModelMenu": "name", "keys": [125]},
 ///          Layout (task 17): {"layoutBoxes": [<LayoutBox json>]} (the composer's chip), {"openLayout": true} (▭ Layout,
-///          a blank canvas), {"layoutTool": true} (with openEditor: open on Layout), {"applyLayout": {"move": {"<label>":
+///          a blank canvas), {"layoutTool": true} (with openEditor: open on Layout), {"sheetSize": [w, h]}, {"pickVersion": 0}, {"moveBoxes": {"<label>": [y0, x0, y1, x1]}}, {"applyLayout": {"move": {"<label>":
 ///          [y0, x0, y1, x1]}, "describe": {"<label>": "text"}}} (what Redraw with layout sends), {"logLayout": true},
 ///          {"capture": "name", "window": "main"|"settings"|"settingsSheet"} (the real window through screencapture, native
 ///          controls included; needs Screen Recording for the launching terminal),
@@ -140,7 +140,8 @@ enum DevHarness {
         }
         if let group = step["guideNext"] as? String {
             // Press Next on the current tip of the "chat" or "image" group.
-            if let tip = (group == "image" ? Guide.shared.image : Guide.shared.chat).currentTip { Guide.shared.next(tip) }
+            if group == "editor" { Guide.shared.next(Guide.shared.editor) }
+            else if let tip = (group == "image" ? Guide.shared.image : Guide.shared.chat).currentTip { Guide.shared.next(tip) }
         }
         // {"settings": true}, or {"settings": {"height": 760}} for a taller window (README screenshots).
         if let value = step["settings"] {
@@ -202,6 +203,7 @@ enum DevHarness {
             let window: NSWindow? = switch step["window"] as? String {
             case "settings": settingsWindow()
             case "settingsSheet": settingsWindow()?.attachedSheet ?? NSApp.windows.first { $0.isSheet && $0.isVisible }
+            case "sheet": mainWindow()?.attachedSheet  // the Crop / Draw editor
             default: mainWindow()
             }
             if let view = window?.contentView, let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) {
@@ -305,7 +307,14 @@ enum DevHarness {
         }
         if step["openLayout"] != nil { model.openBlankLayout() }
         if step["layoutTool"] != nil { model.editorStartTool = "Layout" }
+        // {"pickVersion": n}: shows version n (0-based) of the latest image, as its v1 / v2 buttons do.
+        if let n = step["pickVersion"] as? Int, let t = model.latestImageTurn { model.pickVersion(t.id, n) }
         if step["openEditor"] != nil, let t = model.latestImageTurn { model.openEditor(t.id) }
+        // {"moveBoxes": {"<label>": [y0, x0, y1, x1]}} (with openEditor): the boxes as if dragged, before the sheet draws.
+        if let moves = step["moveBoxes"] as? [String: [Int]], var boxes = model.editorLayout {
+            for i in boxes.indices { if let box = moves[boxes[i].label] { boxes[i].box = box; boxes[i].byUser = true } }
+            model.editorLayout = boxes
+        }
         if let spec = step["applyLayout"] as? [String: Any], var boxes = model.editorLayout {
             for (label, box) in spec["move"] as? [String: [Int]] ?? [:] {
                 if let i = boxes.firstIndex(where: { $0.label == label }), box.count == 4 {
@@ -326,6 +335,10 @@ enum DevHarness {
                 + "saved=\(v?.layout?.map { "\($0.label)\($0.box)\($0.byUser ? "*" : "")" } ?? []) pending=\(model.pendingLayout?.count ?? 0)")
         }
         if step["closeEditor"] != nil { model.closeEditor() }
+        // {"sheetSize": [w, h]}: the Crop / Draw sheet at its ideal size (it opens at its minimum under the harness).
+        if let size = step["sheetSize"] as? [Double], size.count == 2, let sheet = mainWindow()?.attachedSheet {
+            sheet.setContentSize(NSSize(width: size[0], height: size[1]))
+        }
         // {"editorDoc": {"tool": "Paint", "crop": [x, y, w, h], "paint": [[[x, y], ...]], "erase": [[[x, y], ...]],
         //  "width": 0.03}}: reopen the editor on the latest image with this crop and these strokes (normalized).
         if let spec = step["editorDoc"] as? [String: Any], let t = model.latestImageTurn {

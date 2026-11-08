@@ -3,7 +3,7 @@ import SwiftUI
 
 /// Crop / Draw → Layout (task 17): boxes over the image for models that place things from a layout.
 /// Drag a box to move it, pull its corner to resize, drag on empty space to add one. Boxes the user
-/// touched turn amber: they are theirs and stay put on later turns. Nothing here shows JSON.
+/// touched turn blue: they are theirs and stay put on later turns. Nothing here shows JSON.
 struct LayoutCanvas: View {
     @Binding var boxes: [LayoutBox]
     @Binding var selected: String?
@@ -114,7 +114,7 @@ struct LayoutCanvas: View {
     }
 }
 
-/// One box: dashed for text, solid for a picture, amber when the user placed it.
+/// One box: dashed for text, solid for a picture, blue (the accent) when the user placed it.
 struct BoxView: View {
     let box: LayoutBox
     var selected = false
@@ -195,14 +195,17 @@ struct LayoutBar: View {
                 selected = nil
             }
         } else {
+            // Wraps, so the long hint never pushes Redraw with layout out of the sheet.
             Text(hint).font(.caption).foregroundStyle(.secondary)
+                .frame(maxWidth: 420, alignment: .leading)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 
     private var hint: String {
         if blank { return "Drag on the canvas to draw a box for each thing, then name it. The agent writes whatever you leave empty." }
-        let words = placesByWords ? " This model places things roughly: the word on each box is what it gets." : ""
-        return "Click a box to rename or describe it. Drag to move, or drag on empty space to add one. Amber boxes are yours and stay put.\(words)"
+        let words = placesByWords ? " This model gets each box as a place word." : ""
+        return "Click a box to name or describe it. Drag to move it, or drag on empty space to add one. Blue boxes are yours.\(words)"
     }
 
     private func kindBinding(_ i: Int) -> Binding<LayoutBox.Kind> {

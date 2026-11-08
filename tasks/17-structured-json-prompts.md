@@ -47,7 +47,7 @@ placement matters; boxes are not pixel-perfect.
 
 **Where boxes appear in dMLX:**
 1. **Over the image in the chat** (`ImageTurnView`): the boxes from the caption are drawn on the result,
-   with a Show boxes / Hide boxes button next to Variations. Dashed = text, solid = picture, amber = placed
+   with a Show boxes / Hide boxes button next to Variations. Dashed = text, solid = picture, blue = placed
    by the user.
 2. **After an image: Crop / Draw → Layout.** A fourth tool in `EditorView` next to Crop, Paint and Erase.
    The caption's boxes open over the image. Drag to move, pull the corner to resize, drag on empty space to

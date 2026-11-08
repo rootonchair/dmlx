@@ -327,7 +327,7 @@ struct ResultImage: View {
                     .onDrag { NSItemProvider(contentsOf: ImageCache.fileURL(rid)) ?? NSItemProvider() }
                     .accessibilityLabel(Text(v?.prompt ?? "Generated image"))
                     .overlay {
-                        // The layout saved with the result: dashed for text, solid for pictures, amber for yours.
+                        // The layout saved with the result: dashed for text, solid for pictures, blue for yours.
                         if model.showBoxes, let boxes = v?.layout, !boxes.isEmpty {
                             LayoutOverlay(boxes: boxes, imageWidth: Int(image.size.width), imageHeight: Int(image.size.height),
                                           placesByWords: model.placesByWords(v?.model ?? ""))
