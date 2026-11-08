@@ -95,18 +95,18 @@ const examples = [
   <div class="wrap">
     <div class="hero-copy">
       <span class="eyebrow">Free · Open source · No subscription · Native macOS app · v0.1 beta 4</span>
-      <h1>Make and edit images by chatting. <em>Free and private, on your Mac.</em></h1>
-      <p class="lede">Describe an image. Then say what to change. dMLX works out which image you mean, writes the prompt for you, picks a model for the job, and keeps every version. No account, no cloud, no subscription. Make as many images as you like.</p>
+      <h1>Make and edit images just by asking. <em>Free and private, on your Mac.</em></h1>
+      <p class="lede">Describe an image, then say what to change in plain words. dMLX works out which image you mean, writes the prompt, picks the model and keeps every version. No account, no cloud, no subscription, no per-image fees. Make as many images as you like.</p>
       <div class="btns">
         <a class="btn primary" href="/download/">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16.4 12.6c0-2.4 2-3.5 2-3.6-1.1-1.6-2.8-1.8-3.4-1.8-1.4-.2-2.8.8-3.5.8-.7 0-1.8-.8-3-.8-1.6 0-3 .9-3.8 2.3-1.6 2.8-.4 7 1.2 9.3.8 1.1 1.7 2.4 2.9 2.3 1.2 0 1.6-.7 3-.7s1.8.7 3 .7c1.3 0 2.1-1.1 2.8-2.3.9-1.3 1.3-2.6 1.3-2.6s-2.5-1-2.5-3.6zM14.1 5.6c.6-.8 1.1-1.9 1-3-.9 0-2.1.6-2.7 1.4-.6.7-1.1 1.8-1 2.9 1 .1 2.1-.5 2.7-1.3z"/></svg>
           Download free for macOS
         </a>
-        <a class="btn" href="/docs/getting-started/">See how to get started</a>
+        <a class="btn" href="/docs/getting-started/">Set up in three steps</a>
       </div>
       <p class="req">{downloadNote} · <a href={releases}>all releases</a></p>
       <p class="req">Apple Silicon (M1 or newer) · macOS 15 or later · 16 GB of memory · about 7–11 GB of disk for models, downloaded on first start</p>
-      <p class="req">This is a beta. The agent can still pick the wrong image or model. <a href="/docs/known-issues/">Known issues</a></p>
+      <p class="req">This is a beta: the agent can still pick the wrong image or model. <a href="/docs/known-issues/">Known issues</a></p>
     </div>
     <div class="shot"><Image src={shot('chat-edit-versions')} widths={[800, 1200, 1600]} sizes="(max-width: 1120px) 100vw, 1088px" alt="A dMLX chat. The message 'make the boat red' turns a wooden rowboat on a misty mountain lake red. The result is Image 2, edited from image 1, with versions v1 and v2." loading="eager" fetchpriority="high" /></div>
   </div>
@@ -117,8 +117,8 @@ const examples = [
   <div class="wrap">
     <div class="head">
       <span class="eyebrow">What you can make</span>
-      <h2>Ask in plain words. Get the image.</h2>
-      <p class="lede">No masks, no prompt tricks. Each example is one chat with the model set to Auto, so the agent picked the model. Times are from an M5 Mac with 24 GB of memory.</p>
+      <h2>Remove a person or add a title in one sentence.</h2>
+      <p class="lede">No masks to paint, no prompt tricks to learn. Each example is one chat with the model on Auto, so the agent chose the model. Times are from an M5 Mac with 24 GB of memory.</p>
     </div>
     <div class="examples">
       {examples.map((e) => (
@@ -143,14 +143,14 @@ const examples = [
     <div>
       <div class="head">
         <span class="eyebrow">The agent</span>
-        <h2>You talk. It writes the prompt.</h2>
-        <p class="lede">A small agent on your Mac reads your chat and its images, and plans each message in a few seconds (about 3–10 s). Then it steps aside, so the image model gets the memory.</p>
+        <h2>No prompts to write. Just say what you want.</h2>
+        <p class="lede">An agent on your Mac reads your chat and its images and plans each message in about 3–10 seconds: which image, what prompt, which model. Then it steps aside, so the image model gets the memory. You can also connect an AI service you already use.</p>
       </div>
       <ol class="steps">
-        <li><span class="n">1</span><div><h3>Knows what you asked for</h3><p>A new image, an edit, or no image at all. Say "hello" or "thanks" and it just replies.</p></div></li>
-        <li><span class="n">2</span><div><h3>Keeps track of your images</h3><p>Say "make the boat red" and it edits the boat from image 1, even if you have made other images since.</p></div></li>
-        <li><span class="n">3</span><div><h3>Writes the prompt for you</h3><p>A full description for a new image, or a clear edit instruction. No prompt syntax to learn.</p></div></li>
-        <li><span class="n">4</span><div><h3>Picks a model for the job</h3><p>Quick edits go to FLUX.2 Klein 4B. If you added Qwen Image 2.1, exact words in the image go to it. Your choice wins: it never overrides a model you chose.</p></div></li>
+        <li><span class="n">1</span><div><h3>Knows when to make an image</h3><p>A new image, an edit, or no image at all. Say "hello" or "thanks" and it just replies.</p></div></li>
+        <li><span class="n">2</span><div><h3>Knows which image you mean</h3><p>Say "make the boat red" and it edits the boat from image 1, even if you have made other images since.</p></div></li>
+        <li><span class="n">3</span><div><h3>Writes the prompt, so you don't</h3><p>A full description for a new image, or a clear edit instruction. No prompt syntax to learn.</p></div></li>
+        <li><span class="n">4</span><div><h3>Picks the model, unless you did</h3><p>Quick edits go to FLUX.2 Klein 4B. If you added Qwen Image 2.1, exact words in the image go to it. Your choice wins: it never overrides a model you chose.</p></div></li>
       </ol>
     </div>
     <div class="stack">
@@ -168,13 +168,13 @@ const examples = [
     <div>
       <div class="head flush">
         <span class="eyebrow">Memory check</span>
-        <h2>It checks memory first, not after your Mac slows down.</h2>
-        <p class="lede">Before each image job, dMLX checks how much memory is free. If memory is tight, it loads the model piece by piece. If there still isn't enough, it tells you and doesn't start the job. Tested on a simulated 16 GB Mac; see the <a href="/docs/known-issues/">known issues</a>.</p>
+        <h2>It won't start a job that would freeze your Mac.</h2>
+        <p class="lede">Before each image job, dMLX checks how much memory is free. If memory is tight, it loads the model piece by piece. If it still won't fit, dMLX tells you and doesn't start, so you can keep working. Tested on a simulated 16 GB Mac, not a real one; see the <a href="/docs/known-issues/">known issues</a>.</p>
       </div>
       <div class="facts">
-        <div><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg><span><b>Private and offline.</b> After the models download, every step runs on your Mac. No account, no cloud.</span></div>
-        <div><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12h4l3 8 4-16 3 8h4"/></svg><span><b>Clear about limits.</b> It tells you what a model needs and what is free, and lets you decide whether to try anyway.</span></div>
-        <div><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M8 12l3 3 5-6"/></svg><span><b>Free, with no subscription.</b> No credits and no per-image fees. Your Mac does the work.</span></div>
+        <div><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg><span><b>Private and offline by default.</b> After the models download, every step runs on your Mac. No account, no cloud.</span></div>
+        <div><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12h4l3 8 4-16 3 8h4"/></svg><span><b>You decide.</b> It shows what a model needs and what is free, then lets you choose whether to try anyway.</span></div>
+        <div><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M8 12l3 3 5-6"/></svg><span><b>No credits, no per-image fees.</b> Free and open source, with no subscription. Your Mac does the work.</span></div>
       </div>
       <a class="more" href="/docs/memory/">How dMLX controls memory →</a>
     </div>
@@ -192,8 +192,8 @@ const examples = [
   <div class="wrap">
     <div class="head">
       <span class="eyebrow">Crop / Draw</span>
-      <h2>Point at it. Then say what to change.</h2>
-      <p class="lede">When words aren't enough, crop to the area you care about, circle what to change, then attach it and say what to do. Ask it to remove your marks too. Your original image is never changed.</p>
+      <h2>When words aren't enough, circle it.</h2>
+      <p class="lede">Crop to the area you care about, paint a mark around what should change, then attach it and say what to do. It can remove your marks in the same step. Your original image is never changed.</p>
     </div>
     <div class="edit">
       <figure><Image src={shot('edit-1-crop')} widths={[300, 600]} sizes="(max-width: 480px) 100vw, 260px" alt="The crop frame around a white teapot." /><figcaption><b>1 · Crop</b>Keep only the area you care about.</figcaption></figure>
@@ -208,8 +208,8 @@ const examples = [
   <div class="wrap">
     <div class="head">
       <span class="eyebrow">Layout</span>
-      <h2>Move the title. Keep the rest.</h2>
-      <p class="lede">With MOSS Image, Ideogram 4 or FIBO 2, the agent plans a box for each title, line of text and main object. Drag a box in Crop / Draw → Layout, click Redraw with layout, and the part you moved goes to its new place while the rest stays put. You can also draw the boxes before the first image.</p>
+      <h2>Drag text and objects into place. The rest stays put.</h2>
+      <p class="lede">Move one part without starting over. With Ideogram 4, MOSS Image or FIBO 2, the agent plans a box for each title, line of text and main object. Drag a box in Crop / Draw → Layout, click Redraw with layout, and the part you moved goes to its new place. Or draw the boxes yourself before the first image.</p>
     </div>
     <div class="edit layout">
       <figure><Image src={shot('layout-before')} widths={[300, 600]} sizes="(max-width: 480px) 100vw, 340px" alt="An Ideogram 4 jazz poster: JAZZ NIGHT at the top, FRIDAY 9 PM below it." /><figcaption><b>1 · The agent's layout</b>The title at the top, the date under it.</figcaption></figure>
@@ -219,12 +219,12 @@ const examples = [
     <div class="layout-first">
       <figure><Image src={shot('layout-blank')} widths={[300, 600]} sizes="(max-width: 700px) 100vw, 300px" alt="A blank canvas with three boxes: JAZZ NIGHT · top, saxophone player · center, and FRIDAY 9 PM · bottom right, with Use layout." /></figure>
       <div>
-        <h3>Or draw the layout first</h3>
+        <h3>Or plan the layout before the first image</h3>
         <p>Click Layout in the message box, draw a box for each thing and name it, then click Use layout. The boxes go with your next message.</p>
         <Image src={shot('layout-composer')} widths={[600, 1100]} sizes="(max-width: 700px) 100vw, 640px" alt="The message box with the chip Layout · 3 boxes above the message about a jazz night poster." />
       </div>
     </div>
-    <p class="sub foot">Ideogram 4 and MOSS Image place things in exact boxes; FIBO 2 places them by words like "top center", from boxes you draw. Each takes about 5–9 minutes per image on a 24 GB Mac. Ideogram 4 and FIBO 2 have non-commercial licenses.</p>
+    <p class="sub foot">Ideogram 4 and MOSS Image place things in exact boxes; FIBO 2 places them by words like "top center", from the boxes you draw. Expect about 5–9 minutes per image on a 24 GB Mac. Ideogram 4 and FIBO 2 have non-commercial licenses.</p>
   </div>
 </section>
 
@@ -232,8 +232,8 @@ const examples = [
   <div class="wrap api">
     <div class="head flush">
       <span class="eyebrow">Local API</span>
-      <h2>Plug it into your own tools.</h2>
-      <p class="lede">The engine serves an OpenAI-compatible images API on your Mac. Point any app or coding agent that speaks <span class="mono">/v1/images</span> at it, with no per-image fees. To run it on its own, use a clone of the repo.</p>
+      <h2>Your own image API, on your Mac.</h2>
+      <p class="lede">The engine serves an OpenAI-compatible images API. Point any app or coding agent that speaks <span class="mono">/v1/images</span> at it: the images are made on your Mac, with no per-image fees. To run the engine on its own, use a clone of the repo.</p>
       <a class="more" href="/docs/api/">Engine API reference →</a>
     </div>
     <pre set:html={apiExample}></pre>
@@ -244,8 +244,8 @@ const examples = [
   <div class="wrap">
     <div class="head">
       <span class="eyebrow">Models</span>
-      <h2>Let Auto choose, or pick your own.</h2>
-      <p class="lede">Start with the recommended models. Add more from inside the app, or paste a Hugging Face link. dMLX checks that it can run the model, shows the size and license, and then downloads it.</p>
+      <h2>Auto picks a model for each job. Or you pick.</h2>
+      <p class="lede">Start with the recommended models. Add more in the app, or paste a Hugging Face link: before it downloads, dMLX checks that your Mac can run the model and shows its size and license.</p>
     </div>
     <div class="tables">
       <div class="tbl">
@@ -282,7 +282,7 @@ const examples = [
   <div class="wrap">
     <div class="head">
       <span class="eyebrow">Get started</span>
-      <h2>Free to download. Three steps to your first image.</h2>
+      <h2>Free to download. Your first image in three steps.</h2>
     </div>
     <div class="start">
       <div><span class="n">Step 1</span><h3>Download and install</h3><p>Open the downloaded <span class="mono">.dmg</span> and drag dMLX onto the Applications folder.</p></div>

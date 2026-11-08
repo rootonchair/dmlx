@@ -2,7 +2,8 @@
 
 # dMLX
 
-Use chat to make and edit images fully on your Mac. dMLX is a native macOS app and a local engine.
+Make and edit images just by asking, fully on your Mac. dMLX is free and open source: no account, no
+cloud, no subscription and no per-image fees. It is a native macOS app and a local engine.
 The engine uses [MLX](https://github.com/ml-explore/mlx) and [mflux](https://github.com/filipstrand/mflux).
 A small agent on your Mac plans each message.
 
@@ -19,24 +20,29 @@ A small agent on your Mac plans each message.
 
 ## Highlights
 
-- **Use chat to make and edit images.** Describe an image. Then write in simple words what to change
+- **Make and edit images just by asking.** Describe an image. Then write in simple words what to change
   ("make the boat red"). Each image has a number. Thus you can write "image 1" or "the first one".
-- **An agent plans each message.** A vision-language model on your Mac reads the chat and examines the
-  images. Then it decides: a new image or an edit, the image to change, the images to use as references,
-  and the correct image model.
-- **The agent replies in the chat.** If a message is not clear, the agent asks one short question. If you
+- **No prompts to write.** A vision-language model on your Mac reads the chat and examines the images.
+  Then it decides: a new image or an edit, the image to change, the images to use as references, and the
+  image model. It writes the prompt for you. It never overrides a model that you select.
+- **It asks when it is not sure.** If a message is not clear, the agent asks one short question. If you
   send a greeting or a question about the app, the agent replies and does not make an image.
-- **Your Mac stays available for use.** The engine does a check of the memory before each image job. If
-  memory is low, the engine loads models in parts. The engine stops a job before macOS starts to swap.
-  dMLX is for Macs with 16 GB of memory or more.
-- **Put things where you want them.** With MOSS Image, Ideogram 4 or FIBO 2, the agent plans a layout:
-  a box for each part of the image. Move a box, then redraw. The title stays where it was, and the part
-  that you moved goes to its new place.
-- **The app keeps all versions.** It does not overwrite an image. Variations show as v1, v2, v3. You can
+- **It does not start a job that would freeze your Mac.** The engine does a check of the memory before
+  each image job. If memory is low, the engine loads models in parts. The engine stops a job before macOS
+  starts to swap. dMLX is for Macs with 16 GB of memory or more.
+- **When words are not enough, circle it.** In Crop / Draw, crop the image and paint a mark on the part to
+  change. Then write what to do. The original image does not change.
+- **Drag text and objects into place. The rest stays.** With MOSS Image, Ideogram 4 or FIBO 2, the agent
+  plans a layout: a box for each title, line of text and main object. Move a box, then redraw. The part
+  that you moved goes to its new place, and the rest stays where it was. Thus you can move one part and not
+  start again.
+- **Every version is kept.** The app does not overwrite an image. Variations show as v1, v2, v3. You can
   edit each version. You can also edit your prompt and run it again.
-- **Private and offline.** After you download the models, all work occurs on your Mac. You do not need an
-  account or a cloud service.
-- **A local API.** The engine has an OpenAI-compatible images API for other apps and agents.
+- **Private and offline by default.** After you download the models, all work occurs on your Mac. You do
+  not need an account or a cloud service. If you select your own AI service for the agent, your messages
+  and the images in the chat go to that service. The images are still made on your Mac.
+- **An image API on your Mac.** The engine has an OpenAI-compatible images API for other apps and agents,
+  with no per-image fees.
 
 ## What you can make
 
