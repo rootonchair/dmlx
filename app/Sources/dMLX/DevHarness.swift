@@ -8,7 +8,8 @@ import SwiftUI
 ///
 /// Script: {"out": "/dir", "steps": [{"newSession": true}, {"send": "a boat"}, {"waitIdle": 300},
 ///          {"snapshot": "name"}, {"variation": true}, {"attachFile": "/path.png"}, {"draft": "text"}, {"sleep": 1},
-///          {"onboarding": true|false}, {"onboardingStep": "welcome"|"setup"}, {"onboardingDownload": true} (presses Download or Start Creating), {"agentService": {"service": "ollama", "model": "…"}}, {"guideNext": "chat"|"image"|"editor"} (the tip's Next; DMLX_RESET_TIPS=1 shows the guide again), {"settings": true}, {"selectSession": 0}, {"renderChat": "name"},
+///          {"onboarding": true|false}, {"onboardingStep": "welcome"|"setup"}, {"onboardingDownload": true} (presses Download or Start Creating), {"agentService": {"service": "ollama", "model": "…"}}, {"guideNext": "chat"|"image"|"editor"} (the tip's Next; DMLX_RESET_TIPS=1 shows the guide again), {"settings": true}, {"selectSession": 0}, {"renderChat": "name"} (add "chatWidth": 384 to draw the turns at that width, e.g. the
+///          detail column of the smallest window),
 ///          {"modelChoice": "auto"|"<model id>"} (both tasks), {"generateModel": "…"}, {"editModel": "…"}, {"logPreview": true},
 ///          {"windowSize": [w, h]}, {"measure": true}, {"fakeSessions": n},
 ///          {"ask": {"message": "…", "question": "…"}} (as if the agent asked), {"planning": "message"} (as if just sent; "" clears), {"waitRouted": 60},
@@ -24,6 +25,9 @@ import SwiftUI
 ///          controls included; needs Screen Recording for the launching terminal),
 ///          {"scroll": "top"|"bottom", "overscroll": 60} (the chat transcript, to capture a chat taller than the
 ///          window in parts),
+///          {"fakeTurnState": {"status": "error"|"rendering"|"cancelled", "code": "insufficient_memory", "message": "…",
+///          "phase": "Step 3 of 4", "step": 3, "total": 4, "versions": 5}} (in memory only, never saved: the latest
+///          image turn's current version in that state; "versions": n repeats it as v1…vn; an error drops the image),
 ///          {"quit": true}]}
 extension Notification.Name {
     /// The harness's selectBox: the open editor selects the box with this label (the object).
@@ -87,7 +91,9 @@ enum DevHarness {
         if let index = step["selectSession"] as? Int, model.sessions.indices.contains(index) {
             model.select(model.sessions[index].id)
         }
-        if let name = step["renderChat"] as? String { renderChat(model, name: name, out: out) }
+        if let name = step["renderChat"] as? String {
+            renderChat(model, name: name, out: out, width: step["chatWidth"] as? Double ?? 780)
+        }
         if let text = step["draft"] as? String { model.draft = text }
         if let choice = step["modelChoice"] as? String { model.setModelChoice(choice) }
         if let choice = step["generateModel"] as? String { model.setModelChoice(choice, for: [.t2i]) }
@@ -135,6 +141,26 @@ enum DevHarness {
             }
         }
         if step["variation"] != nil, let t = model.latestImageTurn { model.variation(t.id) }
+        if let spec = step["fakeTurnState"] as? [String: Any], let id = model.latestImageTurn?.id,
+           let t = model.turns.firstIndex(where: { $0.id == id }) {
+            var turn = model.turns[t]
+            if let n = spec["versions"] as? Int, n > 1, let v = turn.current {
+                turn.versions = (0..<n).map { _ in var c = v; c.id = UUID().uuidString; return c }
+                turn.activeVersion = n - 1
+            }
+            var v = turn.versions[turn.activeVersion]
+            if let raw = spec["status"] as? String, let status = VersionStatus(rawValue: raw) {
+                v.status = status
+                if status == .error || status == .cancelled { v.resultId = nil }
+            }
+            v.errorCode = spec["code"] as? String ?? v.errorCode
+            v.errorMessage = spec["message"] as? String ?? v.errorMessage
+            v.phase = spec["phase"] as? String ?? v.phase
+            v.step = spec["step"] as? Int ?? v.step
+            v.totalSteps = spec["total"] as? Int ?? v.totalSteps
+            turn.versions[turn.activeVersion] = v
+            model.turns[t] = turn
+        }
         if let path = step["attachFile"] as? String { model.attach(files: [URL(fileURLWithPath: path)]) }
         if let name = step["onboardingStep"] as? String, let value = OnboardingStep(rawValue: name) { model.onboardingStep = value }
         if let show = step["onboarding"] as? Bool { model.showOnboarding = show }
@@ -651,7 +677,7 @@ enum DevHarness {
 
     /// Draws the chat turns and status card with ImageRenderer. AppKit-backed parts (the sidebar list,
     /// scroll view, text field) do not appear in window snapshots, so this is how the chat itself is reviewed.
-    static func renderChat(_ model: AppModel, name: String, out: URL) {
+    static func renderChat(_ model: AppModel, name: String, out: URL, width: Double = 780) {
         let content = HStack(alignment: .top, spacing: 24) {
             VStack(alignment: .leading, spacing: 8) {
                 ForEach(model.sessions.prefix(8)) { s in
@@ -669,7 +695,7 @@ enum DevHarness {
                 ForEach(model.turns) { TurnView(turn: $0) }
                 PendingMessages()
             }
-            .frame(width: 780)
+            .frame(width: width)
         }
         .padding(24)
         .background(Color(nsColor: .windowBackgroundColor))

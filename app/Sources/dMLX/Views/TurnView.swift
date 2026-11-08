@@ -228,16 +228,10 @@ struct ImageTurnView: View {
                 ErrorBox(turn: turn, version: v)
             }
 
-            HStack(spacing: 6) {
+            // Wraps when the chat is narrow, so no button is squeezed to an empty or truncated pill.
+            FlowLayout(spacing: 6, alignment: .leading) {
                 if turn.versions.count > 1 {
-                    HStack(spacing: 4) {
-                        ForEach(Array(turn.versions.enumerated()), id: \.element.id) { i, _ in
-                            Button("v\(i + 1)") { model.pickVersion(turn.id, i) }
-                                .buttonStyle(VersionButtonStyle(selected: i == turn.activeVersion))
-                                .accessibilityAddTraits(i == turn.activeVersion ? .isSelected : [])
-                        }
-                    }
-                    .padding(.trailing, 6)
+                    versionPicker
                 }
                 if version?.isActive == true {
                     Button("Cancel") { model.cancel(turn.id) }
@@ -282,6 +276,31 @@ struct ImageTurnView: View {
         }
     }
 
+    /// v1 v2 … as buttons; past four versions, one menu ("v5 of 7") so the row stays short.
+    @ViewBuilder
+    private var versionPicker: some View {
+        if turn.versions.count <= 4 {
+            HStack(spacing: 4) {
+                ForEach(Array(turn.versions.enumerated()), id: \.element.id) { i, _ in
+                    Button("v\(i + 1)") { model.pickVersion(turn.id, i) }
+                        .buttonStyle(VersionButtonStyle(selected: i == turn.activeVersion))
+                        .accessibilityAddTraits(i == turn.activeVersion ? .isSelected : [])
+                }
+            }
+            .fixedSize()
+            .padding(.trailing, 6)
+        } else {
+            Menu("v\(turn.activeVersion + 1) of \(turn.versions.count)") {
+                ForEach(Array(turn.versions.enumerated()), id: \.element.id) { i, _ in
+                    Toggle("v\(i + 1)", isOn: Binding(get: { i == turn.activeVersion }, set: { _ in model.pickVersion(turn.id, i) }))
+                }
+            }
+            .fixedSize()
+            .help("Versions of this image")
+            .padding(.trailing, 6)
+        }
+    }
+
     func metaLine(_ v: ImageVersion) -> String {
         var parts = [model.modelName(v.model)]
         if v.task == .edit { parts.append("edit") }
@@ -289,7 +308,7 @@ struct ImageTurnView: View {
         if let seed = v.seed { parts.append("seed \(seed)") }
         if v.status == .done {
             if let s = v.seconds { parts.append(String(format: "%.1f s", s)) }
-            parts.append(v.loads.isEmpty ? "model was already warm" : "loaded \(v.loads.map { AppModel.componentName($0) }.joined(separator: ", "))")
+            parts.append(v.loads.isEmpty ? "model was already warm" : "loaded \(AppModel.loadedParts(v.loads))")
             if let label = AppModel.strategyLabel(v.strategy) { parts.append(label) }
         }
         return parts.joined(separator: " · ")
@@ -408,7 +427,7 @@ struct ErrorBox: View {
                 Button("Retry") { model.retry(turn.id, force: false) }
                 if version.errorCode == "insufficient_memory" {
                     Button("Try anyway") { model.retry(turn.id, force: true) }
-                        .help("Runs in low-memory mode and stops automatically if your Mac gets slow")
+                        .help("Runs with the least memory it can (one part at a time, or streamed from disk) and stops automatically if your Mac gets slow")
                 }
             }
             .buttonStyle(.bordered)

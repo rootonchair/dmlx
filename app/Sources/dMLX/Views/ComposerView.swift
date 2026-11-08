@@ -8,6 +8,9 @@ struct ComposerView: View {
     @Environment(AppModel.self) private var model
     @FocusState private var focused: Bool
     @State private var dropTargeted = false
+    /// The message field's width. The field is rebuilt when it changes: its text view otherwise keeps wrapping
+    /// at the old width after the window is resized (lines cut off at the edge, or the last line hidden).
+    @State private var fieldWidth: CGFloat = 0
 
     private let suggestions = ["Make it foggy", "Add warm evening light", "Make it black and white", "Variations"]
 
@@ -19,8 +22,10 @@ struct ComposerView: View {
     var body: some View {
         @Bindable var model = model
         VStack(alignment: .leading, spacing: 10) {
-            if model.latestImageTurn?.current?.isActive == false && model.draft.isEmpty && model.attachments.isEmpty {
-                FlowLayout(spacing: 8) {
+            // Not while a message is being planned or waits on the agent's question: a chip would send another.
+            if model.latestImageTurn?.current?.isActive == false && model.draft.isEmpty && model.attachments.isEmpty
+                && model.planningMessage == nil && !model.needsRouteChoice && model.pendingAsk == nil {
+                FlowLayout(spacing: 8, alignment: .leading) {
                     ForEach(suggestions, id: \.self) { s in
                         Button(s) {
                             if s == "Variations", let t = model.latestImageTurn {
@@ -76,7 +81,7 @@ struct ComposerView: View {
                 }
 
                 if model.needsRouteChoice {
-                    FlowLayout(spacing: 8) {
+                    FlowLayout(spacing: 8, alignment: .leading) {
                         // The agent's question is in the chat; here are the shortcuts to answer it.
                         Text(model.pendingAsk == nil ? "Choose the workflow" : "Reply in the chat, or:")
                             .font(.caption)
@@ -89,6 +94,7 @@ struct ComposerView: View {
                         Button("Cancel") { model.cancelPendingRoute() }
                             .buttonStyle(.borderless)
                             .controlSize(.small)
+                            .keyboardShortcut(.cancelAction)
                     }
                 }
 
@@ -109,7 +115,7 @@ struct ComposerView: View {
                 }
 
                 if !model.attachments.isEmpty {
-                    FlowLayout(spacing: 6) {
+                    FlowLayout(spacing: 6, alignment: .leading) {
                         ForEach(Array(model.attachments.enumerated()), id: \.element.id) { index, a in
                             HStack(spacing: 6) {
                                 Thumbnail(resultId: a.id, size: 22)
@@ -145,98 +151,105 @@ struct ComposerView: View {
                 .focused($focused)
                 .onSubmit { if canSend { model.send() } }
                 .accessibilityLabel("Describe an image or a change")
+                .id(fieldWidth)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .onGeometryChange(for: CGFloat.self) { $0.size.width.rounded() } action: { width in
+                    let wasFocused = focused
+                    fieldWidth = width
+                    if wasFocused { _Concurrency.Task { @MainActor in focused = true } }
+                }
                 .guideTip(ComposerTip.self, in: Guide.shared.chat, edge: .bottom)
 
-                HStack(spacing: 8) {
-                    ScrollView(.horizontal) {
-                        HStack(spacing: 8) {
-                            Button {
-                                pickFiles()
-                            } label: {
-                                Image(systemName: "paperclip")
+                HStack(alignment: .bottom, spacing: 8) {
+                    // Wraps when narrow (the route preview moves to its own line), so every control stays in view.
+                    FlowLayout(spacing: 8, alignment: .leading) {
+                        Button {
+                            pickFiles()
+                        } label: {
+                            Image(systemName: "paperclip")
+                        }
+                        .buttonStyle(.borderless)
+                        .help("Attach up to 3 reference images")
+                        .accessibilityLabel("Attach reference images")
+                        .guideTip(AttachTip.self, in: Guide.shared.chat, edge: .bottom)
+
+                        if model.layoutAvailable {
+                            Button { model.openBlankLayout() } label: {
+                                Label("Layout", systemImage: "rectangle.dashed").font(.caption)
                             }
                             .buttonStyle(.borderless)
-                            .help("Attach up to 3 reference images")
-                            .accessibilityLabel("Attach reference images")
-                            .guideTip(AttachTip.self, in: Guide.shared.chat, edge: .bottom)
+                            .help("Draw where things go before the image is made")
+                            .accessibilityLabel("Draw a layout")
+                        }
 
-                            if model.layoutAvailable {
-                                Button { model.openBlankLayout() } label: {
-                                    Label("Layout", systemImage: "rectangle.dashed").font(.caption)
+                        if model.promptEnhancementMode != .off {
+                            Button { model.enhanceDraft() } label: {
+                                if model.isEnhancingPrompt {
+                                    ProgressView().controlSize(.small)
+                                } else {
+                                    Image(systemName: "sparkles")
                                 }
-                                .buttonStyle(.borderless)
-                                .help("Draw where things go before the image is made")
-                                .accessibilityLabel("Draw a layout")
                             }
+                            .buttonStyle(.borderless)
+                            .disabled(model.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || model.isEnhancingPrompt)
+                            .help("Preview an enhanced prompt before sending")
+                            .accessibilityLabel("Enhance prompt")
+                        }
 
-                            if model.promptEnhancementMode != .off {
-                                Button { model.enhanceDraft() } label: {
-                                    if model.isEnhancingPrompt {
-                                        ProgressView().controlSize(.small)
-                                    } else {
-                                        Image(systemName: "sparkles")
+                        Menu {
+                            ForEach(Aspect.allCases) { a in
+                                Button(a.label) { model.aspect = a }
+                            }
+                        } label: {
+                            Text(model.aspect.label).font(.caption)
+                        }
+                        .menuStyle(.borderlessButton)
+                        .fixedSize()
+                        .help("Size for new images (edits keep the source size)")
+                        .guideTip(SizeTip.self, in: Guide.shared.chat, edge: .bottom)
+
+                        if model.hasModelChoice {
+                            // With a model chosen and nothing typed, the route preview is empty: the tip about
+                            // choosing new image or edit points here instead of at nothing.
+                            ModelMenu()
+                                .guideTip(ModeTip.self, in: model.routePreview.isEmpty ? Guide.shared.chat : nil, edge: .bottom)
+                        }
+
+                        Group {
+                        if model.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                            Text(model.routePreview)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                        } else {
+                            Menu {
+                                Button(AppModel.operationLabel("image.generate")) { model.overrideRoute("image.generate") }
+                                if model.latestImageTurn != nil || !model.attachments.isEmpty {
+                                    Button(model.attachments.isEmpty ? AppModel.operationLabel("image.edit") : "Edit attached") { model.overrideRoute("image.edit") }
+                                    if model.defaultModel(for: "image.upscale") != nil {
+                                        Button("Upscale current image 2×") { model.overrideRoute("image.upscale") }
+                                    }
+                                    if model.defaultModel(for: "image.restore") != nil {
+                                        Button("Restore current image") { model.overrideRoute("image.restore") }
+                                    }
+                                    if model.defaultModel(for: "image.enhance") != nil {
+                                        Button("Enhance current image") { model.overrideRoute("image.enhance") }
                                     }
                                 }
-                                .buttonStyle(.borderless)
-                                .disabled(model.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || model.isEnhancingPrompt)
-                                .help("Preview an enhanced prompt before sending")
-                                .accessibilityLabel("Enhance prompt")
-                            }
-
-                            Menu {
-                                ForEach(Aspect.allCases) { a in
-                                    Button(a.label) { model.aspect = a }
-                                }
                             } label: {
-                                Text(model.aspect.label).font(.caption)
-                            }
-                            .menuStyle(.borderlessButton)
-                            .fixedSize()
-                            .help("Size for new images (edits keep the source size)")
-                            .guideTip(SizeTip.self, in: Guide.shared.chat, edge: .bottom)
-
-                            if model.hasModelChoice {
-                                ModelMenu()
-                            }
-
-                            Group {
-                            if model.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                                 Text(model.routePreview)
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
-                            } else {
-                                Menu {
-                                    Button("Create a new image") { model.overrideRoute("image.generate") }
-                                    if model.latestImageTurn != nil || !model.attachments.isEmpty {
-                                        Button("Edit current or attached images") { model.overrideRoute("image.edit") }
-                                        if model.defaultModel(for: "image.upscale") != nil {
-                                            Button("Upscale current image 2×") { model.overrideRoute("image.upscale") }
-                                        }
-                                        if model.defaultModel(for: "image.restore") != nil {
-                                            Button("Restore current image") { model.overrideRoute("image.restore") }
-                                        }
-                                        if model.defaultModel(for: "image.enhance") != nil {
-                                            Button("Enhance current image") { model.overrideRoute("image.enhance") }
-                                        }
-                                    }
-                                } label: {
-                                    Text(model.routePreview)
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                        .lineLimit(1)
-                                }
-                                .menuStyle(.borderlessButton)
-                                .fixedSize()
-                                .help("Choose the workflow")
+                                    .lineLimit(1)
                             }
-                            }
-                            .guideTip(ModeTip.self, in: Guide.shared.chat, edge: .bottom)
+                            .menuStyle(.borderlessButton)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .help("\(model.routePreview). Click to choose the workflow")
                         }
-                        .fixedSize(horizontal: true, vertical: false)
+                        }
+                        .guideTip(ModeTip.self, in: model.routePreview.isEmpty ? nil : Guide.shared.chat, edge: .bottom)
                     }
-                    .scrollIndicators(.hidden)
-
-                    Spacer(minLength: 0)
+                    .frame(maxWidth: .infinity, alignment: .leading)
 
                     if model.isGeneratingHere {
                         // The next message may refer to the image being made, so it waits for it; Stop ends it.
@@ -276,6 +289,10 @@ struct ComposerView: View {
                 return true
             }
         }
+        // The window's minimum size is measured with the composer at its narrowest. Unbounded, its chips and
+        // text then wrap one word per line and the minimum height outgrows short windows, which clips the
+        // whole window (the reply box falls off the bottom). The smallest window's chat column is wider than this.
+        .frame(minWidth: 300)
         .onAppear { focused = true }
         .onAppear { model.scheduleRoutePreview() }
         .onChange(of: model.draft) { model.scheduleRoutePreview() }

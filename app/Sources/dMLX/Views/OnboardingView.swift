@@ -76,6 +76,7 @@ private struct OnboardingWelcome: View {
 
             HStack {
                 Button("Set Up Later", action: later)
+                    .keyboardShortcut(.cancelAction)
                 Spacer()
                 Button("Continue", action: next)
                     .keyboardShortcut(.defaultAction)
@@ -197,7 +198,7 @@ private struct OnboardingSetup: View {
                             VStack(spacing: 6) {
                                 ForEach(Array(imageChoices.enumerated()), id: \.element.id) { index, m in
                                     ChoiceRow(
-                                        name: m.name, hint: ModelHints.image(m), size: gb(m.size_gb),
+                                        name: m.group_name ?? m.name, hint: ModelHints.image(m), size: gb(m.size_gb),
                                         recommended: index == 0 && imageChoices.count > 1,
                                         // No license badge: the license dialog before the download says it.
                                         tag: nil,
@@ -541,8 +542,11 @@ enum ModelHints {
         switch m.id {
         case "flux2-klein-4b": "Fast and good at most things"
         case "flux2-klein-9b": "More detail, about twice as slow"
-        case "z-image-turbo": "The most realistic photos"
+        case "z-image-turbo": "Very realistic photos, but slower"
         case "qwen-image-2.1-q4": "Best at words in images · minutes per image"
+        case let id where id.hasPrefix("fibo"): "Good with text · Layout · very slow"
+        case let id where id.hasPrefix("ideogram"): "Best at lettering · Layout · very slow"
+        case let id where id.hasPrefix("moss"): "Layout · very slow"
         default: m.supports(.edit) ? "Makes new images and edits" : "Makes new images"
         }
     }

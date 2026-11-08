@@ -119,6 +119,7 @@ private struct SidebarChatRow: View {
             Text(session.title)
                 .lineLimit(1)
                 .frame(maxWidth: .infinity, alignment: .leading)
+                .help(session.title)
 
             Menu {
                 Button("Delete Chat…", systemImage: "trash", role: .destructive) {

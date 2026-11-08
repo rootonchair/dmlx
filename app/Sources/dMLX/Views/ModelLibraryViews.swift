@@ -10,7 +10,7 @@ extension ModelHints {
     static func group(_ id: String) -> String {
         switch id {
         case "flux-2-klein-4b": "Fast and good at most things."
-        case "flux-2-klein-9b": "Sharper, more faithful images and edits than Klein 4B. Slower and larger."
+        case "flux-2-klein-9b": "More detail than Klein 4B in new images and edits, but about twice as slow."
         case "flux-2-klein-9b-kv": "Klein 9B made faster at edits that use several images."
         case "flux-2-klein-base-4b", "flux-2-klein-base-9b":
             "The untuned original of Klein: much slower, with more varied results. For experts."
@@ -19,11 +19,15 @@ extension ModelHints {
         case "z-image-base": "The untuned original of Z-Image: much slower, more varied. For experts."
         case "qwen-image-2-1-base": "Best at writing words in images, like posters, and careful edits. Very slow."
         case "ernie-image-turbo": "Follows long, detailed descriptions well. Slow: about 2.5 minutes per image."
-        case "moss-image": "Very slow: minutes per image. Use it when you want its particular look."
+        case "moss-image": "Places text and objects where you draw boxes (Layout). Very slow: about 5 minutes per image."
         case "boogu-image-turbo": "Photographic, and good at text in English and Chinese. Slow."
         case "krea-2-turbo": "Strong photographic realism. About 2.5 minutes per image."
         case "iris-3b-turbo": "Small and fast, with simpler detail than the larger models."
-        default: "An image model saved in mflux format."
+        case let id where id.hasPrefix("fibo"):
+            "Follows detailed descriptions and draws text well. Places things where you draw boxes (Layout). Very slow: about 8 minutes per image."
+        case let id where id.hasPrefix("ideogram"):
+            "The strongest at lettering and exact placement: puts things where you draw boxes (Layout). Very slow: about 8 minutes per image."
+        default: "An image model you added."
         }
     }
 
@@ -36,17 +40,28 @@ extension ModelHints {
         bits.map { "\($0)-bit" } ?? "Full size"
     }
 
-    /// What choosing a version means, without the word quantization.
-    static func variantHint(_ bits: Int?) -> String {
-        switch bits {
-        case 3: "Smallest download, lower quality"
-        case 4: "Small download, good quality"
-        case 5: "Slightly better quality, a bit larger"
-        case 6: "Better quality, larger download"
-        case 8: "Close to full quality, large download"
-        case nil: "Full quality, largest download"
-        default: "Smaller download, slightly lower quality"
+    /// What choosing a version means, without the word quantization: its quality (from the bits), and how big
+    /// the download is (from its real size when known, so a 14 GB 4-bit build is not called small).
+    static func variantHint(_ bits: Int?, sizeGB: Double? = nil) -> String {
+        let quality = switch bits {
+        case 3: "Lower quality"
+        case 4: "Good quality"
+        case 5: "Slightly better quality"
+        case 6: "Better quality"
+        case 8: "Close to full quality"
+        case nil: "Full quality"
+        default: "Slightly lower quality"
         }
+        guard let gb = sizeGB, gb > 0 else {
+            let download = switch bits {
+            case 3, 4: "smaller download"
+            case nil: "largest download"
+            default: "larger download"
+            }
+            return "\(quality), \(download)"
+        }
+        let download = gb < 4 ? "small download" : gb < 9 ? "medium-size download" : "large download"
+        return "\(quality), \(download)"
     }
 
     /// A license's readable name; for one dMLX does not know, its id in words ("Krea 2 Community License").
@@ -175,7 +190,7 @@ struct VariantLine: View {
                         Text("· Experimental").font(.callout).foregroundStyle(.secondary)
                     }
                 }
-                Text(ModelHints.variantHint(model.quantization)).font(.caption).foregroundStyle(.secondary)
+                Text(ModelHints.variantHint(model.quantization, sizeGB: model.size_gb)).font(.caption).foregroundStyle(.secondary)
                 if let error = model.download.error, model.download.status == "error" {
                     Text("Download failed: \(error)").font(.caption).foregroundStyle(.red).lineLimit(2)
                 }

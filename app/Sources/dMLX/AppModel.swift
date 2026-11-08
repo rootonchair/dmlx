@@ -638,8 +638,8 @@ final class AppModel {
             return isAutoModel ? "Model picked for you" : ""  // the model menu already names the choice
         }
         guard routeDecisionKey == routingKey(message: message), let decision = routeDecision else {
-            return isResolvingRoute ? "Determining workflow…"
-                : promptAssistantInstalled ? "Planned by the agent when you send" : "Ready to route"
+            return isResolvingRoute ? "Checking: new image or edit…"
+                : promptAssistantInstalled ? "Planned by the agent when you send" : "New image or edit: decided when you send"
         }
         switch decision.intent {
         case "image.generate":
@@ -650,7 +650,7 @@ final class AppModel {
             return "Will edit \(what) · \(m.name)\(loadHint(m))"
         case "image.upscale", "image.restore", "image.enhance":
             guard let m = defaultModel(for: decision.intent) else {
-                return "No installed executor for \(Self.operationLabel(decision.intent).lowercased())"
+                return "No downloaded model can \(Self.operationLabel(decision.intent).lowercased())"
             }
             return "Will \(Self.operationLabel(decision.intent).lowercased()) · \(m.name)\(loadHint(m))"
         default:
@@ -1110,7 +1110,7 @@ final class AppModel {
             var route = "Edited from the attached image"
             if let source = inputs.first {
                 if let attached = pending.attachmentInputs.first(where: { $0.id == source.id }) {
-                    if let base = preparedFrom(attached) { route = "Edited from the prepared image \(base.number)" }
+                    if let base = preparedFrom(attached) { route = "Edited from image \(base.number) after Crop / Draw" }
                 } else if let t = turns.first(where: { $0.versions.contains { $0.resultId == source.id } }) {
                     let version = t.versions.firstIndex { $0.resultId == source.id } ?? t.activeVersion
                     route = "Edited from image \(t.number) · v\(version + 1)"
@@ -1300,22 +1300,32 @@ final class AppModel {
         }
     }
 
+    /// A model part in plain words. mflux models report their own names (Ideogram's two "conditional" and
+    /// "unconditional" transformers, MOSS's second transformer): every transformer is the image model.
     static func componentName(_ c: String?) -> String {
         switch c {
         case "text_encoder": return "text encoder"
         case "prompt_assistant": return "prompt assistant"
-        case "transformer": return "image model"
         case "vae": return "decoder"
+        case let c? where c.contains("transformer"): return "image model"
+        case let c? where !c.isEmpty: return c.replacingOccurrences(of: "_", with: " ")
         default: return "model"
         }
     }
 
+    /// The parts a job loaded, each named once, in the order they loaded.
+    static func loadedParts(_ loads: [String]) -> String {
+        var seen = Set<String>()
+        return loads.map { componentName($0) }.filter { seen.insert($0).inserted }.joined(separator: ", ")
+    }
+
     /// Shown in a result's details when the engine had to save memory; nothing for the normal mode.
+    /// Each names what the engine did, from the lightest saving to the most.
     static func strategyLabel(_ strategy: String?) -> String? {
         switch strategy {
-        case "phase_free": return "memory-saving mode"
-        case "sequential": return "low-memory mode"
-        case "streamed": return "lowest-memory mode"
+        case "phase_free": return "text encoder freed early to save memory"
+        case "sequential": return "one part at a time to save memory"
+        case "streamed": return "image model streamed from disk to save memory"
         default: return nil
         }
     }

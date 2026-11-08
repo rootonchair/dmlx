@@ -95,7 +95,7 @@ keep them. The prepared image is one of the 3 images that you can attach.
 
 <img src="docs/screenshots/edit-4-attach.jpg" alt="The message box with 'Prepared image 1' attached and the message 'paint a blue and white floral pattern on the teapot where I circled in red, and remove the red marks'. Below the message: 'Will edit the attached image · FLUX.2 Klein 4B'.">
 
-| Before (the prepared image 1) | After (image 2, "Edited from the prepared image 1") |
+| Before (image 1 after Crop / Draw) | After (image 2, "Edited from image 1 after Crop / Draw") |
 |---|---|
 | <img src="docs/screenshots/edit-prepared.jpg" alt="The prepared image: the cropped area of image 1, a plain white teapot on a wooden table, with a red circle around its body."> | <img src="docs/screenshots/edit-after.jpg" alt="Image 2: the same teapot. A blue and white floral pattern covers it. No red marks remain."> |
 

@@ -116,25 +116,18 @@ struct EmptyStateView: View {
     }
 }
 
-/// Simple wrapping layout for chips.
+/// Simple wrapping layout for chips. Rows are centered (the empty state's starters) or start at the leading
+/// edge (the composer); items in a row are centered vertically. An item wider than the row gets the row's
+/// width, so a long label truncates instead of overflowing.
 struct FlowLayout: Layout {
     var spacing: CGFloat = 8
+    var alignment: HorizontalAlignment = .center
 
     func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
-        let width = proposal.width ?? 600
-        var x: CGFloat = 0, y: CGFloat = 0, rowHeight: CGFloat = 0, maxX: CGFloat = 0
-        for view in subviews {
-            let size = view.sizeThatFits(ProposedViewSize(width: width, height: nil))
-            if x > 0 && x + size.width > width {
-                x = 0
-                y += rowHeight + spacing
-                rowHeight = 0
-            }
-            x += size.width + spacing
-            maxX = max(maxX, x - spacing)
-            rowHeight = max(rowHeight, size.height)
-        }
-        return CGSize(width: min(maxX, width), height: y + rowHeight)
+        let rows = rowsFor(width: proposal.width ?? 600, subviews: subviews)
+        let width = rows.map { row in row.reduce(0) { $0 + $1.1.width } + spacing * CGFloat(max(row.count - 1, 0)) }.max() ?? 0
+        let height = rows.reduce(0) { $0 + ($1.map(\.1.height).max() ?? 0) } + spacing * CGFloat(max(rows.count - 1, 0))
+        return CGSize(width: width, height: rows.allSatisfy(\.isEmpty) ? 0 : height)
     }
 
     func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
@@ -142,10 +135,10 @@ struct FlowLayout: Layout {
         var y = bounds.minY
         for row in rows {
             let rowWidth = row.reduce(0) { $0 + $1.1.width } + spacing * CGFloat(max(row.count - 1, 0))
-            var x = bounds.minX + (bounds.width - rowWidth) / 2
+            var x = alignment == .leading ? bounds.minX : bounds.minX + (bounds.width - rowWidth) / 2
             let height = row.map(\.1.height).max() ?? 0
             for (view, size) in row {
-                view.place(at: CGPoint(x: x, y: y), proposal: ProposedViewSize(size))
+                view.place(at: CGPoint(x: x, y: y + (height - size.height) / 2), proposal: ProposedViewSize(size))
                 x += size.width + spacing
             }
             y += height + spacing
@@ -156,7 +149,8 @@ struct FlowLayout: Layout {
         var rows: [[(LayoutSubview, CGSize)]] = [[]]
         var x: CGFloat = 0
         for view in subviews {
-            let size = view.sizeThatFits(ProposedViewSize(width: width, height: nil))
+            var size = view.sizeThatFits(ProposedViewSize(width: width, height: nil))
+            size.width = min(size.width, max(width, 0))
             if x > 0 && x + size.width > width {
                 rows.append([])
                 x = 0

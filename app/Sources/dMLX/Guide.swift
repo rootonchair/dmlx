@@ -124,7 +124,7 @@ struct ModeTip: Tip {
     var id: String { "mode-\(round)" }
     var title: Text { Text("New image or edit") }
     var message: Text? {
-        Text("The agent decides whether to make a new image or edit one, and on Auto it picks the model. After you type, click here to choose “Create a new image” or “Edit current” yourself. When you add more models in Settings, a model menu appears here too.")
+        Text("The agent decides whether to make a new image or edit one, and on Auto it picks the model. After you type, click here to choose “Create new” or “Edit current” yourself. The menu beside it picks the model for new images and for edits.")
     }
     var image: Image? { Image(systemName: "wand.and.stars") }
     var actions: [Action] { [next] }
@@ -169,7 +169,7 @@ struct EditorTip: Tip {
     var id: String { "editor-\(round)" }
     var title: Text { Text("Crop, Paint and Erase") }
     var message: Text? {
-        Text("Crop keeps only the area you care about. Paint marks what to change. Erase removes a wrong mark, never the image. Then click Attach Edited Image and say what to do, for example “remove the cup I circled, and the red marks”.")
+        Text("Crop keeps only the area you care about. Paint marks what to change. Erase removes a wrong mark, never the image. Then click Attach edited image and say what to do, for example “remove the cup I circled, and the red marks”.")
     }
     var image: Image? { Image(systemName: "paintbrush.pointed") }
 }

@@ -175,63 +175,68 @@ struct IntelligenceSettings: View {
 
     var body: some View {
         @Bindable var app = app
-        Form {
-            Section("Semantic workflow routing") {
-                Picker("Provider", selection: $routerKind) {
-                    Text("Ask me when ambiguous").tag(RouterProviderKind.disabled)
-                    Text("OpenAI-compatible").tag(RouterProviderKind.openAICompatible)
-                    Text("Local Qwen MLX").tag(RouterProviderKind.localLLM)
-                }
-                if routerKind == .openAICompatible {
-                    TextField("Base URL", text: $baseURL, prompt: Text("http://localhost:1234/v1"))
-                    TextField("Model ID", text: $providerModel, prompt: Text("small-router-model"))
-                    SecureField("API key (optional)", text: $apiKey)
-                    HStack {
-                        Text("Timeout")
-                        TextField("Seconds", value: $timeout, format: .number)
-                            .frame(width: 80)
-                        Text("seconds").foregroundStyle(.secondary)
+        // The form scrolls; Save stays pinned below it, so it is in view at the window's fixed height.
+        VStack(spacing: 0) {
+            Form {
+                Section("New image or edit") {
+                    Picker("When it is unclear", selection: $routerKind) {
+                        Text("Ask me").tag(RouterProviderKind.disabled)
+                        Text("Let an AI service decide").tag(RouterProviderKind.openAICompatible)
+                        Text("Let a model on this Mac decide").tag(RouterProviderKind.localLLM)
                     }
-                } else if routerKind == .localLLM {
-                    TextField("Local checkpoint folder", text: $localModelPath, prompt: Text("/Users/me/models/router"))
-                    TextField("Pinned revision or checksum", text: $localRevision)
-                    Text("The checkpoint and optional runtime must already be installed. dMLX will not download them automatically.")
+                    if routerKind == .openAICompatible {
+                        FormField("Address", text: $baseURL, prompt: "http://localhost:1234/v1", secure: false)
+                        FormField("Model", text: $providerModel, prompt: "small-router-model", secure: false)
+                        FormField("API key (optional)", text: $apiKey, prompt: "", secure: true)
+                        SecondsField(value: $timeout)
+                        Text("Any service that works like the OpenAI API, such as LM Studio or OpenRouter.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    } else if routerKind == .localLLM {
+                        FormField("Model folder", text: $localModelPath, prompt: "/Users/me/models/router", secure: false)
+                        FormField("Model version (optional)", text: $localRevision, prompt: "revision or checksum", secure: false)
+                        Text("The model, and anything it needs to run, must already be on this Mac. dMLX does not download them.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                    Text("When a follow-up could mean a new image or an edit, dMLX asks you, or lets a model decide. The model sees the recent chat text and details about the images, such as their prompts and sizes, never the images themselves.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Section("Agent") {
+                    AgentWhereSettings()
+                    Text("The agent looks at your images, decides what each message asks for, and rewrites every edit into a detailed description, which image editors follow far better than a short command. On this Mac, larger models plan better but need more memory; the agent is loaded only while it works. Changes here apply right away.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
-                Text("Ambiguous follow-ups include bounded thread text and image-result metadata. Image pixels stay on this Mac.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            Section("Agent") {
-                AgentWhereSettings()
-                Text("The agent looks at your images, decides what each message asks for, and rewrites every edit into a detailed description, which image editors follow far better than a short command. On this Mac, larger models plan better but need more memory; the agent is loaded only while it works.")
-                    .font(.caption).foregroundStyle(.secondary)
-            }
-            Section("Prompt enhancement") {
-                Picker("Mode", selection: $app.promptEnhancementMode) {
-                    Text("Off").tag(PromptEnhancementMode.off)
-                    Text("Ask — preview before use").tag(PromptEnhancementMode.ask)
-                    Text("Auto — enhance every submitted prompt").tag(PromptEnhancementMode.auto)
+                Section("Prompt enhancement") {
+                    Picker("Mode", selection: $app.promptEnhancementMode) {
+                        Text("Off").tag(PromptEnhancementMode.off)
+                        Text("Ask — preview before use").tag(PromptEnhancementMode.ask)
+                        Text("Auto — enhance every submitted prompt").tag(PromptEnhancementMode.auto)
+                    }
+                    FormField("Address", text: $promptBaseURL, prompt: "http://localhost:1234/v1", secure: false)
+                    FormField("Model", text: $promptModel, prompt: "prompt-model", secure: false)
+                    FormField("API key (optional)", text: $promptAPIKey, prompt: "", secure: true)
+                    SecondsField(value: $promptTimeout)
+                    Text("✨ and Auto use the prompt assistant when it is downloaded. Otherwise they use this service, which receives your prompt text only; images stay on this Mac.")
+                        .font(.caption).foregroundStyle(.secondary)
                 }
-                TextField("Base URL", text: $promptBaseURL, prompt: Text("http://localhost:1234/v1"))
-                TextField("Model ID", text: $promptModel, prompt: Text("prompt-model"))
-                SecureField("API key (optional)", text: $promptAPIKey)
-                HStack {
-                    Text("Timeout")
-                    TextField("Seconds", value: $promptTimeout, format: .number).frame(width: 80)
-                    Text("seconds").foregroundStyle(.secondary)
-                }
-                Text("✨ and Auto use the prompt assistant when it is downloaded. Otherwise they use this provider, which receives prompt text only; images remain local.")
-                    .font(.caption).foregroundStyle(.secondary)
             }
-            HStack {
-                Button("Save and restart engine") { save() }
-                Button("Test current connection") { test() }
+            .formStyle(.grouped)
+            Divider()
+            HStack(spacing: 8) {
+                if !status.isEmpty {
+                    Text(status).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                }
+                Spacer(minLength: 0)
+                Button("Test Connection") { test() }
                     .disabled(!app.isEngineRunning)
-                if !status.isEmpty { Text(status).font(.caption).foregroundStyle(.secondary) }
+                    .help("Checks the service that decides between a new image and an edit")
+                Button("Save and Restart Engine") { save() }
+                    .buttonStyle(.borderedProminent)
+                    .help("Saves the services above and restarts the engine to use them")
             }
+            .padding(.horizontal, 20)
+            .padding(.vertical, 10)
         }
-        .formStyle(.grouped)
     }
 
     private func save() {
@@ -247,7 +252,7 @@ struct IntelligenceSettings: View {
                 baseURL: promptBaseURL.trimmingCharacters(in: .whitespacesAndNewlines),
                 model: promptModel.trimmingCharacters(in: .whitespacesAndNewlines), timeout: promptTimeout)
             try prompt.save(apiKey: promptAPIKey)
-            status = settings.kind == .disabled && prompt.baseURL.isEmpty ? "Intelligence providers disabled" : "Saved"
+            status = "Saved"
             app.engine.restart()
         } catch {
             status = error.localizedDescription
@@ -263,6 +268,56 @@ struct IntelligenceSettings: View {
                 status = "Connected in \(String(format: "%.0f", result.latency_ms)) ms"
             } catch {
                 status = error.localizedDescription
+            }
+        }
+    }
+}
+
+/// A labeled text box on a form row, its text and placeholder starting at the left of a visible box (a plain
+/// form field right-aligns them, so a placeholder reads like a value that is already set).
+private struct FormField: View {
+    let label: String
+    @Binding var text: String
+    var prompt: String = ""
+    var secure = false
+
+    init(_ label: String, text: Binding<String>, prompt: String = "", secure: Bool = false) {
+        self.label = label
+        _text = text
+        self.prompt = prompt
+        self.secure = secure
+    }
+
+    var body: some View {
+        LabeledContent(label) {
+            Group {
+                if secure {
+                    SecureField(label, text: $text, prompt: Text(prompt))
+                } else {
+                    TextField(label, text: $text, prompt: Text(prompt))
+                }
+            }
+            .labelsHidden()
+            .textFieldStyle(.roundedBorder)
+            .multilineTextAlignment(.leading)
+            .frame(maxWidth: 300)
+        }
+    }
+}
+
+/// "Timeout  [ 30 ] seconds" on one form row (a TextField's own label would show beside the box).
+private struct SecondsField: View {
+    @Binding var value: Double
+
+    var body: some View {
+        LabeledContent("Timeout") {
+            HStack(spacing: 6) {
+                TextField("Timeout", value: $value, format: .number)
+                    .labelsHidden()
+                    .textFieldStyle(.roundedBorder)
+                    .multilineTextAlignment(.trailing)
+                    .frame(width: 60)
+                Text("seconds").foregroundStyle(.secondary)
             }
         }
     }
@@ -329,14 +384,14 @@ struct MemorySettings: View {
     var body: some View {
         Form {
             if let m = model.memory {
-                LabeledContent("Memory tier", value: "\(m.ram_tier_gb) GB")
+                LabeledContent("Memory in this Mac", value: "\(m.ram_tier_gb) GB")
                 LabeledContent("Available now", value: String(format: "%.1f GB", m.memory.system.available_gb))
                 LabeledContent("dMLX may use", value: String(format: "%.1f GB", max(m.memory.headroom_gb, 0)))
                 LabeledContent("Kept free for macOS", value: String(format: "%.1f GB", m.memory.reserve_gb))
                 LabeledContent("Memory pressure", value: m.memory.system.pressure.capitalized)
                 LabeledContent("Swap in use", value: String(format: "%.1f GB", m.memory.system.swap_used_gb))
                 if m.memory.degraded {
-                    Text("Recently under memory pressure: using low-memory mode for a few minutes.")
+                    Text("Your Mac was short of memory recently, so for a few minutes images load with less memory, more slowly.")
                         .font(.caption).foregroundStyle(.orange)
                 }
                 Section("In memory") {
