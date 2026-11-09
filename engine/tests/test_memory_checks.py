@@ -64,3 +64,16 @@ def test_small_sizes_are_estimated_as_one_megapixel():
     assert spec.decode_bytes(512, 512, "tiled") == spec.decode_bytes(1000, 1000, "tiled") == int(6.8 * GB)
     assert spec.activation_bytes(512, 512) == spec.activation_bytes(1000, 1000)
     assert spec.decode_bytes(2000, 1000, "tiled") == int(6.8 * 2 * GB)
+
+
+def test_the_refusal_never_reads_as_needing_what_it_has():
+    """Test round 3 of task 17: "needs about 3.3 GB but only 3.3 GB can be used"."""
+    from dmlx.memory import GB, InsufficientMemory
+
+    close = str(InsufficientMemory(int(3.34 * GB), int(3.26 * GB), "klein-9b", "FLUX.2 Klein 9B"))
+    assert "needs about 3.34 GB but only 3.26 GB can be used" in close
+    closer = str(InsufficientMemory(int(3.3449 * GB), int(3.3401 * GB), "klein-9b"))
+    assert "needs about 3.345 GB but only 3.340 GB" in closer
+    apart = str(InsufficientMemory(int(9.5 * GB), int(7.6 * GB), "qwen-image", "Qwen Image 2.1"))
+    assert "needs about 9.5 GB but only 7.6 GB can be used" in apart
+    assert "only 0.0 GB" in str(InsufficientMemory(int(2 * GB), -5, "x"))

@@ -137,9 +137,9 @@ are for objects. For FIBO 2, each box shows the place word that the model gets.
 
 | Model | How exact | Time at 1024² on an M5 | License |
 |---|---|---|---|
-| Ideogram 4 (4-bit, 13.9 GB) | Exact boxes; the best at text | about 8.5 min | non-commercial |
+| Ideogram 4 (4-bit, 13.9 GB) | Exact boxes; the best at text | about 5 min | non-commercial |
 | MOSS Image (4-bit) | Exact boxes | about 5 min | Apache-2.0 |
-| FIBO 2 (6-bit, 10.3 GB) | Each box becomes a place word, such as "top center" | about 8 min | non-commercial |
+| FIBO 2 (6-bit, 10.3 GB) | Each box becomes a place word, such as "top center" | about 5.5 min | non-commercial |
 
 Add these models in **Settings → Models → Add Model…**. The **Layout** button shows when the selected
 model can use a layout, or in **Auto** when one of these models is downloaded. In **Auto**, a message with

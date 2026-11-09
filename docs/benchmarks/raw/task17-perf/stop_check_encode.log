@@ -1,0 +1,16 @@
+2026-11-09 17:31:11,018 dmlx.memory INFO loaded flux2-klein-4b/vae (0.15 GB)
+2026-11-09 17:31:11,330 dmlx.memory INFO loaded flux2-klein-4b/text_encoder (2.11 GB)
+STOP at encoding {'job_id': 'job_f848c56ea7e8'} active 3.08
+2026-11-09 17:31:11,753 dmlx.memory INFO freed flux2-klein-4b/text_encoder (2.11 GB)
+2026-11-09 17:31:11,756 dmlx.memory INFO freed flux2-klein-4b/text_encoder (0.00 GB)
+2026-11-09 17:31:11,773 dmlx.memory INFO freed flux2-klein-4b/vae (0.15 GB)
+RESULT encode memory_pressure error memory_pressure active after 0.01 resident [] events ['encoding', 'error', 'loading', 'plan', 'queued']
+2026-11-09 17:31:11,781 dmlx.memory INFO freed flux2-klein-4b/text_encoder (0.00 GB)
+2026-11-09 17:31:11,781 dmlx.memory INFO freed flux2-klein-4b/transformer (0.00 GB)
+2026-11-09 17:31:11,808 dmlx.memory INFO loaded flux2-klein-4b/vae (0.15 GB)
+2026-11-09 17:31:11,808 dmlx.memory INFO freed flux2-klein-4b/transformer (0.00 GB)
+2026-11-09 17:31:11,949 dmlx.memory INFO loaded flux2-klein-4b/text_encoder (2.11 GB)
+STOP at encoding {'job_id': 'job_31675d28188e'} active 3.09
+2026-11-09 17:31:12,281 dmlx.memory INFO freed flux2-klein-4b/text_encoder (2.11 GB)
+2026-11-09 17:31:12,281 dmlx.memory INFO freed flux2-klein-4b/text_encoder (0.00 GB)
+RESULT encode cancelled cancelled cancelled active after 0.17 resident [{'model': 'flux2-klein-4b', 'component': 'vae', 'gb': 0.15, 'pinned': False}] events ['cancelled', 'encoding', 'loading', 'plan', 'queued']

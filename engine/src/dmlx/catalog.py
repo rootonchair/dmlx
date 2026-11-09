@@ -20,6 +20,10 @@ from dmlx import paths
 from dmlx.registry import ModelSpec, _parse
 
 COMPONENTS = ("text_encoder", "transformer", "vae")
+FIBO2_NOTE = ("New images only; about 5.5 minutes at 1024 px; follows detailed descriptions and draws text well; "
+              "non-commercial license.")
+IDEOGRAM4_NOTE = ("New images only; about 5 minutes at 1024 px; the strongest at typography and exact placement; "
+                  "non-commercial license.")
 MOSS_NOTE = ("New images only; very slow (about 5 minutes at 1024 px at 30 steps, 2 minutes at 512 px); "
              "use only when the user asks for it.")
 _PERMISSIVE = {"apache-2.0", "mit", "bsd-3-clause", "openrail", "creativeml-openrail-m"}
@@ -150,17 +154,17 @@ FAMILIES = {
         "max_references": 0,
         "match": ("fibo-2-0-dev", "fibo-2.0-dev"),
         "variants": [{"when": "dev", "config": "fibo2", "name": "FIBO 2",
-                      # 30, not mflux's 50: 1.7x faster in mflux's own measurements (fibo2/README.md).
-                      "defaults": {"steps": 30, "guidance": 5.0}}],
+                      # 20, not mflux's 50: the jazz poster at 20 steps kept every box and clean lettering on
+                      # two seeds, like 30 (docs/benchmarks/task17-perf.md); 16 kept them but drew less cleanly.
+                      "defaults": {"steps": 20, "guidance": 5.0}}],
         "stream": {"text_encoder": ["auto"], "transformer": ["auto"]},
         # Measured 2026-11-07 on the q6 pack, M5 24 GB (bench-family, 512 and 1024): encode 0.45 GB above
         # the weights, denoise 1.3 GB at 1 MP, decode 1.3 GB in either mode (its VAE is small). About
-        # 16 s a step at 1024 px, so 30 steps take about 8 minutes.
+        # 16 s a step at 1024 px, so 20 steps take about 5.5 minutes (30 took 8).
         "activation_gb_per_mp": 1.4,
         "decode_gb_per_mp": 1.4,
         "decode_tiled_gb_per_mp": 1.4,
-        "agent_note": "New images only; about 8 minutes at 1024 px; follows detailed descriptions and draws text well; "
-        "non-commercial license.",
+        "agent_note": FIBO2_NOTE,
         "prompt_format": "fibo-json",
     },
     # Ideogram 4 (task 17): a JSON caption with exact boxes. Two transformers, conditional and
@@ -171,7 +175,9 @@ FAMILIES = {
         "max_references": 0,
         "match": ("ideogram-4-",),
         "variants": [{"when": "ideogram", "config": "ideogram4_fp8", "name": "Ideogram 4",
-                      "defaults": {"steps": 20, "guidance": 7.0}}],
+                      # 12 (its turbo preset), not 20: the jazz poster came out nearly the same, every box in
+                      # place and the lettering as clean, in 5.4 minutes instead of 8.7 (mean of 2 seeds, task17-perf.md).
+                      "defaults": {"steps": 12, "guidance": 7.0}}],
         "parts": {
             "text_encoder": {"phase": "encode", "stream": ["auto"]},
             # Streamed, both: 4.9 GB each, so held together they need about 12.4 GB at 1024 px. Streamed,
@@ -184,12 +190,11 @@ FAMILIES = {
         "stream": {"text_encoder": ["auto"], "transformer": ["auto"]},
         # Measured 2026-11-07 on the q4 pack, M5 24 GB (bench-family, streamed, 12 steps): denoise 1.9 GB at
         # 512 px but 4.9 GB at 1024 (attention grows faster than the area), so 5.2 per MP with the margin;
-        # encode 2.2 GB; decode 1.3 GB in either mode. About 25 s a step at 1024 px: 20 steps, 8.5 minutes.
+        # encode 2.2 GB; decode 1.3 GB in either mode. About 26 s a step at 1024 px: 12 steps, about 5 minutes.
         "activation_gb_per_mp": 5.2,
         "decode_gb_per_mp": 1.5,
         "decode_tiled_gb_per_mp": 1.5,
-        "agent_note": "New images only; about 8.5 minutes at 1024 px; the strongest at typography and exact placement; "
-        "non-commercial license.",
+        "agent_note": IDEOGRAM4_NOTE,
         "prompt_format": "ideogram-json",
     },
     "iris": {

@@ -1,0 +1,57 @@
+W1109 14:52:58.313000 13386 torch/distributed/elastic/multiprocessing/redirects.py:35] NOTE: Redirects are currently not supported in MacOs.
+qwen3-vl-8b-instruct-4bit p0 moss-layout layout=False 10s boxes=['JAZZ NIGHT', 'FRIDAY 9 PM'] before mood=[] cover=[] | after mood=[] cover=[] fixes=['Wrote the boxes as pixels from the centre for 1024x1024']
+qwen3-vl-8b-instruct-4bit p0 moss-layout layout=True 7s boxes=['FRIDAY 9 PM'] before mood=[] cover=[] | after mood=[] cover=[] fixes=['Put back 1 box(es) you placed that the caption left out', 'Wrote the boxes as pixels from the centre for 1024x1024']
+qwen3-vl-8b-instruct-4bit p0 ideogram-json layout=False 11s boxes=['JAZZ NIGHT', 'FRIDAY 9 PM'] before mood=[] cover=[] | after mood=[] cover=[] fixes=[]
+qwen3-vl-8b-instruct-4bit p0 ideogram-json layout=True 12s boxes=['JAZZ NIGHT', 'FRIDAY 9 PM'] before mood=[] cover=[] | after mood=[] cover=[] fixes=[]
+qwen3-vl-8b-instruct-4bit p1 moss-layout layout=False 13s boxes=['JAZZ NIGHT', 'FRIDAY 9 PM', 'saxophonist', 'pianist', 'silhouetted musicians'] before mood=[] cover=[] | after mood=[] cover=[] fixes=['Wrote the boxes as pixels from the centre for 1024x1024']
+qwen3-vl-8b-instruct-4bit p1 moss-layout layout=True 15s boxes=['saxophonist', 'pianist', 'musicians in silhouette', 'FRIDAY 9 PM'] before mood=[] cover=[] | after mood=[] cover=[] fixes=['Put back 1 box(es) you placed that the caption left out', 'Wrote the boxes as pixels from the centre for 1024x1024']
+qwen3-vl-8b-instruct-4bit p1 ideogram-json layout=False 11s boxes=['JAZZ NIGHT', 'FRIDAY 9 PM'] before mood=[] cover=[] | after mood=[] cover=[] fixes=[]
+qwen3-vl-8b-instruct-4bit p1 ideogram-json layout=True 19s boxes=['JAZZ NIGHT', 'saxophonist', 'pianist', 'musicians in silhouette', 'FRIDAY 9 PM'] before mood=[] cover=[] | after mood=[] cover=[] fixes=[]
+qwen3-vl-8b-instruct-4bit p2 moss-layout layout=False 7s boxes=['JAZZ NIGHT', 'FRIDAY 9 PM'] before mood=[] cover=[] | after mood=[] cover=[] fixes=['Wrote the boxes as pixels from the centre for 1024x1024']
+qwen3-vl-8b-instruct-4bit p2 moss-layout layout=True 17s boxes=['trumpet player', 'crowd of musicians', 'stage lights', 'FRIDAY 9 PM'] before mood=['stage lights'] cover=[] | after mood=[] cover=[] fixes=['Put back 1 box(es) you placed that the caption left out', 'Left out 1 box(es) for light, mood or style; the caption describes them', 'Wrote the boxes as pixels from the centre for 1024x1024']
+qwen3-vl-8b-instruct-4bit p2 ideogram-json layout=False 12s boxes=['JAZZ NIGHT', 'FRIDAY 9 PM'] before mood=[] cover=[] | after mood=[] cover=[] fixes=[]
+qwen3-vl-8b-instruct-4bit p2 ideogram-json layout=True 16s boxes=['trumpet player', 'crowd of musicians', 'FRIDAY 9 PM', 'JAZZ NIGHT'] before mood=[] cover=[] | after mood=[] cover=[] fixes=[]
+ministral-3-3b-instruct-2512-4bit p0 moss-layout layout=False 6s boxes=['JAZZ NIGHT', 'FRIDAY 9 PM'] before mood=[] cover=[] | after mood=[] cover=[] fixes=['Wrote the boxes as pixels from the centre for 1024x1024']
+ministral-3-3b-instruct-2512-4bit p0 moss-layout layout=True 4s boxes=['JAZZ NIGHT', 'FRIDAY 9 PM'] before mood=[] cover=[] | after mood=[] cover=[] fixes=['Wrote the boxes as pixels from the centre for 1024x1024']
+ministral-3-3b-instruct-2512-4bit p0 ideogram-json layout=False 7s boxes=['JAZZ NIGHT', 'FRIDAY 9 PM'] before mood=[] cover=[] | after mood=[] cover=[] fixes=[]
+ministral-3-3b-instruct-2512-4bit p0 ideogram-json layout=True 10s boxes=['JAZZ NIGHT', 'FRIDAY 9 PM', 'abstract_sax'] before mood=[] cover=[] | after mood=[] cover=[] fixes=[]
+ministral-3-3b-instruct-2512-4bit p1 moss-layout layout=False 7s boxes=['JAZZ NIGHT', 'FRIDAY 9 PM', 'saxophonist', 'pianist'] before mood=[] cover=[] | after mood=[] cover=[] fixes=['Wrote the boxes as pixels from the centre for 1024x1024']
+ministral-3-3b-instruct-2512-4bit p1 moss-layout layout=True 9s boxes=['JAZZ NIGHT', 'sax', 'piano', 'FRIDAY 9 PM', 'musicians'] before mood=[] cover=[] | after mood=[] cover=[] fixes=['Wrote the boxes as pixels from the centre for 1024x1024']
+ministral-3-3b-instruct-2512-4bit p1 ideogram-json layout=False 12s boxes=['JAZZ NIGHT', 'FRIDAY 9 PM', 'saxophonist', 'pianist'] before mood=[] cover=[] | after mood=[] cover=[] fixes=[]
+ministral-3-3b-instruct-2512-4bit p1 ideogram-json layout=True 12s boxes=['JAZZ NIGHT', 'a saxophonist', 'a pianist', 'FRIDAY 9 PM', 'six silhouetted musicians'] before mood=[] cover=['a saxophonist>JAZZ NIGHT', 'a pianist>JAZZ NIGHT'] | after mood=[] cover=[] fixes=['Moved 2 box(es) off the text']
+ministral-3-3b-instruct-2512-4bit p2 moss-layout layout=False 6s boxes=['JAZZ NIGHT', 'FRIDAY 9 PM', 'trumpet', 'crowd'] before mood=[] cover=[] | after mood=[] cover=[] fixes=['Wrote the boxes as pixels from the centre for 1024x1024']
+ministral-3-3b-instruct-2512-4bit p2 moss-layout layout=True 7s boxes=['JAZZ NIGHT', 'FRIDAY 9 PM', 'trumpet', 'musicians'] before mood=[] cover=[] | after mood=[] cover=[] fixes=['Wrote the boxes as pixels from the centre for 1024x1024']
+ministral-3-3b-instruct-2512-4bit p2 ideogram-json layout=False 11s boxes=['JAZZ NIGHT', 'FRIDAY 9 PM', 'trumpet_player', 'musicians_crowd'] before mood=[] cover=[] | after mood=[] cover=[] fixes=[]
+ministral-3-3b-instruct-2512-4bit p2 ideogram-json layout=True 13s boxes=['JAZZ NIGHT', 'trumpet', 'FRIDAY 9 PM', 'musicians'] before mood=[] cover=['musicians>FRIDAY 9 PM'] | after mood=[] cover=[] fixes=['Moved 1 box(es) off the text']
+qwen3.5-9b-mlx-4bit p0 moss-layout layout=False 13s boxes=['JAZZ NIGHT', 'FRIDAY 9 PM'] before mood=[] cover=[] | after mood=[] cover=[] fixes=['Wrote the boxes as pixels from the centre for 1024x1024']
+qwen3.5-9b-mlx-4bit p0 moss-layout layout=True 10s boxes=['JAZZ NIGHT', 'FRIDAY 9 PM'] before mood=[] cover=[] | after mood=[] cover=[] fixes=['Wrote the boxes as pixels from the centre for 1024x1024']
+qwen3.5-9b-mlx-4bit p0 ideogram-json layout=False 15s boxes=['JAZZ NIGHT', 'FRIDAY 9 PM'] before mood=[] cover=[] | after mood=[] cover=[] fixes=[]
+qwen3.5-9b-mlx-4bit p0 ideogram-json layout=True 14s boxes=['JAZZ NIGHT', 'FRIDAY 9 PM'] before mood=[] cover=[] | after mood=[] cover=[] fixes=[]
+qwen3.5-9b-mlx-4bit p1 moss-layout layout=False 21s boxes=['JAZZ NIGHT', 'FRIDAY 9 PM', 'saxophonist', 'pianist', 'silhouettes'] before mood=[] cover=[] | after mood=[] cover=[] fixes=['Wrote the boxes as pixels from the centre for 1024x1024']
+qwen3.5-9b-mlx-4bit p1 moss-layout layout=True 20s boxes=['JAZZ NIGHT', 'FRIDAY 9 PM', 'Silhouette of a musician', 'Silhouette of a musician', 'Row of musicians'] before mood=[] cover=[] | after mood=[] cover=[] fixes=['Wrote the boxes as pixels from the centre for 1024x1024']
+qwen3.5-9b-mlx-4bit p1 ideogram-json layout=False 24s boxes=['JAZZ NIGHT', 'saxophonist', 'pianist', 'silhouettes', 'FRIDAY 9 PM'] before mood=[] cover=[] | after mood=[] cover=[] fixes=[]
+qwen3.5-9b-mlx-4bit p1 ideogram-json layout=True 18s boxes=['JAZZ NIGHT', 'saxophonist and pianist under', 'FRIDAY 9 PM'] before mood=[] cover=[] | after mood=[] cover=[] fixes=[]
+qwen3.5-9b-mlx-4bit p2 moss-layout layout=False 10s boxes=['JAZZ NIGHT', 'FRIDAY 9 PM'] before mood=[] cover=[] | after mood=[] cover=[] fixes=['Wrote the boxes as pixels from the centre for 1024x1024']
+qwen3.5-9b-mlx-4bit p2 moss-layout layout=True 15s boxes=['JAZZ NIGHT', 'FRIDAY 9 PM', 'A musician playing a', 'Silhouettes of a crowd'] before mood=[] cover=[] | after mood=[] cover=[] fixes=['Wrote the boxes as pixels from the centre for 1024x1024']
+qwen3.5-9b-mlx-4bit p2 ideogram-json layout=False 20s boxes=['JAZZ NIGHT', 'FRIDAY 9 PM', 'trumpet player', 'musicians silhouettes'] before mood=[] cover=['trumpet player>FRIDAY 9 PM'] | after mood=[] cover=[] fixes=['Moved 1 box(es) off the text']
+qwen3.5-9b-mlx-4bit p2 ideogram-json layout=True 20s boxes=['trumpet player', 'musician silhouettes', 'JAZZ NIGHT', 'FRIDAY 9 PM'] before mood=[] cover=['trumpet player>FRIDAY 9 PM', 'musician silhouettes>FRIDAY 9 PM'] | after mood=[] cover=[] fixes=['Moved 2 box(es) off the text']
+{
+ "qwen3-vl-8b-instruct-4bit": {
+  "captions": 12,
+  "invalid": 0,
+  "before": 1,
+  "after": 0
+ },
+ "ministral-3-3b-instruct-2512-4bit": {
+  "captions": 12,
+  "invalid": 0,
+  "before": 2,
+  "after": 0
+ },
+ "qwen3.5-9b-mlx-4bit": {
+  "captions": 12,
+  "invalid": 0,
+  "before": 2,
+  "after": 0
+ }
+}

@@ -18,6 +18,7 @@ build/
 results/
 *.nsys-rep
 .DS_Store
-docs/benchmarks/raw/
+docs/benchmarks/raw/*
+!docs/benchmarks/raw/task17-perf/
 .vercel
 .env*

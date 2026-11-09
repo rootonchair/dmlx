@@ -468,3 +468,118 @@ final class LayoutTests: XCTestCase {
         XCTAssertEqual(first?["box"] as? [Int], [0, 0, 1000, 1000])
     }
 }
+
+final class RouteBodyTests: XCTestCase {
+    /// Auto's own model goes as `auto_models`, apart from the user's pick, so the engine may swap it when it
+    /// won't fit; the size goes too, for the engine's memory check (task 17).
+    func testAutoModelsAndSizeAreSentApartFromTheUsersPick() {
+        let body = EngineClient.routeBody(
+            message: "make it warmer", currentResultId: "img_1", currentPrompt: nil, attachments: [],
+            selectedModels: ["image.generate": "qwen-image"], autoModels: ["image.edit": "flux2-klein-4b"],
+            size: "1216x832", plan: true)
+        XCTAssertEqual(body["selected_models"] as? [String: String], ["image.generate": "qwen-image"])
+        XCTAssertEqual(body["auto_models"] as? [String: String], ["image.edit": "flux2-klein-4b"])
+        XCTAssertEqual(body["size"] as? String, "1216x832")
+    }
+
+    func testNothingExtraIsSentWithoutThem() {
+        let body = EngineClient.routeBody(message: "a fox", currentResultId: nil, currentPrompt: nil, attachments: [])
+        XCTAssertNil(body["auto_models"])
+        XCTAssertNil(body["size"])
+        XCTAssertNil(body["selected_models"])
+        XCTAssertNil(body["candidates"])
+    }
+
+    /// Without the agent, a send with one possible workflow (an attached photo, "make it warmer") still asks
+    /// the engine, for that workflow only, so the engine can swap an Auto model that won't fit (test round 2).
+    func testAOneWorkflowSendAsksOnlyForThatWorkflow() {
+        let body = EngineClient.routeBody(
+            message: "make it warmer", currentResultId: nil, currentPrompt: nil, attachments: ["att_1"],
+            autoModels: ["image.edit": "flux2-klein-9b"], size: "1024x1024", candidates: ["image.edit"])
+        XCTAssertEqual(body["candidates"] as? [String], ["image.edit"])
+        XCTAssertNil(body["plan"])
+    }
+
+    func testTheEnginesCheckedModelIsKeptWhenItAgreesOnTheWorkflow() {
+        let local = WorkflowDecision(intent: "image.edit", confidence: 1, probabilities: ["image.edit": 1],
+                                     provider: "deterministic")
+        var engine = local
+        engine.model = "flux2-klein-4b"
+        XCTAssertEqual(local.checked(by: engine).model, "flux2-klein-4b")
+        XCTAssertNil(local.checked(by: nil).model)  // engine unreachable: the app's own decision runs
+        var other = engine
+        other.intent = "ambiguous"
+        XCTAssertEqual(local.checked(by: other), local)
+    }
+
+    /// Test round 3: with the agent on, a one-workflow hint returned before asking the engine and named the
+    /// Auto model the engine then swapped out ("Klein9B AutoTest" named, Klein 4B ran). It now asks too.
+    func testTheHintAsksForOneWorkflowOnAutoAlsoWithTheAgent() {
+        let query = RoutePreviewQuery.make(structural: "image.edit", onAuto: true, agentInstalled: true, layout: nil)
+        XCTAssertEqual(query?.candidates, ["image.edit"])
+        XCTAssertNil(RoutePreviewQuery.make(structural: "image.edit", onAuto: false, agentInstalled: true, layout: nil))
+        XCTAssertNil(RoutePreviewQuery.make(structural: nil, onAuto: true, agentInstalled: true, layout: nil))
+        XCTAssertEqual(RoutePreviewQuery.make(structural: nil, onAuto: true, agentInstalled: false, layout: nil),
+                       RoutePreviewQuery(candidates: nil, layout: nil))
+    }
+
+    /// Test round 3: the hint's route sent no layout, so a layout send's hint named a model that can't place
+    /// things while the send ran a layout model. The hint now sends the composer's boxes too.
+    func testTheHintSendsTheComposersLayout() {
+        let boxes = [LayoutBox(id: "d", label: "FRIDAY", rect: NormalizedRect(x: 0.2, y: 0.4, width: 0.5, height: 0.1))]
+        XCTAssertEqual(RoutePreviewQuery.make(structural: nil, onAuto: true, agentInstalled: false, layout: boxes)?.layout,
+                       boxes)
+        XCTAssertEqual(RoutePreviewQuery.make(structural: "image.generate", onAuto: true, agentInstalled: true,
+                                              layout: boxes)?.layout, boxes)
+        XCTAssertNil(RoutePreviewQuery.make(structural: nil, onAuto: true, agentInstalled: false, layout: [])?.layout)
+    }
+
+    /// The hint names what the send runs: the user's model; on Auto the engine's swap, else the app's Auto
+    /// model; and when the agent picks on send among several, those.
+    func testTheHintNamesTheModelThatRuns() {
+        var decision = WorkflowDecision(intent: "image.edit", confidence: 1, probabilities: ["image.edit": 1],
+                                        provider: "deterministic")
+        let runnable: Set = ["flux2-klein-4b", "klein9b-autotest"]
+        XCTAssertEqual(RouteModel.named(chosen: nil, decision: decision, runnable: runnable, auto: "klein9b-autotest"),
+                       ["klein9b-autotest"])
+        decision.model = "flux2-klein-4b"  // the engine's swap: the 9B won't fit
+        XCTAssertEqual(RouteModel.named(chosen: nil, decision: decision, runnable: runnable, auto: "klein9b-autotest"),
+                       ["flux2-klein-4b"])
+        XCTAssertEqual(RouteModel.running(chosen: nil, decision: decision, runnable: runnable, auto: "klein9b-autotest"),
+                       "flux2-klein-4b")
+        XCTAssertEqual(RouteModel.named(chosen: "klein9b-autotest", decision: decision, runnable: runnable, auto: nil),
+                       ["klein9b-autotest"])
+        decision.model = nil
+        decision.agent_choices = ["flux2-klein-4b", "klein9b-autotest", "not-downloaded"]
+        XCTAssertEqual(RouteModel.named(chosen: nil, decision: decision, runnable: runnable, auto: "klein9b-autotest"),
+                       ["flux2-klein-4b", "klein9b-autotest"])
+        XCTAssertEqual(RouteModel.named(chosen: "flux2-klein-4b", decision: decision, runnable: runnable, auto: nil),
+                       ["flux2-klein-4b"])  // the user's model is not the agent's to change
+    }
+
+    /// Test round 4: until the engine checks the app's own decision, the hint names no model on Auto
+    /// (it named the Auto model the engine then swapped out); the user's model is named at once.
+    func testTheHintNamesNoAutoModelUntilTheEngineChecksIt() {
+        let decision = WorkflowDecision(intent: "image.edit", confidence: 1, probabilities: ["image.edit": 1],
+                                        provider: "deterministic")
+        let runnable: Set = ["flux2-klein-4b", "klein9b-autotest"]
+        XCTAssertEqual(RouteModel.named(chosen: nil, decision: decision, runnable: runnable,
+                                        auto: "klein9b-autotest", checked: false), [])
+        XCTAssertEqual(RouteModel.named(chosen: "klein9b-autotest", decision: decision, runnable: runnable,
+                                        auto: nil, checked: false), ["klein9b-autotest"])
+    }
+
+    /// Test round 4: the agent-on hint listed five models. Two are named, then "or another model".
+    func testTheAgentChoicesHintIsShort() {
+        XCTAssertEqual(RouteModel.agentPicks(["FLUX.2 Klein 4B", "FLUX.2 Klein 9B"]),
+                       "the agent picks FLUX.2 Klein 4B or FLUX.2 Klein 9B")
+        XCTAssertEqual(RouteModel.agentPicks(["FLUX.2 Klein 4B", "FLUX.2 Klein 9B", "Klein9B AutoTest"]),
+                       "the agent picks FLUX.2 Klein 4B, FLUX.2 Klein 9B or another model")
+    }
+
+    func testAgentChoicesDecodeFromTheEngine() throws {
+        let json = #"{"intent":"image.edit","confidence":1,"probabilities":{},"provider":"deterministic","agent_choices":["a","b"]}"#
+        let decision = try JSONDecoder().decode(WorkflowDecision.self, from: Data(json.utf8))
+        XCTAssertEqual(decision.agent_choices, ["a", "b"])
+    }
+}

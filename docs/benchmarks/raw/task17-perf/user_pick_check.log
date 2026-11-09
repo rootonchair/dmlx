@@ -1,0 +1,38 @@
+2026-11-09 18:00:50,505 dmlx.memory INFO loaded flux2-klein-4b/vae (0.15 GB)
+2026-11-09 18:00:50,677 dmlx.memory INFO loaded flux2-klein-4b/text_encoder (2.11 GB)
+2026-11-09 18:00:51,068 dmlx.memory INFO freed flux2-klein-4b/text_encoder (2.11 GB)
+2026-11-09 18:00:51,068 dmlx.memory INFO freed flux2-klein-4b/text_encoder (0.00 GB)
+2026-11-09 18:00:51,425 dmlx.memory INFO loaded flux2-klein-4b/transformer (2.03 GB)
+agent ministral-3-3b-instruct-2512-4bit
+downloaded ['flux2-klein-4b', 'flux2-klein-9b', 'qwen-image-2.1-q4']
+2026-11-09 18:00:55,889 dmlx.memory INFO freed flux2-klein-4b/vae (0.15 GB)
+2026-11-09 18:00:55,920 dmlx.memory INFO freed flux2-klein-4b/transformer (2.03 GB)
+2026-11-09 18:00:55,928 dmlx.engine WARNING agent planning with less free memory than it needs
+W1109 18:00:56.914000 68350 torch/distributed/elastic/multiprocessing/redirects.py:35] NOTE: Redirects are currently not supported in MacOs.
+[transformers] The tokenizer you are loading from '<scratch>/hub/models--mlx-community--Ministral-3-3B-Instruct-2512-4bit/snapshots/a962dcb09eee4169c890e544c9eb938f1113fdee' with an incorrect regex pattern: https://huggingface.co/mistralai/Mistral-Small-3.1-24B-Instruct-2503/discussions/84#69121093e8b480e709447d5e. This will lead to incorrect tokenization. You should set the `fix_mistral_regex=True` flag when loading this tokenizer to fix this issue.
+2026-11-09 18:01:06,493 dmlx.engine WARNING prompt assistant running with less free memory than it needs
+[transformers] The tokenizer you are loading from '<scratch>/hub/models--mlx-community--Ministral-3-3B-Instruct-2512-4bit/snapshots/a962dcb09eee4169c890e544c9eb938f1113fdee' with an incorrect regex pattern: https://huggingface.co/mistralai/Mistral-Small-3.1-24B-Instruct-2503/discussions/84#69121093e8b480e709447d5e. This will lead to incorrect tokenization. You should set the `fix_mistral_regex=True` flag when loading this tokenizer to fix this issue.
+2026-11-09 18:01:11,476 dmlx.engine WARNING prompt rewrite skipped for job_47768495e753: The prompt assistant returned no prompt.
+2026-11-09 18:01:12,491 dmlx.engine WARNING agent planning with less free memory than it needs
+[transformers] The tokenizer you are loading from '<scratch>/hub/models--mlx-community--Ministral-3-3B-Instruct-2512-4bit/snapshots/a962dcb09eee4169c890e544c9eb938f1113fdee' with an incorrect regex pattern: https://huggingface.co/mistralai/Mistral-Small-3.1-24B-Instruct-2503/discussions/84#69121093e8b480e709447d5e. This will lead to incorrect tokenization. You should set the `fix_mistral_regex=True` flag when loading this tokenizer to fix this issue.
+2026-11-09 18:01:20,453 dmlx.engine INFO Auto: flux2-klein-9b would not fit in memory now; using flux2-klein-4b
+2026-11-09 18:01:20,520 dmlx.engine WARNING prompt assistant running with less free memory than it needs
+[transformers] The tokenizer you are loading from '<scratch>/hub/models--mlx-community--Ministral-3-3B-Instruct-2512-4bit/snapshots/a962dcb09eee4169c890e544c9eb938f1113fdee' with an incorrect regex pattern: https://huggingface.co/mistralai/Mistral-Small-3.1-24B-Instruct-2503/discussions/84#69121093e8b480e709447d5e. This will lead to incorrect tokenization. You should set the `fix_mistral_regex=True` flag when loading this tokenizer to fix this issue.
+2026-11-09 18:01:25,501 dmlx.engine WARNING prompt rewrite skipped for job_f1154d3d20aa: The prompt assistant returned no prompt.
+2026-11-09 18:01:25,502 dmlx.memory INFO freed flux2-klein-4b/text_encoder (0.00 GB)
+2026-11-09 18:01:25,502 dmlx.memory INFO freed flux2-klein-4b/transformer (0.00 GB)
+2026-11-09 18:01:25,588 dmlx.memory INFO loaded flux2-klein-4b/vae (0.15 GB)
+2026-11-09 18:01:25,588 dmlx.memory INFO freed flux2-klein-4b/transformer (0.00 GB)
+2026-11-09 18:01:25,692 dmlx.memory INFO loaded flux2-klein-4b/text_encoder (0.20 GB)
+2026-11-09 18:01:26,126 dmlx.memory INFO freed flux2-klein-4b/text_encoder (0.26 GB)
+2026-11-09 18:01:26,130 dmlx.memory INFO freed flux2-klein-4b/text_encoder (0.00 GB)
+2026-11-09 18:01:26,183 dmlx.memory INFO freed flux2-klein-4b/vae (0.09 GB)
+2026-11-09 18:01:26,269 dmlx.memory INFO loaded flux2-klein-4b/transformer (0.10 GB)
+source done ['img_20261109_59a12ae31008']
+klein-4b fits from 3.1 GB, klein-9b from 3.5 GB; cap 3.3 GB; real 4.39 GB
+user picked klein-9b DECISION {'intent': 'image.edit', 'model': None, 'planning': None, 'provider': 'agent:local-vlm:ministral-3-3b-instruct-2512-4bit@a962dcb'} 9.8 s
+user picked klein-9b JOB flux2-klein-9b error insufficient_memory None
+auto, app's model klein-9b DECISION {'intent': 'image.edit', 'model': 'flux2-klein-4b', 'planning': None, 'provider': 'agent:local-vlm:ministral-3-3b-instruct-2512-4bit@a962dcb'} 8.0 s
+2026-11-09 18:01:34,211 dmlx.memory INFO freed flux2-klein-4b/transformer (0.23 GB)
+2026-11-09 18:01:34,287 dmlx.memory INFO loaded flux2-klein-4b/vae (0.15 GB)
+auto, app's model klein-9b JOB flux2-klein-4b done None 14.555

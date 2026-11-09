@@ -56,7 +56,12 @@ final class AppModel {
     var draft = ""
     var attachments: [Attachment] = []
     var aspect: Aspect = .square
-    var routeDecision: WorkflowDecision?
+    var routeDecision: WorkflowDecision? {
+        didSet { routeModelUnchecked = false }
+    }
+    /// On Auto, set while the hint shows the app's own decision and the engine's check of its model is on
+    /// the way: the hint then names no model (the engine may swap the app's Auto model out).
+    private var routeModelUnchecked = false
     var isResolvingRoute = false
     var promptEnhancementMode: PromptEnhancementMode = AppModel.savedPromptMode() {
         didSet { UserDefaults.standard.set(promptEnhancementMode.rawValue, forKey: "promptEnhancementMode") }
@@ -404,10 +409,39 @@ final class AppModel {
         return chosen
     }
 
-    /// Part of the routing key: a hint computed for one choice is not reused after the choice changes.
+    /// The model the app runs per workflow on Auto when the engine's decision names none (its default),
+    /// so the engine can name another when that one won't fit in memory now. Never the user's choice.
+    var autoModels: [String: String] {
+        var auto: [String: String] = [:]
+        for operation in ["image.generate", "image.edit", "image.upscale", "image.restore", "image.enhance"]
+            where !hasChosenModel(for: operation) {
+            if let m = defaultModel(for: operation) { auto[operation] = m.id }
+        }
+        return auto
+    }
+
+    /// Whether the user chose the model for this workflow (the others run on Auto).
+    func hasChosenModel(for operation: String) -> Bool {
+        Self.task(for: operation).flatMap { chosenModel(for: $0) } != nil
+    }
+
+    /// Part of the routing key: a hint computed for one choice (or one layout, or one image size) is not
+    /// reused after it changes. The size is in it because the engine's memory check counts it: a bigger
+    /// image can tip a borderline model over, and the hint must not name a model the send then swaps.
     private var selectionKey: String? {
         let chosen = selectedModels
-        return chosen.isEmpty ? nil : chosen.keys.sorted().map { "\($0)=\(chosen[$0]!)" }.joined(separator: ",")
+        var parts = chosen.keys.sorted().map { "\($0)=\(chosen[$0]!)" }
+        if let layout = previewLayout {
+            parts.append("layout=" + layout.map { "\($0.kind)\($0.label)\($0.box)" }.joined(separator: ";"))
+        }
+        parts.append("size=" + aspect.size)
+        return parts.joined(separator: ",")
+    }
+
+    /// The composer's boxes as the next send will take them (`layoutForNextMessage`), without using them up.
+    var previewLayout: [LayoutBox]? {
+        guard let layout = pendingLayout, !layout.isEmpty, layoutAvailable else { return nil }
+        return layout
     }
 
     static func task(for operation: String) -> GenTask? {
@@ -439,13 +473,35 @@ final class AppModel {
 
     /// On Auto, the model the agent picked for this message when it can run it; otherwise the usual choice.
     private func model(for operation: String, decision: WorkflowDecision) -> EngineModel? {
-        let chosen = Self.task(for: operation).flatMap { chosenModel(for: $0) }
-        if chosen == nil, let picked = decision.model,
-           let model = models.first(where: { $0.id == picked && $0.downloaded }),
-           capabilityCatalog?.operations[operation]?.contains(where: { $0.model == picked }) == true {
-            return model
+        if hasChosenModel(for: operation) { return defaultModel(for: operation) }
+        let id = RouteModel.running(chosen: nil, decision: decision, runnable: runnableModels(for: operation),
+                                    auto: defaultModel(for: operation)?.id)
+        return models.first(where: { $0.id == id })
+    }
+
+    /// What the route hint names for a workflow: the model `model(for:decision:)` will run, or, when the
+    /// agent picks the model on send among several, those models ("the agent picks A or B").
+    private func hintModelText(for operation: String, decision: WorkflowDecision) -> String? {
+        if hasChosenModel(for: operation) {
+            return defaultModel(for: operation).map { "\($0.name)\(loadHint($0))" }
         }
-        return defaultModel(for: operation)
+        let ids = RouteModel.named(chosen: nil, decision: decision, runnable: runnableModels(for: operation),
+                                   auto: defaultModel(for: operation)?.id, checked: !routeModelUnchecked)
+        if ids.isEmpty, routeModelUnchecked { return "" }  // no model named until the engine answers
+        let named = ids.compactMap { id in models.first(where: { $0.id == id }) }
+        if named.count > 1 { return RouteModel.agentPicks(named.map(\.name)) }
+        return named.first.map { "\($0.name)\(loadHint($0))" }
+    }
+
+    /// A hint and the model it names, or the hint alone while that is not known yet (empty).
+    private func hint(_ base: String, _ model: String) -> String {
+        model.isEmpty ? base : "\(base) · \(model)"
+    }
+
+    /// Downloaded models that can run this workflow (from the capability catalog).
+    private func runnableModels(for operation: String) -> Set<String> {
+        let capable = Set(capabilityCatalog?.operations[operation]?.map(\.model) ?? [])
+        return Set(models.filter { $0.downloaded && capable.contains($0.id) }.map(\.id))
     }
 
     /// The model that runs a workflow: the one chosen for its task; on Auto, the model chosen for the other
@@ -642,17 +698,19 @@ final class AppModel {
                 : promptAssistantInstalled ? "Planned by the agent when you send" : "New image or edit: decided when you send"
         }
         switch decision.intent {
+        // The model that runs: on Auto the decision's, when the engine named one that fits in memory now.
         case "image.generate":
-            return defaultModel(for: .t2i).map { "Will generate · \($0.name)\(loadHint($0))" } ?? "No image model downloaded"
+            return hintModelText(for: decision.intent, decision: decision).map { hint("Will generate", $0) }
+                ?? "No image model downloaded"
         case "image.edit":
-            guard let m = defaultModel(for: .edit) else { return "No model that can edit is downloaded" }
+            guard let m = hintModelText(for: decision.intent, decision: decision) else { return "No model that can edit is downloaded" }
             let what = attachments.isEmpty ? latestImageTurn.map { "image \($0.number)" } ?? "the current image" : "the attached image\(attachments.count == 1 ? "" : "s")"
-            return "Will edit \(what) · \(m.name)\(loadHint(m))"
+            return hint("Will edit \(what)", m)
         case "image.upscale", "image.restore", "image.enhance":
-            guard let m = defaultModel(for: decision.intent) else {
+            guard let m = hintModelText(for: decision.intent, decision: decision) else {
                 return "No downloaded model can \(Self.operationLabel(decision.intent).lowercased())"
             }
-            return "Will \(Self.operationLabel(decision.intent).lowercased()) · \(m.name)\(loadHint(m))"
+            return hint("Will \(Self.operationLabel(decision.intent).lowercased())", m)
         default:
             return "Choose whether to edit or create new"
         }
@@ -680,24 +738,34 @@ final class AppModel {
             isResolvingRoute = false
             return
         }
-        if let decision = structuralDecision() {
+        let structural = structuralDecision()
+        if let decision = structural {
             routeDecision = decision
             routeDecisionKey = key
             routeRequest = nil
             isResolvingRoute = false
+        }
+        // On Auto the engine checks the app's model fits in memory now and may name another, also with the
+        // agent (the route then runs no agent, and lists its choices when it will pick); with several
+        // workflows and the agent, the message is planned on send and the hint says so.
+        guard let query = RoutePreviewQuery.make(
+            structural: structural?.intent, onAuto: structural.map { !hasChosenModel(for: $0.intent) } ?? true,
+            agentInstalled: promptAssistantInstalled, layout: previewLayout) else {
+            if structural == nil {
+                routeDecision = nil
+                routeDecisionKey = nil
+                routeRequest = nil
+                isResolvingRoute = false
+            }
             return
         }
-        // With the agent, a sent message is planned by it; a preview would only spend a router call.
-        if promptAssistantInstalled {
+        if structural != nil, client == nil { return }
+        if structural != nil { routeModelUnchecked = true }  // the app's decision, its model not yet checked
+        if structural == nil {
             routeDecision = nil
             routeDecisionKey = nil
-            routeRequest = nil
-            isResolvingRoute = false
-            return
+            isResolvingRoute = true
         }
-        routeDecision = nil
-        routeDecisionKey = nil
-        isResolvingRoute = true
         let currentResultId = latestImageTurn?.current?.resultId
         let currentPrompt = latestImageTurn?.current?.prompt
         let attachmentIds = attachments.map(\.id)
@@ -718,18 +786,20 @@ final class AppModel {
                 let decision = try await client.routeWorkflow(
                     message: message, currentResultId: currentResultId,
                     currentPrompt: currentPrompt, attachments: attachmentIds,
-                    history: self.routingHistory, selectedModels: self.selectedModels)
+                    history: self.routingHistory, selectedModels: self.selectedModels,
+                    autoModels: self.autoModels, size: self.aspect.size,
+                    layout: query.layout, candidates: query.candidates)
                 guard !_Concurrency.Task.isCancelled,
                       self.routeRequest?.accepts(
                         context: self.routingContext(message: message), requestID: request.id) == true else { return }
-                self.routeDecision = decision
+                self.routeDecision = structural?.checked(by: decision) ?? decision
                 self.routeDecisionKey = key
                 self.isResolvingRoute = false
             } catch is CancellationError {
             } catch {
                 guard let self, self.routeRequest?.accepts(
                     context: self.routingContext(message: message), requestID: request.id) == true else { return }
-                self.routeDecision = Self.ambiguousDecision(provider: "unavailable")
+                self.routeDecision = structural ?? Self.ambiguousDecision(provider: "unavailable")
                 self.routeDecisionKey = key
                 self.isResolvingRoute = false
             }
@@ -831,15 +901,38 @@ final class AppModel {
             return answer(pending, question: question, with: message)
         }
         if let held = pendingRoute?.message { return show("Choose what to do with “\(held)” first, or cancel it.") }
+        // The key before the layout is taken: the hint's decision was made with it (task 17).
+        let key = routingKey(message: message)
         let snapshot = PendingRoute(
             message: message, attachmentInputs: attachments.enumerated().map { $0.element.mediaInput(order: $0.offset) },
             latestResultId: latestImageTurn?.current?.resultId, latestTurnId: latestImageTurn?.id,
             promptSpec: selectedPromptSpec(for: message), layout: layoutForNextMessage())
-        let key = routingKey(message: message)
         // With the agent, every sent message is planned by it; the rules only check its answer (in the engine).
         let planned = promptAssistantInstalled
         if !planned, let decision = structuralDecision() {
-            execute(snapshot, decision: decision)
+            // A workflow on Auto: the engine checks the app's model fits in memory now and may name one that
+            // does (task 17); before, this path never asked, and a model that won't fit was refused.
+            guard !hasChosenModel(for: decision.intent), let client else {
+                execute(snapshot, decision: decision)
+                return
+            }
+            routeTask?.cancel()
+            routeRequest = nil
+            isResolvingRoute = false
+            planningMessage = message
+            if text == nil { draft = "" }
+            let history = routingHistory
+            let currentPrompt = latestImageTurn?.current?.prompt
+            planTask = _Concurrency.Task { [weak self] in
+                let checked = try? await client.routeWorkflow(
+                    message: message, currentResultId: snapshot.latestResultId, currentPrompt: currentPrompt,
+                    attachments: snapshot.attachmentIds, history: history,
+                    selectedModels: self?.selectedModels ?? [:], autoModels: self?.autoModels ?? [:],
+                    size: self?.aspect.size, layout: snapshot.layout, candidates: [decision.intent])
+                guard let self, !_Concurrency.Task.isCancelled else { return }
+                self.planningMessage = nil
+                self.execute(snapshot, decision: decision.checked(by: checked))
+            }
             return
         }
         // A workflow the user picked in the composer ("Create a new image", "Edit current") is followed as
@@ -867,7 +960,8 @@ final class AppModel {
                 let decision = try await client.routeWorkflow(
                     message: message, currentResultId: snapshot.latestResultId, currentPrompt: currentPrompt,
                     attachments: snapshot.attachmentIds, attachmentNotes: notes, history: history,
-                    selectedModels: self?.selectedModels ?? [:],
+                    selectedModels: self?.selectedModels ?? [:], autoModels: self?.autoModels ?? [:],
+                    size: self?.aspect.size,
                     plan: planned, wait: waits, layout: snapshot.layout)
                 guard let self, !_Concurrency.Task.isCancelled else { return }
                 self.planningMessage = nil
@@ -955,7 +1049,8 @@ final class AppModel {
                     message: reply, currentResultId: pending.latestResultId,
                     currentPrompt: self?.latestImageTurn?.current?.prompt, attachments: pending.attachmentIds,
                     attachmentNotes: self?.attachmentNotes(pending.attachmentInputs) ?? [:],
-                    history: history, selectedModels: self?.selectedModels ?? [:], plan: true, wait: waits)
+                    history: history, selectedModels: self?.selectedModels ?? [:], autoModels: self?.autoModels ?? [:],
+                    size: self?.aspect.size, plan: true, wait: waits)
                 guard let self, !_Concurrency.Task.isCancelled else { return }
                 self.planningMessage = nil
                 guard self.pendingAsk == question else { return }

@@ -11,7 +11,9 @@ import SwiftUI
 ///          {"onboarding": true|false}, {"onboardingStep": "welcome"|"setup"}, {"onboardingDownload": true} (presses Download or Start Creating), {"agentService": {"service": "ollama", "model": "…"}}, {"guideNext": "chat"|"image"|"editor"} (the tip's Next; DMLX_RESET_TIPS=1 shows the guide again), {"settings": true}, {"selectSession": 0}, {"renderChat": "name"} (add "chatWidth": 384 to draw the turns at that width, e.g. the
 ///          detail column of the smallest window),
 ///          {"modelChoice": "auto"|"<model id>"} (both tasks), {"generateModel": "…"}, {"editModel": "…"}, {"logPreview": true},
-///          {"windowSize": [w, h]}, {"measure": true}, {"fakeSessions": n},
+///          {"windowSize": [w, h]}, {"hostWindow": [w, h]} (hides the app's window and shows RootView in a plain window
+///          of that size that macOS does not shrink to the visible screen, e.g. as tall as a screen with the Dock hidden),
+///          {"measure": true}, {"fakeSessions": n},
 ///          {"ask": {"message": "…", "question": "…"}} (as if the agent asked), {"planning": "message"} (as if just sent; "" clears), {"waitRouted": 60},
 ///          {"flags": "label"} (logs whether this or another chat is making an image, and a waiting message),
 ///          {"appearance": "system"|"light"|"dark"}, {"settingsTab": "intelligence"} (with {"settings": true}, which hosts SettingsView in its own window), {"closeSettings": true},
@@ -32,6 +34,11 @@ import SwiftUI
 extension Notification.Name {
     /// The harness's selectBox: the open editor selects the box with this label (the object).
     static let dmlxHarnessSelectBox = Notification.Name("dmlx.harness.selectBox")
+}
+
+/// The harness's hostWindow: keeps the size it is given, even taller than the visible screen.
+private final class UnclampedWindow: NSWindow {
+    override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect { frameRect }
 }
 
 @MainActor
@@ -445,11 +452,25 @@ enum DevHarness {
            let window = hostWindow ?? NSApp.windows.first(where: { $0.isVisible && $0.frame.width > 300 }) {
             window.setFrame(NSRect(origin: window.frame.origin, size: CGSize(width: size[0], height: size[1])), display: true)
         }
+        if let size = step["hostWindow"] as? [Double], size.count == 2 {
+            for window in NSApp.windows where window.isVisible && window.frame.width > 300 { window.orderOut(nil) }
+            hostWindow?.close()
+            let window = UnclampedWindow(
+                contentRect: NSRect(x: 0, y: 0, width: size[0], height: size[1]),
+                styleMask: [.titled, .closable, .resizable, .fullSizeContentView], backing: .buffered, defer: false)
+            window.title = "dMLX (harness)"
+            window.isReleasedWhenClosed = false
+            window.contentView = NSHostingView(rootView: RootView().environment(model).tint(Theme.accent))
+            window.setFrameOrigin(NSPoint(x: 0, y: (window.screen ?? NSScreen.main)?.frame.minY ?? 0))
+            window.orderFrontRegardless()
+            hostWindow = window
+            log("host window \(Int(window.frame.width))x\(Int(window.frame.height)) on a screen of \(NSScreen.main.map { "\(Int($0.frame.height)) (visible \(Int($0.visibleFrame.height)))" } ?? "?") points")
+        }
         if step["measure"] != nil, let window = hostWindow ?? NSApp.windows.first(where: { $0.isVisible && $0.frame.width > 300 }),
            let content = window.contentView {
             content.layoutSubtreeIfNeeded()
             let root = content.subviews.first
-            log("measure window=\(window.frame.size) fitting=\(root?.fittingSize ?? .zero) rootFrame=\(root?.frame ?? .zero)")
+            log("measure window=\(window.frame.size) minSize=\(window.minSize) fitting=\(root?.fittingSize ?? .zero) rootFrame=\(root?.frame ?? .zero)")
             func find(_ view: NSView, _ match: (NSView) -> Bool) -> NSView? {
                 if match(view) { return view }
                 for sub in view.subviews { if let hit = find(sub, match) { return hit } }

@@ -47,10 +47,21 @@ class InsufficientMemory(Exception):
         self.need = need
         self.headroom = headroom
         self.model_id = model_id
+        need_text, room_text = _apart(need / GB, max(headroom, 0) / GB)
         super().__init__(
-            f"{model_name or model_id} needs about {need / GB:.1f} GB but only {max(headroom, 0) / GB:.1f} GB can be used "
+            f"{model_name or model_id} needs about {need_text} GB but only {room_text} GB can be used "
             f"without slowing down your Mac. Close some apps, pick a smaller size, or choose a lighter model."
         )
+
+
+def _apart(need: float, room: float) -> tuple[str, str]:
+    """Both sizes with one decimal, or more when one decimal makes them look equal ("needs 3.3 GB but
+    only 3.3 GB can be used" read as a contradiction; it is 3.34 against 3.26)."""
+    for places in (1, 2, 3):
+        a, b = f"{need:.{places}f}", f"{room:.{places}f}"
+        if float(a) > float(b):
+            return a, b
+    return f"{need:.2f}", f"{room:.2f}"
 
 
 @dataclass
@@ -155,6 +166,9 @@ class MemoryManager:
         self._adapters: dict[str, object] = {}
         self._lock = threading.RLock()
         self.degraded_until = 0.0  # after real pressure, prefer slower strategies for a while
+        # The image job running now (jobs run one at a time): the room its plan had, dMLX's resident bytes
+        # then, and its working memory. `could_fit` counts what it holds as coming back when it ends.
+        self._job: tuple[int, int, int] | None = None
         mx.set_cache_limit(CACHE_LIMIT)
 
     # -- registration / bookkeeping -------------------------------------------------
@@ -303,6 +317,37 @@ class MemoryManager:
                 plan = Plan(spec.id, cheapest, needs[cheapest], room, evicted, forced=True)
             mx.set_memory_limit(max(int(plan.headroom + self.resident_bytes()), 2 * GB))
             return plan
+
+    def job_started(self, plan: Plan, activation: int) -> None:
+        with self._lock:
+            self._job = (plan.headroom, self.resident_bytes(), activation)
+
+    def job_ended(self) -> None:
+        with self._lock:
+            self._job = None
+
+    def _room_after_job(self) -> int:
+        """Headroom once the running job ends, for a job queued behind it. Its working memory comes back,
+        its weights stay resident (and count as evictable like any idle model's). Bounded twice so a
+        guess never says more than is real: by the room the job's plan had less the weights it loaded
+        since, and by now plus its planned working memory (it may hold less, early in the job)."""
+        now = self.headroom()
+        if self._job is None:
+            return now
+        room, resident, activation = self._job
+        after = room - max(self.resident_bytes() - resident, 0)
+        return max(now, min(after, now + activation))
+
+    def could_fit(self, spec: ModelSpec, activation: int, returned: int = 0) -> bool:
+        """Whether `plan` would admit this job now, by its cheapest strategy, once other unpinned models are
+        evicted and `returned` bytes come back (the agent, unloaded before every image job). A dry run:
+        nothing is freed. While an image job runs, this job runs after it, so the running job's working
+        memory counts as returned too (test round 3 of task 17)."""
+        with self._lock:
+            cheapest = min(self._needs(spec, activation).values())
+            evictable = sum(r.bytes for r in self._resident.values()
+                            if r.model_id != spec.id and r.model_id not in self._pinned)
+            return cheapest <= self._room_after_job() + evictable + returned
 
     def make_room(self, need: int) -> bool:
         """Free idle components, least recently used first and never a pinned model's, until `need` fits."""

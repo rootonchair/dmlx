@@ -1,0 +1,19 @@
+downloaded: ['flux2-klein-4b', 'flux2-klein-9b', 'qwen-image-2.1-q4', 'z-image-turbo', 'fibo-2-0-dev-mflux-q6', 'ideogram-4-mflux-q4', 'moss-image-sft-mflux-q4']
+agent: local-vlm:ministral-3-3b-instruct-2512-4bit@a962dcb
+offered for image.edit: [('flux2-klein-4b', 'FLUX.2 Klein 4B: Fast (about 20-40 s); good all-round for new images and edits with up to 3 images, and for drawings, art and illustration; weak at drawing exact words, and less lifelike for photos than a model made for them.'), ('flux2-klein-9b', 'FLUX.2 Klein 9B: The larger Klein: usually more detail than Klein 4B for new images and edits with up to 3 images, but about twice as slow (about 35 s for a new image, 1.5 minutes for an edit). Non-commercial license; pick it only when the user chose it.')]
+dmlx.engine agent planning with less free memory than it needs
+W1109 17:12:41.336000 46835 torch/distributed/elastic/multiprocessing/redirects.py:35] NOTE: Redirects are currently not supported in MacOs.
+decision: {"intent": "image.edit", "model": "flux2-klein-4b", "provider": "agent:local-vlm:ministral-3-3b-instruct-2512-4bit@a962dcb", "planning": null}
+dmlx.engine prompt rewrite skipped for job_9272cd2ffef0: The prompt assistant returned no prompt.
+dmlx.memory freed flux2-klein-4b/text_encoder (0.00 GB)
+dmlx.memory freed flux2-klein-4b/transformer (0.00 GB)
+dmlx.memory loaded flux2-klein-4b/vae (0.15 GB)
+dmlx.memory freed flux2-klein-4b/transformer (0.00 GB)
+dmlx.memory loaded flux2-klein-4b/text_encoder (0.20 GB)
+dmlx.memory freed flux2-klein-4b/text_encoder (0.26 GB)
+dmlx.memory freed flux2-klein-4b/text_encoder (0.00 GB)
+dmlx.memory freed flux2-klein-4b/vae (0.09 GB)
+dmlx.memory loaded flux2-klein-4b/transformer (0.10 GB)
+dmlx.memory freed flux2-klein-4b/transformer (0.23 GB)
+dmlx.memory loaded flux2-klein-4b/vae (0.15 GB)
+job: {"model": "flux2-klein-4b", "status": "done", "error": null, "seconds": 44.153}

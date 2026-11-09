@@ -1,0 +1,27 @@
+2026-11-09 17:30:44,079 dmlx.memory INFO loaded flux2-klein-4b/vae (0.15 GB)
+2026-11-09 17:30:44,429 dmlx.memory INFO loaded flux2-klein-4b/text_encoder (2.11 GB)
+2026-11-09 17:30:44,821 dmlx.memory INFO freed flux2-klein-4b/text_encoder (2.11 GB)
+2026-11-09 17:30:44,822 dmlx.memory INFO freed flux2-klein-4b/text_encoder (0.00 GB)
+2026-11-09 17:30:45,181 dmlx.memory INFO loaded flux2-klein-4b/transformer (2.03 GB)
+STOP at step {'job_id': 'job_d8163c45a90b', 'step': 2, 'total': 8} active 3.02
+2026-11-09 17:30:47,978 dmlx.memory INFO freed flux2-klein-4b/vae (0.15 GB)
+2026-11-09 17:30:47,992 dmlx.memory INFO freed flux2-klein-4b/transformer (2.03 GB)
+RESULT 2 memory_pressure error memory_pressure active after 0.01 resident [] events ['encoding', 'error', 'loading', 'plan', 'queued', 'step']
+2026-11-09 17:30:47,999 dmlx.memory INFO freed flux2-klein-4b/text_encoder (0.00 GB)
+2026-11-09 17:30:47,999 dmlx.memory INFO freed flux2-klein-4b/transformer (0.00 GB)
+2026-11-09 17:30:48,043 dmlx.memory INFO loaded flux2-klein-4b/vae (0.15 GB)
+2026-11-09 17:30:48,044 dmlx.memory INFO freed flux2-klein-4b/text_encoder (0.00 GB)
+2026-11-09 17:30:48,053 dmlx.memory INFO freed flux2-klein-4b/vae (0.15 GB)
+2026-11-09 17:30:48,155 dmlx.memory INFO loaded flux2-klein-4b/transformer (2.03 GB)
+2026-11-09 17:30:55,458 dmlx.memory INFO freed flux2-klein-4b/transformer (2.03 GB)
+2026-11-09 17:30:55,486 dmlx.memory INFO loaded flux2-klein-4b/vae (0.15 GB)
+RESULT encode memory_pressure done None active after 0.16 resident [{'model': 'flux2-klein-4b', 'component': 'vae', 'gb': 0.15, 'pinned': False}] events ['decoding', 'done', 'image', 'loading', 'plan', 'queued', 'step']
+2026-11-09 17:30:56,248 dmlx.memory INFO freed flux2-klein-4b/text_encoder (0.00 GB)
+2026-11-09 17:30:56,248 dmlx.memory INFO freed flux2-klein-4b/transformer (0.00 GB)
+2026-11-09 17:30:56,248 dmlx.memory INFO freed flux2-klein-4b/text_encoder (0.00 GB)
+2026-11-09 17:30:56,259 dmlx.memory INFO freed flux2-klein-4b/vae (0.15 GB)
+2026-11-09 17:30:56,360 dmlx.memory INFO loaded flux2-klein-4b/transformer (2.03 GB)
+STOP at step {'job_id': 'job_b11fca8f4a2e', 'step': 2, 'total': 8} active 2.87
+RESULT 2 cancelled cancelled cancelled active after 2.04 resident [{'model': 'flux2-klein-4b', 'component': 'transformer', 'gb': 2.03, 'pinned': False}] events ['cancelled', 'loading', 'plan', 'queued', 'step']
+2026-11-09 17:30:59,133 dmlx.memory INFO freed flux2-klein-4b/transformer (2.03 GB)
+after unload active 0.01

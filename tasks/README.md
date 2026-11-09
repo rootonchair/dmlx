@@ -20,4 +20,5 @@ One file per task; update its **Status** line as work lands.
 | 14 | [Upscale and restore as a chat action](14-upscale-as-a-chat-action.md) | Open: a SeedVR2 adapter exists |
 | 15 | [New model families faster](15-new-model-families.md) | Done: generic adapter; ERNIE, MOSS, FLUX.3, Boogu, Iris, Krea 2 added |
 | 16 | [dMLX as a tool server for other local agents](16-tool-server-for-other-agents.md) | Open |
-| 17 | [Structured JSON prompts (FIBO, Ideogram 4, MOSS Image)](17-structured-json-prompts.md) | In progress: MOSS Image done; FIBO, Ideogram 4 wait for their families |
+| 17 | [Structured JSON prompts (FIBO, Ideogram 4, MOSS Image)](17-structured-json-prompts.md) | Done: MOSS Image, FIBO 2, Ideogram 4; layouts, Auto memory fit, tested in 7 rounds, all fixes in; edits keeping boxes are task 18 |
+| 18 | [Layout: next features](18-layout-features.md) | Open: moving a box in words, edits that keep the caption, FIBO Edit |

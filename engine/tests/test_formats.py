@@ -394,6 +394,36 @@ def test_a_caption_that_goes_to_nan_mid_run_is_drawn_from_the_plain_sentence(mak
     assert len(prompts) == 2 and meta["parameters"]["structure"]["reason"] == "blank image"
 
 
+def test_the_plain_sentence_retry_does_not_keep_the_failed_run_alive(make_engine, client_for, tmp_path):
+    # The NaN run's traceback holds its frames, and they hold its arrays: kept through the retry, that
+    # memory is missing for it (and a stop during it frees with the old frames still referenced).
+    import gc
+    import weakref
+
+    from dmlx.adapters.base import NonFinite
+
+    class Arrays:
+        pass
+
+    engine = _engine(make_engine, tmp_path, _Assistant(json.dumps(JAZZ_MOSS)))
+    adapter = engine.adapter(engine.registry.get("moss"))
+    real, held, alive = adapter.generate, [], []
+
+    def generate(req, hooks):
+        if req.prompt.startswith("{"):
+            arrays = Arrays()  # noqa: F841 - a frame of the failed run holds its arrays
+            held.append(weakref.ref(arrays))
+            raise NonFinite(3)
+        gc.collect()
+        alive.append(held[0]() is not None)
+        return real(req, hooks)
+
+    adapter.generate = generate
+    client = client_for(engine)
+    _meta(client, _make(client, "A vintage jazz club poster reading \"JAZZ NIGHT\" and \"FRIDAY 9 PM\""))
+    assert alive == [False]
+
+
 def test_moss_saved_at_50_steps_moves_to_30_but_a_users_choice_stays():
     from dmlx.catalog import MOSS_NOTE
 
@@ -466,3 +496,151 @@ def test_agent_box_descriptions_lose_place_words_but_the_users_keep_theirs():
     assert out["FRIDAY 9 PM"] == "Complementary font, smaller"
     assert out["piano"] == "dimly lit, wooden finish"
     assert out["sax"] == "gold sax at the bottom"
+
+
+def _moss_with(*extra: dict) -> str:
+    caption = json.loads(json.dumps(JAZZ_MOSS))
+    caption["items"] += list(extra)
+    return json.dumps(caption)
+
+
+def test_agent_boxes_for_light_mood_or_style_are_left_out_but_things_stay():
+    """The 8B agent drew a box for "glowing spotlights" against the box rules (2026-11-08)."""
+    mood = [{"label": "object", "name": "glowing spotlights", "caption": "warm beams", "bbox": [0, 0, 400, 300]},
+            {"label": "object", "name": "smoky haze", "caption": "soft smoke", "bbox": [600, 0, 1000, 300]},
+            {"label": "object", "name": "art deco style", "caption": "gold lines", "bbox": [0, 300, 250, 500]}]
+    things = [{"label": "object", "name": "neon sign", "caption": "pink neon", "bbox": [750, 300, 950, 450]},
+              {"label": "object", "name": "musicians silhouettes", "caption": "dark figures", "bbox": [50, 300, 250, 450]}]
+    result = formats.normalize(formats.MOSS, _moss_with(*mood, *things))
+    names = [b.label for b in result.layout]
+    assert names == ["JAZZ NIGHT", "saxophonist silhouette", "FRIDAY 9 PM", "neon sign", "musicians silhouettes"]
+    assert any("light, mood or style" in fix for fix in result.fixes)
+    # Ideogram 4 the same.
+    caption = json.loads(json.dumps(JAZZ_IDEOGRAM))
+    caption["compositional_deconstruction"]["elements"].append(
+        {"type": "obj", "name": "stage lighting", "bbox": [0, 0, 300, 300], "desc": "spotlight glow"})
+    labels = [b.label for b in formats.normalize(formats.IDEOGRAM, json.dumps(caption)).layout]
+    assert "stage lighting" not in labels and "saxophonist silhouette" in labels
+
+
+def test_a_box_the_user_placed_is_kept_whatever_its_name():
+    mine = {"id": "glow", "kind": "obj", "label": "spotlight glow", "box": [0, 0, 300, 300], "by_user": True}
+    result = formats.normalize(formats.MOSS, json.dumps(JAZZ_MOSS), layout=formats.parse_layout([mine]))
+    kept = [b for b in result.layout if b.id == "glow"]
+    assert len(kept) == 1 and kept[0].box == (0, 0, 300, 300) and kept[0].label == "spotlight glow"
+
+
+def test_agent_object_boxes_are_cut_back_off_the_text():
+    """"musicians silhouettes" covered the date the user placed (2026-11-08)."""
+    layout = formats.parse_layout([USER_DATE])  # y 880-960, x 520-960
+    crowd = {"label": "object", "name": "musicians silhouettes", "caption": "dark figures", "bbox": [0, 600, 1000, 1000]}
+    result = formats.normalize(formats.MOSS, _moss_with(crowd), layout=layout)
+    by_label = {b.label: b for b in result.layout}
+    # The largest part clear of the date: everything above it.
+    assert by_label["musicians silhouettes"].box == (600, 0, 880, 1000)
+    assert by_label["FRIDAY 9 PM"].box == (880, 520, 960, 960) and by_label["FRIDAY 9 PM"].by_user
+    assert any("off the text" in fix for fix in result.fixes)
+    # Nothing an agent object box keeps meets a text box.
+    for b in result.layout:
+        if b.kind == "obj" and not b.by_user:
+            for t in (t for t in result.layout if t.kind == "text"):
+                assert formats._overlap(b.box, t.box) == 0
+
+
+def test_an_agent_box_that_is_mostly_text_is_left_out():
+    layout = formats.parse_layout([USER_DATE])
+    over = {"label": "object", "name": "crowd", "caption": "people", "bbox": [500, 860, 980, 970]}
+    result = formats.normalize(formats.MOSS, _moss_with(over), layout=layout)
+    assert "crowd" not in [b.label for b in result.layout]
+    assert any("covered the text" in fix for fix in result.fixes)
+
+
+@pytest.mark.parametrize("name", ["neon sign", "banner", "book cover", "shop sign", "price tag"])
+def test_an_agent_box_around_its_own_text_is_kept_as_the_surface(name):
+    """Test round 3 of task 17: a "neon sign" box around its "OPEN" text box was left out as covering it."""
+    # Bottom right, clear of the poster's title and saxophonist ([x0, y0, x1, y1] here).
+    sign = {"label": "object", "name": name, "caption": "pink neon tubes", "bbox": [720, 840, 980, 990]}
+    words = {"label": "text", "caption": "neon script", "text": "OPEN", "bbox": [760, 870, 940, 960]}
+    result = formats.normalize(formats.MOSS, _moss_with(sign, words))
+    kept = [b for b in result.layout if b.label == name]
+    assert len(kept) == 1 and kept[0].box == (840, 720, 990, 980)  # unchanged ([y0, x0, y1, x1] inside)
+    assert "OPEN" in [b.label for b in result.layout]
+    assert not any("covered the text" in fix or "off the text" in fix for fix in result.fixes)
+
+
+@pytest.mark.parametrize("open_first", [True, False])
+def test_a_surface_cut_off_a_second_text_never_ends_half_over_its_own(open_first):
+    """Test round 4 of task 17: with "OPEN" listed first, the sign was cut off "SAT" (partly under it) to
+    a box still half over OPEN; with SAT first it came out clear. Now both orders give the same clear box."""
+    sign = {"label": "object", "name": "neon sign", "caption": "pink", "bbox": [500, 500, 980, 990]}
+    opn = {"label": "text", "caption": "x", "text": "OPEN", "bbox": [520, 800, 600, 900]}
+    sat = {"label": "text", "caption": "x", "text": "SAT", "bbox": [620, 850, 1000, 1000]}
+    result = formats.normalize(formats.MOSS, _moss_with(sign, *((opn, sat) if open_first else (sat, opn))))
+    by_label = {b.label: b.box for b in result.layout}
+    assert by_label["neon sign"] == (500, 500, 800, 980)  # above both texts ([y0, x0, y1, x1] inside)
+    for text in ("OPEN", "SAT"):
+        t, s = by_label[text], by_label["neon sign"]
+        assert min(s[2], t[2]) <= max(s[0], t[0]) or min(s[3], t[3]) <= max(s[1], t[1])
+
+
+def test_a_surface_cut_off_another_text_keeps_its_own_when_that_part_is_largest():
+    # The part left of "SAT" still holds "OPEN" whole and is the largest: the sign keeps its text.
+    sign = {"label": "object", "name": "neon sign", "caption": "pink", "bbox": [50, 830, 650, 1000]}
+    opn = {"label": "text", "caption": "x", "text": "OPEN", "bbox": [100, 860, 300, 960]}
+    sat = {"label": "text", "caption": "x", "text": "SAT", "bbox": [550, 830, 800, 1000]}
+    for items in ((opn, sat), (sat, opn)):
+        result = formats.normalize(formats.MOSS, _moss_with(sign, *items))
+        assert {b.label: b.box for b in result.layout}["neon sign"] == (830, 50, 1000, 550)
+
+
+def test_a_box_not_named_for_a_surface_around_text_still_goes():
+    holder = {"label": "object", "name": "crowd", "caption": "people", "bbox": [720, 840, 980, 990]}
+    words = {"label": "text", "caption": "neon script", "text": "OPEN", "bbox": [740, 850, 960, 980]}
+    result = formats.normalize(formats.MOSS, _moss_with(holder, words))
+    assert "crowd" not in [b.label for b in result.layout] and "OPEN" in [b.label for b in result.layout]
+
+
+def test_a_sign_that_only_partly_covers_text_is_still_cut():
+    layout = formats.parse_layout([USER_DATE])  # y 880-960, x 520-960
+    sign = {"label": "object", "name": "neon sign", "caption": "pink neon", "bbox": [300, 700, 700, 920]}
+    result = formats.normalize(formats.MOSS, _moss_with(sign), layout=layout)
+    by_label = {b.label: b for b in result.layout}
+    assert by_label["neon sign"].box == (700, 300, 880, 700)  # the part above the date
+    assert any("off the text" in fix for fix in result.fixes)
+
+
+def test_a_users_object_box_over_text_is_never_moved():
+    piano = {"id": "piano", "kind": "obj", "label": "piano", "box": [800, 400, 1000, 1000], "by_user": True}
+    layout = formats.parse_layout([USER_DATE, piano])
+    result = formats.normalize(formats.MOSS, json.dumps(JAZZ_MOSS), layout=layout)
+    assert next(b for b in result.layout if b.id == "piano").box == (800, 400, 1000, 1000)
+
+
+def test_ideogram_captions_with_cut_and_dropped_boxes_still_pass_ideograms_check():
+    verifier = pytest.importorskip("mflux.models.ideogram4.model.ideogram4_text_encoder.caption")
+    caption = json.loads(json.dumps(JAZZ_IDEOGRAM))
+    caption["compositional_deconstruction"]["elements"] += [
+        {"type": "obj", "name": "glowing spotlights", "bbox": [0, 0, 300, 300], "desc": "beams"},
+        {"type": "obj", "name": "musicians silhouettes", "bbox": [0, 600, 1000, 1000], "desc": "figures"}]
+    result = formats.normalize(formats.IDEOGRAM, json.dumps(caption), layout=formats.parse_layout([USER_DATE]))
+    assert verifier.Ideogram4CaptionVerifier().verify_raw(result.prompt) == []
+    assert "glowing spotlights" not in [b.label for b in result.layout]
+
+
+@pytest.mark.parametrize("name", [
+    "glowing spotlights", "warm lighting", "moody atmosphere", "neon glow", "stage lights", "smoky haze",
+    "art deco style", "stage lighting", "light rays", "soft shadows", "colour palette", "lights", "fog",
+    "lens flare", "light effects", "lighting effects", "retro style", "style", "warm flares",
+])
+def test_names_that_are_light_mood_or_style(name):
+    assert formats._is_mood(formats.Box("b", "obj", name, (0, 0, 300, 300), name))
+
+
+@pytest.mark.parametrize("name", [
+    "traffic light", "street light", "manta ray", "painter's palette", "wooden beam", "cat shadow",
+    "neon sign", "musicians silhouettes", "lamp", "desk lamp", "saxophonist silhouette",
+    "solar flare", "hair style", "sound effects",  # test round 2 of task 17
+])
+def test_names_of_real_things_are_not_light_or_mood(name):
+    """Real objects whose last word is also a light word (round 1 of task 17's tests)."""
+    assert not formats._is_mood(formats.Box("b", "obj", name, (0, 0, 300, 300), name))

@@ -206,6 +206,13 @@ class Job:
         }
 
 
+def _mlx_held() -> int:
+    """Bytes MLX holds in this process (in use and cached): what an unload of the in-process agent frees."""
+    import mlx.core as mx
+
+    return mx.get_active_memory() + mx.get_cache_memory()
+
+
 def _blank(image) -> bool:
     """An image of one flat colour: what a model's NaNs become when they are cast to pixels."""
     lo, hi = image.convert("L").getextrema()
@@ -230,6 +237,9 @@ class Engine:
         self._queue: "queue.Queue[Job]" = queue.Queue()
         self._lock = threading.Lock()
         self._accelerator_lock = threading.Lock()
+        # Memory the unloaded agent is still giving back (`_agent_memory_returning`):
+        # (headroom just before it ran, headroom just after the unload, bytes MLX freed, until when).
+        self._agent_returning: tuple[int, int, int, float] | None = None
         self._structure_cache: OrderedDict[tuple, formats.Structured] = OrderedDict()
         self.started = time.time()
         for spec in self.registry.all():
@@ -370,6 +380,16 @@ class Engine:
                     chosen[str(operation)] = self.registry.get(str(model_id).strip()).id
         except KeyError as exc:
             raise RequestError("unknown_model", str(exc), 404) from exc
+        # The model the app runs on Auto per workflow when the decision names none (its own default: the
+        # other task's model, or dMLX's pick). Not the user's choice: it gives way when it will not fit.
+        # Older apps don't send it; dMLX's default stands in.
+        auto_models = state.get("auto_models") or {}
+        if not isinstance(auto_models, dict):
+            raise RequestError("invalid_route", "auto_models must map workflows to model ids.", 422)
+        auto_models = {str(op): str(model_id).strip() for op, model_id in auto_models.items()
+                       if str(model_id or "").strip()}
+        # The size a new image will have, so the memory check matches it (1024x1024 when not given).
+        size = self._route_size(state.get("size"))
         if layout and selected_model and not self.registry.get(selected_model).prompt_format:
             name = self.registry.get(selected_model).name
             raise RequestError("layout_unsupported", f"{name} can't place things from a layout.", 422)
@@ -410,11 +430,13 @@ class Engine:
             # model the user chose is not the agent's to change.
             models = None if selected_model else {
                 op: choices for op, choices in self._model_choices(candidates, explicit_count, has_current,
-                                                                   layout=bool(layout)).items()
+                                                                   layout=bool(layout), size=size).items()
                 if op not in chosen}
             planned, note = self._plan(safe_state, candidates, wait=bool(state.get("wait")), models=models)
             if planned is not None:
-                return self._layout_model(planned, layout, chosen, explicit_count, has_current)
+                return self._fitting_model(
+                    self._layout_model(planned, layout, chosen, explicit_count, has_current, size),
+                    chosen, explicit_count, has_current, bool(layout), auto_models, size)
             if note in ("rejected", "failed"):
                 # The agent was asked and has no usable plan: ask the user rather than let the rules or the
                 # router guess (a greeting became an edit of the latest image).
@@ -426,16 +448,43 @@ class Engine:
         decision = self._route_without_agent(safe_state, candidates)
         if note:
             decision["planning"] = note  # e.g. "skipped_busy": the client can tell the agent did not plan this
-        return self._layout_model(decision, layout, chosen, explicit_count, has_current)
+        decision = self._fitting_model(self._layout_model(decision, layout, chosen, explicit_count, has_current, size),
+                                       chosen, explicit_count, has_current, bool(layout), auto_models, size)
+        intent = decision.get("intent", "ambiguous")
+        if (not state.get("plan") and self.prompt_assistant is not None and not selected_model
+                and intent != "ambiguous" and intent not in chosen):
+            # The composer's hint (no plan): when the agent will pick the model on send, say among which,
+            # so the hint never names one model while another may run (test round 3). These are the
+            # models the planned route offers it; with no pick, `_fitting_model` keeps to them too.
+            offered = self._model_choices([intent], explicit_count, has_current, layout=bool(layout),
+                                          size=size).get(intent, [])
+            if len(offered) > 1:
+                decision["agent_choices"] = self._hint_order([model_id for model_id, _ in offered],
+                                                             intent, bool(layout), auto_models)
+        return decision
+
+    @staticmethod
+    def _route_size(size) -> tuple[int, int]:
+        """The job size a route request names ("1216x832"), or 1024x1024 when it names none or "auto"."""
+        if size in (None, "", "auto"):
+            return 1024, 1024
+        try:
+            width, height = (int(v) for v in str(size).lower().split("x"))
+        except ValueError:
+            raise RequestError("invalid_route", f"size must look like 1024x1024, got {size!r}", 422) from None
+        if not (MIN_SIDE <= width <= MAX_SIDE and MIN_SIDE <= height <= MAX_SIDE):
+            raise RequestError("invalid_route", f"Each side must be between {MIN_SIDE} and {MAX_SIDE} pixels.", 422)
+        return width, height
 
     def _layout_model(self, decision: dict, layout: list, chosen: dict[str, str], attached: int,
-                      has_current: bool) -> dict:
+                      has_current: bool, size: tuple[int, int] = (1024, 1024)) -> dict:
         """On Auto with a layout, the decision always names a model that can use the boxes: the agent's
         pick when it made one among them, otherwise the preferred one (exact boxes first). A workflow
         the user chose a model for keeps it."""
         if not layout or decision.get("intent", "ambiguous") == "ambiguous" or decision["intent"] in chosen:
             return decision
-        choices = self._model_choices([decision["intent"]], attached, has_current, layout=True).get(decision["intent"], [])
+        choices = self._model_choices([decision["intent"]], attached, has_current, layout=True,
+                                      size=size).get(decision["intent"], [])
         offered = [model_id for model_id, _ in choices]
         if decision.get("model") in offered or not offered:
             return decision
@@ -1027,6 +1076,7 @@ class Engine:
                     job.report.setdefault("failed_step_index", job.report.get("current_step_index"))
                 job.emit("error", job.error)
             finally:
+                self.memory.job_ended()
                 if job.workflow_plan is not None:
                     self._checkpoint_workflow(job)
                 job.finished.set()
@@ -1148,6 +1198,7 @@ class Engine:
     def _run(self, job: Job) -> None:
         spec = self.registry.get(job.model_id)
         job.status = "running"
+        self._agent_returning = None  # from here the job takes memory; none of it is the agent's coming back
         started = time.monotonic()
         try:
             adapter = self.adapter(spec)
@@ -1161,6 +1212,8 @@ class Engine:
                 force=job.force,
                 skip=skip,
             )
+            self.memory.job_started(plan, spec.activation_bytes(job.request.width, job.request.height,
+                                                                len(job.request.image_paths)))
         except InsufficientMemory as exc:
             job.status = "error"
             job.error = {"code": "insufficient_memory", "message": str(exc),
@@ -1185,13 +1238,15 @@ class Engine:
                 req = run_request if i == 0 else GenRequest(**{**run_request.__dict__, "seed": run_request.seed + i})
                 gen_started = time.monotonic()
                 try:
-                    image, bad = adapter.generate(req, guard), None
-                except NonFinite as exc:
-                    image, bad = None, exc
+                    image, bad = adapter.generate(req, guard), False
+                except NonFinite:
+                    # Only the fact is kept: the exception's traceback holds the failed run's frames, and
+                    # through them its arrays, through the retry below (as with a stop, see JobAborted).
+                    image, bad = None, True
                 structured = (req.extras.get("structure") or {}).get("structured")
-                if bad is not None and not structured:
+                if bad and not structured:
                     raise JobAborted("invalid_output", "The model's numbers went invalid; try another seed.")
-                if structured and (bad is not None or _blank(image)):
+                if structured and (bad or _blank(image)):
                     # MOSS turned some of the agent's layouts into NaNs: draw it again from the plain
                     # sentence rather than hand back a black square. The loop stops at the first bad step.
                     req = self._unstructured(job, req)
@@ -1222,12 +1277,20 @@ class Engine:
                 job.result_ids.append(rid)
                 job.emit("image", {"index": i, "result_id": rid, "seed": req.seed})
         except JobAborted as exc:
-            job.status = "cancelled" if exc.code == "cancelled" else "error"
-            job.error = {"code": exc.code, "message": exc.message}
-            if exc.code == "memory_pressure" or job.task == "upscale":
+            stopped = exc.code, exc.message
+        else:
+            stopped = None
+        if stopped is not None:
+            # Handled after the except block: until it ends, the exception's traceback keeps the stopped
+            # job's frames alive, and they hold the weights. A free from inside it released 0.00 GB of
+            # 2.03 GB (FLUX.2 Klein 4B); here it releases them all.
+            code, message = stopped
+            job.status = "cancelled" if code == "cancelled" else "error"
+            job.error = {"code": code, "message": message}
+            if code == "memory_pressure" or job.task == "upscale":
                 self.memory.unload_model(spec.id)
             job.report = {**guard.report(), **rewrite, "total_seconds": round(time.monotonic() - started, 3)}
-            job.emit("cancelled" if exc.code == "cancelled" else "error", {**job.error, "report": job.report})
+            job.emit("cancelled" if code == "cancelled" else "error", {**job.error, "report": job.report})
             return
         job.report = {
             **guard.report(),
@@ -1245,23 +1308,109 @@ class Engine:
         return self.prompt_assistant or self.prompt_provider
 
     def _model_choices(self, candidates: list[str], attached: int, has_current: bool,
-                       layout: bool = False) -> dict[str, list[tuple[str, str]]]:
+                       layout: bool = False, size: tuple[int, int] = (1024, 1024)) -> dict[str, list[tuple[str, str]]]:
         """For each workflow, the downloaded image models that can run it here: (id, what the agent should
-        know about it). Experimental models are offered too; the user accepted their license on download.
-        With a layout, only models with a prompt format, and a single one is kept (it is the only choice)."""
+        know about it). Experimental models are offered too (Qwen Image 2.1, MOSS, FIBO 2, Ideogram 4):
+        the user accepted their license on download, and the agent picks by each model's note (MOSS's says
+        to use it only when the user asks). `_suits_auto` is not applied here; it only limits a swap.
+        With a layout, only models with a prompt format, and a single one is kept (it is the only choice).
+        Models the memory plan would refuse right now are left out while another one fits: a filter, not a
+        hint, since a local planner ignored "free memory" and picked Qwen Image 2.1 (9.5 GB, 7.6 GB usable)
+        over FLUX.2 Klein. A workflow left with one model is not offered (there is nothing to pick):
+        `_fitting_model` then selects it."""
         choices: dict[str, list[tuple[str, str]]] = {}
+        for operation in candidates:
+            specs = self._capable_models(operation, attached, has_current, layout)
+            fitting = [spec for spec in specs if self._fits_now(spec, operation, attached, has_current, size)]
+            for spec in fitting or specs:
+                choices.setdefault(operation, []).append((spec.id, f"{spec.name}: {spec.agent_note}".rstrip(": ")))
+        return {op: models for op, models in choices.items() if layout or len(models) > 1}
+
+    def _hint_order(self, model_ids: list[str], operation: str, layout: bool,
+                    auto_models: dict[str, str] | None) -> list[str]:
+        """The agent's choices in the order the composer's hint names them (it names two, then "or another
+        model"): the app's Auto model (else dMLX's default) first, then the ones suited to Auto, then the
+        rest (Qwen Image 2.1, MOSS), each group in registry order."""
+        default = self.registry.default_for_operation(operation, self.memory.total / GB)
+        auto = (auto_models or {}).get(operation) or (default.id if default else None)
+
+        def rank(model_id: str) -> int:
+            if model_id == auto:
+                return 0
+            return 1 if self._suits_auto(self.registry.get(model_id), layout) else 2
+
+        return sorted(model_ids, key=rank)
+
+    @staticmethod
+    def _suits_auto(spec: ModelSpec, layout: bool) -> bool:
+        """Whether Auto may run this model without the user asking for it: auto-selectable (not Qwen Image
+        2.1), and without a layout no model with a prompt format (MOSS, very slow and "only when the user
+        asks"; FIBO 2 and Ideogram 4, about five minutes and non-commercial). Only a swap keeps to it, when
+        neither the agent nor the user chose a model that fits; the agent may pick any of them by its note."""
+        return spec.auto_select and (layout or not spec.prompt_format)
+
+    def _capable_models(self, operation: str, attached: int, has_current: bool, layout: bool = False) -> list[ModelSpec]:
+        """The downloaded models that can run this workflow with these inputs on this Mac, in registry order."""
+        found = []
         for spec in self.registry.all():
             if not self.is_downloaded(spec) or spec.min_ram_gb > self.memory.total / GB + 0.5:
                 continue
             if layout and not spec.prompt_format:
                 continue
-            for operation in candidates:
-                capability = spec.capabilities.get(operation)
-                constraint = capability.inputs.get("image") if capability else None
-                count = attached if attached else (1 if has_current and constraint else 0)
-                if capability and (constraint.minimum <= count <= constraint.maximum if constraint else count == 0):
-                    choices.setdefault(operation, []).append((spec.id, f"{spec.name}: {spec.agent_note}".rstrip(": ")))
-        return {op: models for op, models in choices.items() if layout or len(models) > 1}
+            capability = spec.capabilities.get(operation)
+            constraint = capability.inputs.get("image") if capability else None
+            count = attached if attached else (1 if has_current and constraint else 0)
+            if capability and (constraint.minimum <= count <= constraint.maximum if constraint else count == 0):
+                found.append(spec)
+        return found
+
+    def _inputs_for(self, spec: ModelSpec, operation: str, attached: int, has_current: bool) -> int:
+        capability = spec.capabilities.get(operation)
+        constraint = capability.inputs.get("image") if capability else None
+        return (attached if attached else (1 if has_current else 0)) if constraint else 0
+
+    def _fits_now(self, spec: ModelSpec, operation: str, attached: int, has_current: bool,
+                  size: tuple[int, int] = (1024, 1024)) -> bool:
+        """Whether the memory plan would admit this model for a job of this size now (`size` is a new
+        image's; an edit's source is scaled to 1 MP at most, which counts as 1024x1024). The local agent's
+        weights count as free: the worker unloads it before every image job. Just after it was unloaded,
+        the memory macOS has not handed back yet counts as free too (`_agent_memory_returning`)."""
+        if operation != "image.generate":
+            size = (1024, 1024)
+        assistant = self.prompt_assistant
+        returned = (getattr(assistant, "weights_bytes", 0)
+                    if assistant is not None and getattr(assistant, "uses_accelerator", False)
+                    and getattr(assistant, "resident", False) else 0) or self._agent_memory_returning()
+        activation = spec.activation_bytes(*size, self._inputs_for(spec, operation, attached, has_current))
+        return self.memory.could_fit(spec, activation, returned)
+
+    def _fitting_model(self, decision: dict, chosen: dict[str, str], attached: int, has_current: bool,
+                       layout: bool, auto_models: dict[str, str] | None = None,
+                       size: tuple[int, int] = (1024, 1024)) -> dict:
+        """On Auto, never hand the app a model the memory plan will refuse when another one for the same
+        workflow fits. The model the app would run is the agent's pick, else the app's own Auto default
+        (`auto_models`), else dMLX's default; when it will not fit (or is unknown here while some model
+        will not fit), the decision names the lightest one suited to Auto that does (see below). That
+        also covers a workflow with a single fitting model, which the agent is not offered. A workflow
+        the user chose a model for keeps it, and when nothing fits the decision stays as it is (the job's
+        refusal then says why)."""
+        intent = decision.get("intent", "ambiguous")
+        if intent == "ambiguous" or intent in chosen:
+            return decision
+        specs = self._capable_models(intent, attached, has_current, layout)
+        fits = {spec.id: self._fits_now(spec, intent, attached, has_current, size) for spec in specs}
+        default = self.registry.default_for_operation(intent, self.memory.total / GB)
+        runs = next((model_id for model_id in (decision.get("model"), (auto_models or {}).get(intent),
+                                               default.id if default else None) if model_id in fits), None)
+        if runs is not None and fits[runs] or runs is None and all(fits.values()):
+            return decision
+        # A swap takes only a model suited to Auto (`_suits_auto`); the agent's own pick may be any it was offered.
+        fitting = [spec for spec in specs if fits[spec.id] and self._suits_auto(spec, layout)]
+        if not fitting:
+            return decision
+        best = min(fitting, key=lambda spec: spec.size)
+        log.info("Auto: %s would not fit in memory now; using %s", runs or "the app's model", best.id)
+        return {**decision, "model": best.id}
 
     def _plan(self, state: dict, candidates: list[str], wait: bool = False,
               models: dict[str, list[tuple[str, str]]] | None = None) -> tuple[dict | None, str | None]:
@@ -1281,13 +1430,15 @@ class Engine:
             else:
                 log.warning("agent planning skipped: an image is being made")
                 return None, "skipped_busy"  # the cheap path answers now
+        before = None
         try:
             # Beside a job, never free memory: the components to free would be the running job's.
             if not beside and not self.memory.make_room(self.prompt_assistant.need_bytes):
                 # Frees idle models first, but never skips the agent: planning runs even when memory is tight.
                 log.warning("agent planning with less free memory than it needs")
             workflows = {name: DEFAULT_DESCRIPTIONS.get(name, name) for name in candidates}
-            free_gb = round(max(self.memory.headroom(), 0) / GB, 1)
+            before = self.memory.headroom()
+            free_gb = round(max(before, 0) / GB, 1)
             result = agent.plan(self.prompt_assistant, state, workflows, image_path=self.results.path,
                                 models=models or None, free_gb=free_gb)
         except (IntelligenceError, KeyError, OSError) as exc:
@@ -1295,7 +1446,7 @@ class Engine:
             return None, "failed"
         finally:
             if not beside:
-                self._release_assistant()
+                self._release_assistant(before)
             if acquired:
                 self._accelerator_lock.release()
         if result is None:
@@ -1312,11 +1463,41 @@ class Engine:
             return True  # an agent on a service the user chose uses no memory on this Mac
         return self.memory.total >= 32 * GB and self.prompt_assistant.need_bytes <= self.memory.headroom()
 
-    def _release_assistant(self) -> None:
+    def _release_assistant(self, before: int | None = None) -> None:
         """Between messages the assistant stays loaded where it leaves clear room (24 GB and up), so the
-        next message is planned in seconds; the worker always unloads it before an image job."""
+        next message is planned in seconds; the worker always unloads it before an image job.
+        `before`: the headroom just before it ran, so the fit check can count the memory still coming back."""
         if self.memory.total < 24 * GB:
-            self.prompt_assistant.unload()
+            assistant = self.prompt_assistant
+            counted = (before is not None and getattr(assistant, "resident", False)
+                       and getattr(assistant, "uses_accelerator", False))
+            held = _mlx_held() if counted else 0
+            assistant.unload()
+            if counted:
+                freed = max(held - _mlx_held(), 0)
+                self._agent_returning = (before, self.memory.headroom(), freed, time.monotonic() + RECLAIM_WAIT_S)
+
+    def _agent_memory_returning(self) -> int:
+        """Bytes the just-unloaded agent has not given back yet. macOS returns them about a second after
+        the unload, so a fit check right after planning read about 3 GB too little and swapped a fitting
+        pick (test round 5 of task 17, 16 GB Mac: 7.50 GB before planning, 4.44 GB just after, 7.12 GB a
+        second later). Counted until the memory is back or a job starts, and for 10 s at most (the wait in
+        `_plan_memory`); after that, memory taken by the job or another app is not the agent's (test round 6).
+        Bounded twice so it never says more than is real: by what MLX freed at the unload less what has
+        come back since, and by how far the headroom fell since just before the agent ran. Not by the fall
+        alone: up to 0.7 GB of it never comes back (measured, fix round 7), while MLX's count matched the
+        return within 0.3 GB, under it. The job's plan stays the gate."""
+        if self._agent_returning is None:
+            return 0
+        before, after, freed, until = self._agent_returning
+        if time.monotonic() >= until:
+            self._agent_returning = None
+            return 0
+        now = self.memory.headroom()
+        credit = max(0, min(freed - max(now - after, 0), before - now))
+        if credit == 0:
+            self._agent_returning = None  # all back: what is taken from here on is not the agent's
+        return credit
 
     def _assist(self, text: str, *, operation: str, images: list[Path], supports_negative: bool, emit=None):
         """Run the assistant alone on the accelerator and release it, so it never sits beside an image model."""

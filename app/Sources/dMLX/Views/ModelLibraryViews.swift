@@ -24,9 +24,9 @@ extension ModelHints {
         case "krea-2-turbo": "Strong photographic realism. About 2.5 minutes per image."
         case "iris-3b-turbo": "Small and fast, with simpler detail than the larger models."
         case let id where id.hasPrefix("fibo"):
-            "Follows detailed descriptions and draws text well. Places things where you draw boxes (Layout). Very slow: about 8 minutes per image."
+            "Follows detailed descriptions and draws text well. Places things where you draw boxes (Layout). Very slow: about 5.5 minutes per image."
         case let id where id.hasPrefix("ideogram"):
-            "The strongest at lettering and exact placement: puts things where you draw boxes (Layout). Very slow: about 8 minutes per image."
+            "The strongest at lettering and exact placement: puts things where you draw boxes (Layout). Very slow: about 5 minutes per image."
         default: "An image model you added."
         }
     }

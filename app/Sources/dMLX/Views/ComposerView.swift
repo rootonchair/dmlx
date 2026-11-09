@@ -292,6 +292,9 @@ struct ComposerView: View {
         // The window's minimum size is measured with the composer at its narrowest. Unbounded, its chips and
         // text then wrap one word per line and the minimum height outgrows short windows, which clips the
         // whole window (the reply box falls off the bottom). The smallest window's chat column is wider than this.
+        // In a window as tall as the screen it also crashed the app on send (AppKit "more Update Constraints in
+        // Window passes than there are views", from the chat's LazyVStack prefetch): the window could not grow
+        // to the new minimum. Keep this and FlowLayout's real row widths (task 17, Bugs).
         .frame(minWidth: 300)
         .onAppear { focused = true }
         .onAppear { model.scheduleRoutePreview() }
@@ -301,6 +304,8 @@ struct ComposerView: View {
             model.scheduleRoutePreview()
         }
         .onChange(of: "\(model.generateChoice)|\(model.editChoice)") { model.scheduleRoutePreview() }
+        .onChange(of: model.pendingLayout) { model.scheduleRoutePreview() }  // a layout can change the model
+        .onChange(of: model.aspect) { model.scheduleRoutePreview() }  // the memory check counts the size
     }
 
     private func pickFiles() {

@@ -158,8 +158,14 @@ def _prompt_format(data: dict) -> str | None:
 
 
 # Catalog values that have since changed, per adapter: a spec saved with the old value (it is a snapshot
-# taken when the model was added) moves to the new one. A value the user set themselves is kept.
-_RETIRED_DEFAULTS = {"mflux.moss_image": {"steps": (50, 30)}}
+# taken when the model was added) moves to the new one. A value the user set themselves is kept, unless it
+# equals the old default: then it moves too. Left so on purpose: there is no steps setting in the app, only
+# hand-edited specs.
+_RETIRED_DEFAULTS = {
+    "mflux.moss_image": {"steps": (50, 30)},
+    "mflux.fibo2": {"steps": (30, 20)},  # task 17: same layout and lettering at 20 steps
+    "mflux.ideogram4": {"steps": (20, 12)},  # task 17: its 12-step preset kept the layout and lettering
+}
 _RETIRED_NOTES = {  # adapter -> (notes saved by earlier versions, the current note)
     "mflux.moss_image": (("New images only; very slow (about 13 minutes at 1024 px, 3 minutes at 512 px); "
                           "use only when the user asks for it.",
@@ -167,6 +173,14 @@ _RETIRED_NOTES = {  # adapter -> (notes saved by earlier versions, the current n
                           "use only when the user asks for it."),
                          "New images only; very slow (about 5 minutes at 1024 px at 30 steps, 2 minutes at 512 px); "
                          "use only when the user asks for it."),
+    "mflux.fibo2": (("New images only; about 8 minutes at 1024 px; follows detailed descriptions and draws text well; "
+                     "non-commercial license.",),
+                    "New images only; about 5.5 minutes at 1024 px; follows detailed descriptions and draws text well; "
+                    "non-commercial license."),
+    "mflux.ideogram4": (("New images only; about 8.5 minutes at 1024 px; the strongest at typography and exact "
+                         "placement; non-commercial license.",),
+                        "New images only; about 5 minutes at 1024 px; the strongest at typography and exact placement; "
+                        "non-commercial license."),
 }
 
 
