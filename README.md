@@ -196,9 +196,9 @@ You can attach a maximum of 3 images with the paper clip or with drag and drop. 
 
 ### Auto selects the model, and the engine first does a memory check
 
-For a title in the image, the agent selected Qwen Image 2.1, because this model is the best at text in images. This model needed 9.5 GB, but only 9.2 GB was available without slowing down the Mac. Thus the engine refused the job. **Try anyway** runs the job in the mode that uses the least memory. If the Mac becomes slow, the engine stops the job.
+For a title in the image, the agent selected Qwen Image 2.1, because this model is the best at text in images. This model needed 9.5 GB, but only 6.2 GB was available without slowing down the Mac. Thus the engine refused the job. **Try anyway** runs the job in the mode that uses the least memory. If the Mac becomes slow, the engine stops the job.
 
-<img src="docs/screenshots/memory-check.jpg" width="640" alt="The message 'write the title NIGHT BLADE in the banner at the top' gives Image 2 with Qwen Image 2.1 Base Q4 and this text: 'needs about 9.5 GB but only 9.2 GB can be used without slowing down your Mac'. Retry and Try anyway show below the text.">
+<img src="docs/screenshots/memory-check.jpg" width="640" alt="The message 'write the title NIGHT BLADE in the banner at the top' gives Image 2 with Qwen Image 2.1 Base Q4 and this text: 'needs about 9.5 GB but only 6.2 GB can be used without slowing down your Mac. Close some apps, or choose a lighter model.' Retry and Try anyway show below the text.">
 
 ### Add models
 
@@ -210,7 +210,7 @@ Use the search field to find community versions of the supported families. You c
 
 You can see the installed models, remove models, and set the default model. If you set Auto, the agent selects the model.
 
-<img src="docs/screenshots/settings-models.jpg" width="480" alt="Settings, Models. FLUX.2 Klein 4B, Qwen Image 2.1 Base Q4 and Z-Image Turbo are downloaded, each with Remove. The default model is Auto. The window also shows Add Model.">
+<img src="docs/screenshots/settings-models.jpg" width="480" alt="Settings, Models. New images and Edits are both set to Auto (FLUX.2 Klein 4B). Under Your Models, with Add Model: FLUX.2 Klein 4B (4.6 GB), Qwen Image 2.1 Base (7.6 GB) and Z-Image Turbo (5.9 GB) are downloaded, each with Remove.">
 
 ## The agent
 

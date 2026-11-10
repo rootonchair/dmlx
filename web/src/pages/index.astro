@@ -178,12 +178,12 @@ const examples = [
       </div>
       <a class="more" href="/docs/memory/">How dMLX controls memory →</a>
     </div>
-    <div class="gauge" role="img" aria-label="Memory check: Qwen Image 2.1 needs 9.5 GB, but 9.2 GB is free without slowing the Mac, so the job does not start.">
+    <div class="gauge" role="img" aria-label="Memory check: Qwen Image 2.1 needs 9.5 GB, but 6.2 GB is free without slowing the Mac, so the job does not start.">
       <div class="gauge-row"><span>Memory check · Qwen Image 2.1</span><span>M5 Mac, 24 GB</span></div>
       <div class="bar"><div class="used"></div><div class="free"></div><div class="need"></div></div>
-      <div class="legend"><span class="k-used">In use</span><span class="k-free">Free without slowing: 9.2 GB</span><span class="k-need">Model needs: 9.5 GB</span><span class="k-short">Short by 0.3 GB</span></div>
+      <div class="legend"><span class="k-used">In use</span><span class="k-free">Free without slowing: 6.2 GB</span><span class="k-need">Model needs: 9.5 GB</span><span class="k-short">Short by 3.3 GB</span></div>
       <p class="verdict">dMLX doesn't start the job. Choose <b>Retry</b>, or <b>Try anyway</b>, which uses the mode with the least memory and stops if the Mac slows down.</p>
-      <Image src={shot('memory-check')} widths={[600, 1000]} sizes="(max-width: 860px) 100vw, 520px" alt="The app explains that the model needs about 9.5 GB but only 9.2 GB can be used without slowing down the Mac, with Retry and Try anyway." />
+      <Image src={shot('memory-check')} widths={[600, 1000]} sizes="(max-width: 860px) 100vw, 520px" alt="The app explains that the model needs about 9.5 GB but only 6.2 GB can be used without slowing down the Mac, with Retry and Try anyway." />
     </div>
   </div>
 </section>
@@ -473,11 +473,11 @@ a:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outlin
 @media (max-width: 860px) { .mem { grid-template-columns: 1fr } }
 .gauge { background: var(--raise); border: 1px solid var(--line); border-radius: 12px; padding: 22px; display: grid; gap: 14px; font-variant-numeric: tabular-nums }
 .gauge-row { display: flex; justify-content: space-between; font: .85rem var(--mono); color: var(--muted); gap: 12px; flex-wrap: wrap }
-.bar { position: relative; height: 34px; margin-right: 6%; border-radius: 8px; background: var(--surface); border: 1px solid var(--line) }
+.bar { position: relative; height: 34px; margin-right: 15%; border-radius: 8px; background: var(--surface); border: 1px solid var(--line) }
 .bar .used { border-radius: 7px 0 0 7px }
-.bar .used { position: absolute; inset: 0 auto 0 0; width: 61.7%; background: color-mix(in srgb, var(--hill) 55%, var(--surface)) }
-.bar .free { position: absolute; inset: 0 auto 0 61.7%; width: 38.3%; background: repeating-linear-gradient(135deg, transparent 0 6px, color-mix(in srgb, var(--accent) 22%, transparent) 6px 12px) }
-.bar .need { position: absolute; top: -1px; bottom: -1px; left: 61.7%; width: 39.6%; border: 2px dashed var(--accent); border-radius: 0 8px 8px 0 }
+.bar .used { position: absolute; inset: 0 auto 0 0; width: 74.2%; background: color-mix(in srgb, var(--hill) 55%, var(--surface)) }
+.bar .free { position: absolute; inset: 0 auto 0 74.2%; width: 25.8%; background: repeating-linear-gradient(135deg, transparent 0 6px, color-mix(in srgb, var(--accent) 22%, transparent) 6px 12px) }
+.bar .need { position: absolute; top: -1px; bottom: -1px; left: 74.2%; width: 39.6%; border: 2px dashed var(--accent); border-radius: 0 8px 8px 0 }
 .legend { display: flex; flex-wrap: wrap; gap: 8px 18px; font-size: .85rem; color: var(--muted) }
 .legend span::before { content: ''; display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 7px; vertical-align: -1px }
 .k-used::before { background: color-mix(in srgb, var(--hill) 55%, var(--surface)) }

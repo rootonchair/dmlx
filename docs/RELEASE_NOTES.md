@@ -1,3 +1,46 @@
+# dMLX v0.1.0-beta5
+
+Layout for posters and banners, the agent anywhere you like, and a long list of fixes.
+
+## Highlights
+
+- **Layout.** MOSS Image, FIBO 2 and Ideogram 4 can be added from Settings → Models. The agent writes each
+  model's detailed caption for you (you never see JSON). In **Crop / Draw → Layout** you draw, move and
+  describe boxes, then **Redraw with layout** puts the title, date or logo where you placed it.
+- **Choose where the agent runs.** At setup, or later from **dMLX → Choose Models…**: on this Mac, or
+  Claude, ChatGPT, Ollama or any OpenAI-compatible service. Keys stay in the Keychain.
+- **FLUX.2 Klein 9B** as a built-in model, for new images and edits with up to 3 images.
+- **Auto picks by strengths.** Photos go to Z-Image and words in images to Qwen Image when they are
+  downloaded, and Auto never picks a model that will not fit in memory when another one would. The hint
+  in the message box names the model that will run and about how much memory it needs.
+- **Stop frees memory.** A stopped image frees the model's memory, and the next image no longer runs
+  slowly because the old model is still loaded.
+- **Downloads you can stop and resume.** Cancel a download, quit, and pick it up later from where it
+  stopped. Each file is checked when it finishes, leftover files are cleaned up, and Qwen Image 2.1
+  downloads all its parts up front. Sizes are shown in GB.
+- **Models in dMLX's own folder**, and **Uninstall dMLX…** removes every model, chat and setting.
+- **Attaching images.** iPhone photos (HEIC) attach, files dropped on the message box attach, a message
+  sent while an image uploads waits for it, and files that are not images get a clear message.
+- **Fixes.** Quit works while a setup sheet is open, and asks first during a download. The setup sheet
+  fits above the Dock. No more clipped or hidden controls in short windows. Fewer steps for FIBO 2 and
+  Ideogram 4 (about 3 minutes faster per poster). An image no longer stops while the Mac is only reading
+  apps back from swap.
+
+## Requirements
+
+Apple Silicon, macOS 15+, 16 GB memory or more. About 7–11 GB of disk for the image model and the agent.
+
+## Install
+
+Open the `.dmg` and drag dMLX onto the Applications folder (a `.zip` of the same app is also attached), then
+right-click → Open the first time (beta builds are not notarized). The first-run setup downloads the models.
+
+## Known issues
+
+See [Known issues](KNOWN_ISSUES.md).
+
+---
+
 # dMLX v0.1.0-beta4
 
 A guide for new users.
