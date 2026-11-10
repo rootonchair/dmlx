@@ -449,9 +449,9 @@ a:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outlin
 .examples { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px }
 @media (max-width: 400px) { .examples { grid-template-columns: 1fr } }
 .ex { margin: 0; background: var(--raise); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; display: grid; grid-template-rows: auto 1fr }
-/* The whole screenshot (a poster's title and the version buttons sit at the bottom), on the app's own
-   dark background so the space beside a tall or wide shot reads as part of it. */
-.ex > img { width: 100%; aspect-ratio: 4/3; object-fit: contain; background: #1e1e1e }
+/* The whole screenshot at the card's full width, in its own shape (a poster's title and the version
+   buttons sit at the bottom), so cards in a row can differ in height. */
+.ex > img { width: 100%; height: auto; display: block; background: #1e1e1e }
 /* Two square crops side by side: 2/1 keeps each half square, so nothing is cut off (at 4/3 the removed mug was). */
 .pair { display: grid; grid-template-columns: 1fr 1fr; gap: 2px; aspect-ratio: 2/1; background: var(--line) }
 .pair > div { position: relative; overflow: hidden }
