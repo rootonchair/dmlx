@@ -18,4 +18,14 @@ for name, (before, after) in tops.items():
     for label, top in (('before', before), ('after', after)):
         box = (10 + inset, top + inset, 10 + side - inset, top + side - inset)
         shot.crop(box).save(out / f'{name}-{label}.jpg', quality=92)
+# The single-image cards: just the picture, so it fills the card (the chat around it made it tiny).
+# Boxes are (left, top, right, bottom) in the screenshot; versions keeps its v1/v2 button row.
+pictures = {
+    'use-poster': (10, 114, 422, 717),
+    'use-banner': (9, 113, 425, 397),
+    'versions': (13, 42, 584, 658),
+}
+for name, (l, t, r, b) in pictures.items():
+    shot = Image.open(root / 'docs/screenshots' / f'{name}.jpg').convert('RGB')
+    shot.crop((l + 3, t + 3, r - 3, b - 3)).save(out / f'{name}-image.jpg', quality=92)
 print('wrote', out)
