@@ -28,7 +28,7 @@ struct RootView: View {
                     .padding(.horizontal, 14)
                     .padding(.vertical, 8)
                     .background(.regularMaterial, in: Capsule())
-                    .padding(.bottom, 110)
+                    .padding(.bottom, model.composerHeight + 6)
                     .transition(.opacity)
                     .accessibilityAddTraits(.updatesFrequently)
             }

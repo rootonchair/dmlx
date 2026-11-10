@@ -172,6 +172,23 @@ public struct EngineModel: Codable, Identifiable, Hashable, Sendable {
     public var aliases: [String]?
     /// The structured caption the model wants (task 17); set for models that can take a layout.
     public var prompt_format: String?
+    /// Bytes already on disk from a download that stopped part way (0 or missing when none); a new pull
+    /// resumes from them (task 19, Download API).
+    public var partial_bytes: Int?
+    /// The peak memory the model's default plan needs at the default size, in the unit of the engine's
+    /// memory refusals; nil when the engine doesn't know (task 19). Not the download size.
+    public var memory_gb: Double?
+
+    public var partialBytes: Int { partial_bytes ?? 0 }
+    /// The download size in bytes: the download's exact total when the engine knows it, else the listed size.
+    public var sizeBytes: Int? {
+        if download.total_bytes > 0 { return download.total_bytes }
+        if let gb = size_gb, gb > 0 { return Int(gb * 1e9) }
+        return nil
+    }
+    public var isDownloading: Bool { download.status == "downloading" }
+    /// A download stopped part way (cancelled, or the app quit): the card offers to resume it.
+    public var hasPartialDownload: Bool { !downloaded && !isDownloading && partialBytes > 0 }
 
     public func supports(_ task: GenTask) -> Bool { tasks.contains(task.rawValue) }
     /// Ideogram 4, FIBO and MOSS Image place things from boxes; other models get no Layout tool.

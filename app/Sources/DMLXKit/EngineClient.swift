@@ -272,6 +272,13 @@ public final class EngineClient: @unchecked Sendable {
         _ = try await send(try request("admin/models/\(model)/pull", method: "POST", json: [:]), as: Ack.self)
     }
 
+    /// Stops a running download and keeps its files, so the next pull resumes (task 19, Download API).
+    /// The engine answers 404 when no download is running.
+    public func cancelPull(model: String) async throws {
+        struct Ack: Decodable { var cancelled: Bool }
+        _ = try await send(try request("admin/models/\(model)/pull", method: "DELETE"), as: Ack.self)
+    }
+
     public func catalogSuggestions() async throws -> [CatalogSuggestion] {
         struct List: Decodable { var data: [CatalogSuggestion] }
         return try await send(try request("admin/catalog/suggestions"), as: List.self).data
@@ -308,10 +315,12 @@ public final class EngineClient: @unchecked Sendable {
         _ = try await send(try request("v1/jobs/\(job)", method: "DELETE"), as: Ack.self)
     }
 
-    public func upload(file: URL) async throws -> String {
+    /// `timeout`: how long the engine may take to answer (an upload is local; a hung engine must not hold it).
+    public func upload(file: URL, timeout: TimeInterval? = nil) async throws -> String {
         struct Ack: Decodable { var id: String }
         let boundary = "dmlx-\(UUID().uuidString)"
         var req = try request("v1/uploads", method: "POST")
+        if let timeout { req.timeoutInterval = timeout }
         req.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
         var body = Data()
         body.append(Data("--\(boundary)\r\nContent-Disposition: form-data; name=\"file\"; filename=\"\(file.lastPathComponent)\"\r\nContent-Type: application/octet-stream\r\n\r\n".utf8))

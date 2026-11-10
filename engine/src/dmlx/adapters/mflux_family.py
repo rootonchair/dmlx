@@ -22,6 +22,7 @@ from __future__ import annotations
 import importlib
 import inspect
 from collections import OrderedDict
+from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -445,6 +446,34 @@ class MfluxFamilyAdapter(_MfluxAdapterBase):
         return pipe.generate_image(**kwargs).image
 
 
+@contextmanager
+def _local_zen_image_edit():
+    """mflux's small text encoder reads AiArtLab/zen-image-edit from the copy dMLX downloaded with the model,
+    and never downloads it in a job (task 19: mflux fetched its 2.1 GB itself, with hf_xet, in the first job;
+    not resumable, not cancellable, not in the progress)."""
+    from mflux.models.qwen21.model.qwen21_small_text_encoder.zen_image_edit_weights import ZenImageEditWeights
+
+    from dmlx import downloads
+
+    extra = downloads.ZEN_IMAGE_EDIT
+    root = downloads.extra_path(extra)
+    if root is None:
+        raise RuntimeError("Qwen Image 2.1's text encoder is not downloaded. Download the model again in the "
+                           "Model Library; it continues from where it stopped.")
+
+    def never(*_args, **_kwargs):
+        raise RuntimeError("Qwen Image 2.1's text encoder is not downloaded. Download the model again in the "
+                           "Model Library; it continues from where it stopped.")
+
+    saved = ZenImageEditWeights.__dict__["snapshot"], ZenImageEditWeights.__dict__["_extract"]
+    ZenImageEditWeights.snapshot = staticmethod(lambda: root)
+    ZenImageEditWeights._extract = staticmethod(never)
+    try:
+        yield root
+    finally:
+        ZenImageEditWeights.snapshot, ZenImageEditWeights._extract = saved
+
+
 class QwenImage21Adapter(MfluxFamilyAdapter):
     """Qwen Image 2.1: one unified pipeline for new images and ordered reference edits.
 
@@ -484,6 +513,11 @@ class QwenImage21Adapter(MfluxFamilyAdapter):
         pipe.lora_scales = None
         pipe.compute_precision = ComputePrecision(None)
 
+    def has_embedding(self, prompt: str) -> bool:
+        # The pipeline needs the processor, which comes with the text encoder, even for a cached prompt
+        # (generate enters the encode phase every time), so the plan must always count the encoder.
+        return False
+
     def load_component(self, name: str) -> int:
         if name != "text_encoder":
             return super().load_component(name)
@@ -495,7 +529,8 @@ class QwenImage21Adapter(MfluxFamilyAdapter):
             if self.is_loaded(name):
                 return _module_bytes(self._modules[name])
             self.free_component(name)
-            encoder, processor = Qwen21SmallTextEncoder.load()
+            with _local_zen_image_edit():
+                encoder, processor = Qwen21SmallTextEncoder.load()
             mx.eval(encoder.parameters())
             self._install(name, encoder)
             for pipe in self.pipes.values():

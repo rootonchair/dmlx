@@ -22,3 +22,4 @@ One file per task; update its **Status** line as work lands.
 | 16 | [dMLX as a tool server for other local agents](16-tool-server-for-other-agents.md) | Open |
 | 17 | [Structured JSON prompts (FIBO, Ideogram 4, MOSS Image)](17-structured-json-prompts.md) | Done: MOSS Image, FIBO 2, Ideogram 4; layouts, Auto memory fit, tested in 7 rounds, all fixes in; edits keeping boxes are task 18 |
 | 18 | [Layout: next features](18-layout-features.md) | Open: moving a box in words, edits that keep the caption, FIBO Edit |
+| 19 | [Fixes from the smoke test](19-smoke-test-fixes.md) | Done: Stop frees memory, resumable downloads, HEIC, first-run sheet, texts; tested in 7 rounds |

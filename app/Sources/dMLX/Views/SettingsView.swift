@@ -104,6 +104,7 @@ struct PromptAssistantRow: View {
             do {
                 guard let client = app.client else { return }
                 status = try await client.pullPromptAssistant(model: id)
+                app.noteAgentDownload(status)
                 error = nil
             } catch {
                 self.error = error.localizedDescription
@@ -122,6 +123,7 @@ struct PromptAssistantRow: View {
                 }
                 status = next
                 app.promptAssistantInstalled = next.installed
+                app.noteAgentDownload(next)
                 error = nil
             } catch {
                 self.error = error.localizedDescription

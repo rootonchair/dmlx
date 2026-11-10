@@ -196,7 +196,10 @@ struct VariantLine: View {
                 }
             }
             Spacer(minLength: 8)
-            Text(sizeText).font(.callout).monospacedDigit().foregroundStyle(.secondary)
+            // While downloading, or part way, the progress or Resume button says the size.
+            if !model.isDownloading && !model.hasPartialDownload {
+                Text(sizeText).font(.callout).monospacedDigit().foregroundStyle(.secondary)
+            }
             actions
         }
         .accessibilityElement(children: .contain)
@@ -226,17 +229,25 @@ struct VariantLine: View {
                     .controlSize(.small)
                     .accessibilityLabel("Remove \(title)")
             }
-        } else if model.download.status == "downloading" {
-            VStack(alignment: .trailing, spacing: 3) {
-                ProgressView(value: model.download.progress).frame(width: 110).controlSize(.small)
-                Text(String(format: "%.1f of %.1f GB", Double(model.download.done_bytes) / 1e9, Double(model.download.total_bytes) / 1e9))
-                    .font(.caption2).monospacedDigit().foregroundStyle(.secondary)
+        } else if model.isDownloading {
+            HStack(spacing: 8) {
+                VStack(alignment: .trailing, spacing: 3) {
+                    ProgressView(value: model.download.progress).frame(width: 110).controlSize(.small)
+                    Text(DiskSize.progress(done: model.download.done_bytes, total: model.download.total_bytes))
+                        .font(.caption2).monospacedDigit().foregroundStyle(.secondary)
+                }
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("Downloading, \(Int(model.download.progress * 100)) percent")
+                // The files so far stay: Download resumes from them (task 19).
+                Button("Cancel") { app.cancelDownload(model) }
+                    .controlSize(.small)
+                    .help("Stop the download. It resumes where it stopped next time.")
+                    .accessibilityLabel("Cancel download of \(title)")
             }
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel("Downloading, \(Int(model.download.progress * 100)) percent")
         } else {
             HStack(spacing: 6) {
-                Button("Download") {
+                Button(model.hasPartialDownload
+                       ? DiskSize.resumeLabel(partialBytes: model.partialBytes, totalBytes: model.sizeBytes) : "Download") {
                     if model.requiresLicenseAcceptance && !ModelLicenseAcceptance.hasAccepted(model) {
                         showLicense = true
                     } else {
@@ -245,9 +256,17 @@ struct VariantLine: View {
                 }
                 .controlSize(.small)
                 .disabled(!app.isEngineRunning)
-                .accessibilityLabel("Download \(title)")
+                .accessibilityLabel(model.hasPartialDownload ? "Resume download of \(title)" : "Download \(title)")
+                if model.hasPartialDownload && !model.isUserAdded {
+                    // The part downloaded so far (Remove deletes it; an added model's button below does too).
+                    Button { app.remove(model) } label: { Image(systemName: "trash") }
+                        .buttonStyle(.borderless)
+                        .foregroundStyle(.secondary)
+                        .help("Delete the \(DiskSize.amount(bytes: model.partialBytes)) downloaded so far")
+                        .accessibilityLabel("Delete the partial download of \(title)")
+                }
                 if model.isUserAdded {
-                    // Not downloaded, so nothing to delete: only take it off the list.
+                    // Not downloaded: take it off the list (with any part downloaded so far).
                     Button { app.remove(model) } label: { Image(systemName: "xmark.circle.fill") }
                         .buttonStyle(.borderless)
                         .foregroundStyle(.secondary)
@@ -261,7 +280,7 @@ struct VariantLine: View {
     private var removeTitle: String { model.isUserAdded ? "Remove \(title)?" : "Delete the files of \(title)?" }
 
     private var removeMessage: String {
-        let files = "This deletes \(sizeText) from the Hugging Face cache on this Mac. Other apps that use the same model would need to download it again."
+        let files = "This deletes \(sizeText) from dMLX's models folder on this Mac."
         return model.isUserAdded ? files : files + " It stays in the list, and you can download it again anytime."
     }
 

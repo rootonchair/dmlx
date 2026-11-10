@@ -69,6 +69,8 @@ struct ChatView: View {
                 .background(.background)
                 .fixedSize(horizontal: false, vertical: true)
                 .layoutPriority(1)
+                // The toast sits just above the composer, so it never covers the attachments (task 19).
+                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { model.composerHeight = $0 }
         }
         .navigationTitle(model.sessions.first(where: { $0.id == model.currentSessionId })?.title ?? "New creation")
         .sheet(isPresented: Binding(

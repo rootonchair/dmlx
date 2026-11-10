@@ -17,6 +17,7 @@ capabilities:
     prompt: { positive: true, negative: false }
 # Download size (GiB) of the repo files, shown before the model is downloaded.
 download_gb: 4.3
+download_bytes: 4619704206  # exact, from Hugging Face (decimal GB shown)
 min_ram_gb: 16
 components:
   text_encoder: { phase: encode, share_key: qwen3-4b-q4, stream: [layers] }

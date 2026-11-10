@@ -14,13 +14,29 @@ struct OnboardingView: View {
             case .setup: OnboardingSetup(back: { app.onboardingStep = .welcome }, finish: finish)
             }
         }
-        .padding(28)
+        .padding(Self.padding)
         .frame(width: 600)
     }
+
+    static let padding: CGFloat = 28
 
     private func finish() {
         UserDefaults.standard.set(true, forKey: AppModel.onboardingCompletedKey)
         dismiss()
+    }
+}
+
+/// The room for a sheet on the main window: from below its title bar down to the visible screen's bottom
+/// (above the Dock), where a sheet that hangs lower would hide its buttons (task 19).
+@MainActor
+enum SheetRoom {
+    static func current() -> CGFloat {
+        let parent = NSApp.windows.first { $0.attachedSheet != nil && !$0.isSheet }
+            ?? NSApp.mainWindow.flatMap { $0.isSheet ? $0.sheetParent : $0 }
+            ?? NSApp.windows.first { $0.isVisible && !$0.isSheet && $0.frame.width > 300 }
+        guard let parent, let screen = parent.screen ?? NSScreen.main else { return 700 }
+        return SheetFit.maxSheetHeight(contentTop: parent.frame.minY + parent.contentLayoutRect.maxY,
+                                       visibleBottom: screen.visibleFrame.minY)
     }
 }
 
@@ -167,27 +183,40 @@ private struct OnboardingSetup: View {
     private var choicesLocked: Bool { started && downloading }
 
     @State private var choicesHeight: CGFloat = 480
-    /// Room for the choices: the screen, less the title, the footer and the sheet's margins.
-    private var maxChoicesHeight: CGFloat { max(300, (NSScreen.main?.visibleFrame.height ?? 800) - 320) }
+    /// The parts above and below the scrolling choices, which always stay in view.
+    @State private var headerHeight: CGFloat = 70
+    @State private var footerHeight: CGFloat = 60
+    private static let spacing: CGFloat = 22
+    /// How tall the sheet can be below the window's title bar, above the Dock (task 19).
+    @State private var room: CGFloat = SheetRoom.current()
+    /// Room for the choices: the sheet's room less its margins and fixed parts. Back, Set Up Later and
+    /// Download stay in view; the choices scroll.
+    private var choicesFrameHeight: CGFloat {
+        SheetFit.choicesHeight(wanted: choicesHeight, maxSheet: room - 2 * OnboardingView.padding,
+                               fixed: headerHeight + footerHeight + 2 * Self.spacing)
+    }
 
     var body: some View {
         let mac = ThisMac(app)
         let enoughSpace = mac.freeGB.map { $0 > downloadGB + 2 } ?? true
-        VStack(alignment: .leading, spacing: 22) {
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Choose your models")
-                    .font(.system(size: 26, weight: .regular, design: .serif))
-                Text("We picked what suits this Mac. You can change both later in Settings.")
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
+        VStack(alignment: .leading, spacing: Self.spacing) {
+            VStack(alignment: .leading, spacing: Self.spacing) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Choose your models")
+                        .font(.system(size: 26, weight: .regular, design: .serif))
+                    Text("We picked what suits this Mac. You can change both later in Settings.")
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
 
-            if !app.isEngineRunning || app.models.isEmpty {
-                HStack {
-                    ProgressView().controlSize(.small)
-                    Text(app.engineStatusText).foregroundStyle(.secondary)
+                if !app.isEngineRunning || app.models.isEmpty {
+                    HStack {
+                        ProgressView().controlSize(.small)
+                        Text(app.engineStatusText).foregroundStyle(.secondary)
+                    }
                 }
             }
+            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { headerHeight = $0 }
 
             // The choices scroll only when the sheet would not fit the screen (a 13-inch Mac, more models).
             ScrollView {
@@ -260,10 +289,15 @@ private struct OnboardingSetup: View {
                 .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { choicesHeight = $0 }
             }
             .scrollBounceBehavior(.basedOnSize)
-            .frame(height: min(choicesHeight, maxChoicesHeight))
+            .frame(height: choicesFrameHeight)
 
             footer(mac: mac, enoughSpace: enoughSpace)
+                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { footerHeight = $0 }
         }
+        .onAppear { room = SheetRoom.current() }
+        // The window moved or changed size: the sheet keeps ending above the Dock.
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didResizeNotification)) { _ in room = SheetRoom.current() }
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didMoveNotification)) { _ in room = SheetRoom.current() }
         .task { await pollAgent() }
         .onAppear { restoreChoice() }
         // Dev harness: the main button (Download, or Start Creating), and filling in an agent service.
@@ -312,6 +346,7 @@ private struct OnboardingSetup: View {
                 Text(spaceLine(mac: mac, enoughSpace: enoughSpace))
                     .font(.callout)
                     .foregroundStyle(enoughSpace ? Color.secondary : Color.red)
+                    .fixedSize(horizontal: false, vertical: true)
             } else if downloading {
                 Text(imageReady
                      ? "The image model is ready. You can start now; the agent keeps downloading."
@@ -345,7 +380,7 @@ private struct OnboardingSetup: View {
     private func spaceLine(mac: ThisMac, enoughSpace: Bool) -> String {
         guard let free = mac.freeGB else { return "Total download: \(gb(downloadGB))." }
         let base = "Total download: \(gb(downloadGB)). This Mac has \(Int(free)) GB free."
-        return enoughSpace ? base + " Models are saved in your Hugging Face cache." : base + " Free up some space, or pick smaller models."
+        return enoughSpace ? base + " Models are saved in dMLX's models folder." : base + " Free up some space, or pick smaller models."
     }
 
     /// With an AI service chosen, check it first (one small request): a wrong key or address shows here.
@@ -413,6 +448,7 @@ private struct OnboardingSetup: View {
                     next = try await client.pullPromptAssistant(model: target)
                 }
                 agent = next
+                app.noteAgentDownload(next)
             } catch {
                 self.error = "The agent could not start downloading: \(error.localizedDescription)"
             }

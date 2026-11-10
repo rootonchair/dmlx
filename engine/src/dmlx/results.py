@@ -49,6 +49,11 @@ class ResultStore:
 
     def save_upload(self, data: bytes) -> str:
         """Store an uploaded source/reference image as a result so later turns can reference it."""
+        return self.save_upload_image(self.decode_upload(data))
+
+    @staticmethod
+    def decode_upload(data: bytes) -> Image.Image:
+        """The uploaded image, upright and in RGB(A). Raises Pillow's errors when it is not an image."""
         import io
         from PIL import ImageOps
 
@@ -57,6 +62,9 @@ class ResultStore:
         image = ImageOps.exif_transpose(image)
         if image.mode not in ("RGB", "RGBA"):
             image = image.convert("RGB")
+        return image
+
+    def save_upload_image(self, image: Image.Image) -> str:
         return self.save(image, {"kind": "upload"}, self.new_id("up"))
 
     def meta(self, result_id: str) -> dict:

@@ -81,6 +81,57 @@ def test_upload_normalizes_exif_orientation(make_engine, client_for):
         assert stored.getexif().get(274) is None
 
 
+def test_files_that_are_not_images_get_a_clear_415(make_engine, client_for, caplog):
+    """Task 19: a .txt, a corrupt .png or a HEIC photo got HTTP 500 and a traceback."""
+    import logging
+
+    client = client_for(make_engine())
+    heic = b"\x00\x00\x00\x18ftypheic\x00\x00\x00\x00mif1heic" + b"\x00" * 64
+    cases = [
+        ("notes.txt", b"just some words", "notes.txt is not an image dMLX can open"),
+        ("fake.png", b"\x89PNG\r\n\x1a\nbroken", "fake.png is not an image dMLX can open"),
+        ("IMG_0001.HEIC", heic, "IMG_0001.HEIC is a HEIC photo"),
+        ("photo", heic, "photo is a HEIC photo"),  # found by its bytes, not its name
+    ]
+    with caplog.at_level(logging.INFO):
+        for name, data, message in cases:
+            res = client.post("/v1/uploads", files={"file": (name, data, "application/octet-stream")})
+            assert res.status_code == 415, res.text
+            error = res.json()["error"]
+            assert error["code"] == "unsupported_image" and error["message"].startswith(message)
+        res = client.post("/v1/images/edits", data={"model": "fake-a", "prompt": "make it red"},
+                          files={"image": ("notes.txt", b"words", "text/plain")})
+        assert res.status_code == 415 and "notes.txt" in res.json()["error"]["message"]
+    assert not [r for r in caplog.records if r.levelno >= logging.ERROR or r.exc_info]
+
+
+def test_an_upload_that_cannot_be_saved_is_not_called_not_an_image(make_engine, client_for, monkeypatch):
+    """Test round 1 of task 19: a full disk while saving the upload answered 415 "photo.png is not an image"."""
+    import errno
+    import io
+
+    from PIL import Image
+
+    engine = make_engine()
+    client = client_for(engine)
+    png = io.BytesIO()
+    Image.new("RGB", (8, 8), "red").save(png, format="PNG")
+
+    def full(_image):
+        raise OSError(errno.ENOSPC, "No space left on device")
+
+    monkeypatch.setattr(engine.results, "save_upload_image", full)
+    res = client.post("/v1/uploads", files={"file": ("photo.png", png.getvalue(), "image/png")})
+    assert res.status_code == 507
+    assert res.json()["error"] == {"code": "upload_failed", "message": "Couldn't save photo.png: the disk is full."}
+
+
+def test_unknown_model_message_has_no_stray_quotes(make_engine, client_for):
+    client = client_for(make_engine())
+    message = client.delete("/admin/models/nope/pull").json()["error"]["message"]
+    assert message.startswith("Unknown model 'nope'. Known: ")
+
+
 def test_sse_event_sequence(make_engine, client_for):
     client = client_for(make_engine())
     with client.stream("POST", "/v1/images/generations",
@@ -197,6 +248,59 @@ def test_pinned_model_is_not_evicted(make_engine, client_for):
     assert res.status_code == 507  # would need fake-a's memory, but it is pinned
     assert {r["component"] for r in engine.memory.resident_components() if r["model"] == "fake-a"} == {
         "text_encoder", "transformer", "vae"}
+
+
+class _HeldInDenoise(FakeAdapter):
+    """Model "a" stops inside its denoise until the test lets it go."""
+    inside = threading.Event()
+    gate = threading.Event()
+
+    def generate(self, req, hooks):
+        if self.spec.id == "a":
+            hooks.before_phase("encode")
+            hooks.after_phase("encode")
+            hooks.before_phase("denoise")
+            type(self).inside.set()
+            type(self).gate.wait(10)
+        return super().generate(req, hooks)
+
+
+def test_a_load_during_a_job_is_refused(make_engine, client_for):
+    """POST /admin/models/{id}/load during a job answers 409 job_running and touches nothing. Round 5 of task 19:
+    it freed the running job's parts; round 6: planned beside the job, it took the working memory the job had
+    planned for itself (5.38 + 3.73 GB against 7.94 GB of room)."""
+    engine = make_engine([fake_spec("a"), fake_spec("b", tasks=("t2i",))], headroom_gb=None)
+    total = {"gb": 7.0}
+    engine.memory.headroom = lambda: int(total["gb"] * GB - engine.memory.resident_bytes())
+    engine._adapter_factory = _HeldInDenoise
+    _HeldInDenoise.inside.clear()
+    _HeldInDenoise.gate.clear()
+    client = client_for(engine)
+
+    def parts(model):
+        return {r["component"] for r in engine.memory.resident_components() if r["model"] == model}
+
+    job = engine.submit(task="t2i", prompt="x", model="a", strategy="eager")
+    try:
+        assert _HeldInDenoise.inside.wait(10)
+        assert parts("a") == {"text_encoder", "transformer", "vae"}
+        # b would fit in the room left now, but not beside a's working memory: refused, nothing loaded.
+        res = client.post("/admin/models/b/load", json={"pin": True})
+        assert res.status_code == 409, res.text
+        assert res.json()["error"] == {"code": "job_running",
+                                       "message": "dMLX is busy with a job or the assistant; load the model after it finishes."}
+        assert parts("a") == {"text_encoder", "transformer", "vae"}
+        assert parts("b") == set()
+        assert not engine.memory.is_pinned("b")
+    finally:
+        _HeldInDenoise.gate.set()
+        job.finished.wait(10)
+    assert job.status == "done"
+    # Once the job ends, the load runs, and may evict a's idle parts.
+    res = client.post("/admin/models/b/load", json={})
+    assert res.status_code == 200, res.text
+    assert res.json()["strategy"] == "eager"
+    assert parts("a") != {"text_encoder", "transformer", "vae"}
 
 
 def test_auth_token(make_engine, client_for):
@@ -429,7 +533,7 @@ def test_add_and_remove_a_model(make_engine, monkeypatch, tmp_path):
     assert (tmp_path / "models" / f"{added['id']}.yaml").exists()
     assert engine.add_model("someone/flux2-klein-9b-mflux-q4", download=False)["id"] == added["id"]  # no duplicate
     assert engine.inspect_model("x")["already_added"] == added["id"]
-    monkeypatch.setattr(downloads, "delete_local", lambda spec: 0)
+    monkeypatch.setattr(downloads, "delete_local", lambda spec, keep_repos=(): 0)
     assert engine.remove_model(added["id"])["removed"]
     assert added["id"] not in engine.registry
     assert not (tmp_path / "models" / f"{added['id']}.yaml").exists()
@@ -458,6 +562,6 @@ def test_builtin_models_keep_their_entry_and_busy_models_are_protected(make_engi
     finally:
         FakeAdapter.step_delay = 0.0
     deleted = []
-    monkeypatch.setattr(downloads, "delete_local", lambda spec: deleted.append(spec.id) or 2 * GB)
-    assert engine.delete_model_files("fake-a")["freed_gb"] == 2.0 and deleted == ["fake-a"]
+    monkeypatch.setattr(downloads, "delete_local", lambda spec, keep_repos=(): deleted.append(spec.id) or 2 * GB)
+    assert engine.delete_model_files("fake-a")["freed_gb"] == 2.15  # 2 GiB in decimal GB and deleted == ["fake-a"]
     assert "fake-a" in engine.registry and engine.memory.resident_models() == set()

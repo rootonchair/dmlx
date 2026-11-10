@@ -225,6 +225,8 @@ class Engine:
     ):
         self.registry = registry or Registry.load_builtin(extra_dir=paths.models_dir())
         downloads.adopt(self._owned_repos())
+        for repo in self._owned_repos():
+            downloads.clean_partials(repo, keep=None)  # orphans only; resumable parts are kept
         self.results = results or ResultStore()
         self.memory = MemoryManager()
         self.downloader = downloads.Downloader()
@@ -243,6 +245,7 @@ class Engine:
         self._structure_cache: OrderedDict[tuple, formats.Structured] = OrderedDict()
         self.started = time.time()
         for spec in self.registry.all():
+            spec.extra_size = downloads.extras_download_size(spec)
             path = self._resolve_local(spec)
             if path:
                 downloads.fill_component_sizes(spec, path)
@@ -278,9 +281,11 @@ class Engine:
                     "object": "model",
                     "downloaded": self.is_downloaded(spec),
                     "download": self.downloader.state(spec.id).as_dict(),
+                    "partial_bytes": 0 if self.is_downloaded(spec) else downloads.partial_bytes(spec),
                     "resident": spec.id in resident,
                     "pinned": self.memory.is_pinned(spec.id),
                     "fits_this_mac": spec.min_ram_gb <= total_gb + 0.5,
+                    **self.memory.footprint(spec),
                 }
             )
         return out
@@ -379,7 +384,7 @@ class Engine:
                 if str(model_id or "").strip():
                     chosen[str(operation)] = self.registry.get(str(model_id).strip()).id
         except KeyError as exc:
-            raise RequestError("unknown_model", str(exc), 404) from exc
+            raise RequestError("unknown_model", exc.args[0] if exc.args else str(exc), 404) from exc
         # The model the app runs on Auto per workflow when the decision names none (its own default: the
         # other task's model, or dMLX's pick). Not the user's choice: it gives way when it will not fit.
         # Older apps don't send it; dMLX's default stands in.
@@ -597,11 +602,33 @@ class Engine:
             return state.as_dict()
         return self.downloader.start(spec).as_dict()
 
+    def cancel_pull(self, model_id: str) -> dict:
+        """Stop a running download; its files stay, so the next pull continues from them."""
+        spec = self._spec(model_id)
+        if not self.downloader.cancel(spec.id):
+            raise RequestError("not_downloading", f"{spec.name} is not downloading.", 404)
+        return {"cancelled": True}
+
     def load(self, model_id: str, pin: bool = False) -> dict:
         spec = self.registry.get(model_id)
+        # A job's plan still has parts and working memory to take, which the room doesn't show yet, so a load
+        # beside it could push the two past the budget. Refuse instead; holding the lock also keeps a job
+        # from starting mid-load.
+        if not self._accelerator_lock.acquire(blocking=False):
+            raise RequestError("job_running", "dMLX is busy with a job or the assistant; load the model after it finishes.", 409)
+        try:
+            return self._load(spec, pin)
+        finally:
+            self._accelerator_lock.release()
+
+    def _load(self, spec: ModelSpec, pin: bool) -> dict:
         adapter = self.adapter(spec)
+        # Never evicts a pinned model; refuses (507) when it can't fit without it.
+        try:
+            plan = self.memory.plan(spec, spec.activation_bytes(1024, 1024), strategy="auto", for_job=False)
+        except InsufficientMemory as exc:
+            raise RequestError("insufficient_memory", str(exc), 507) from exc
         self.memory.pin(spec.id, pin)
-        plan = self.memory.plan(spec, spec.activation_bytes(1024, 1024), strategy="auto")
         if hasattr(adapter, "stream_mode"):
             adapter.stream_mode = plan.strategy == "streamed"
         names = list(spec.components) if plan.strategy == "eager" else [n for n, c in spec.components.items() if c.keep or c.phase == "denoise"]
@@ -633,6 +660,7 @@ class Engine:
             existing = catalog.save_spec(found)
             self.registry.add(existing)
             log.info("added model %s from %s", existing.id, existing.repo)
+        existing.extra_size = downloads.extras_download_size(existing)
         downloads.adopt([existing.repo])  # another tool may already have downloaded it: move it in
         path = self._resolve_local(existing)
         if path:
@@ -655,11 +683,12 @@ class Engine:
         with self._lock:
             self._adapters.pop(spec.id, None)
         self.memory.unregister_adapter(spec.id)
-        freed = downloads.delete_local(spec)
+        self.downloader.wait_stopped(spec.id)  # a cancelled download may still be ending its last chunk
+        freed = downloads.delete_local(spec, keep_repos=self._extras_in_use(spec))
         state = self.downloader.state(spec.id)
         state.status, state.done, state.error = "idle", 0, None
-        log.info("deleted files of %s (%.2f GB)", spec.id, freed / GB)
-        return {"model": spec.id, "freed_gb": round(freed / GB, 2)}
+        log.info("deleted files of %s (%.2f GB)", spec.id, freed / 1e9)
+        return {"model": spec.id, "freed_gb": round(freed / 1e9, 2)}  # decimal GB, as shown
 
     def remove_model(self, model_id: str, delete_files: bool = True) -> dict:
         """Remove a model added from the app (built-in models can only have their files deleted)."""
@@ -676,11 +705,26 @@ class Engine:
         self.registry.remove(spec.id)
         return {"model": spec.id, "removed": True, "freed_gb": freed}
 
+    def _extras_in_use(self, spec: ModelSpec) -> set[str]:
+        """Extra repos of this model that another model also uses and has on disk (downloaded, downloading,
+        or partly downloaded): Remove leaves them."""
+        mine = {extra.repo for extra in downloads.extra_repos(spec)}
+        keep = set()
+        for other in self.registry.all():
+            if other.id == spec.id or not mine:
+                continue
+            shared = mine & {extra.repo for extra in downloads.extra_repos(other)}
+            if shared and (self.is_downloaded(other) or downloads.repo_on_disk(other.repo)
+                           or self.downloader.state(other.id).status == "downloading"):
+                keep |= shared
+        return keep
+
     def _spec(self, model_id: str) -> ModelSpec:
         try:
             return self.registry.get(model_id)
         except KeyError as exc:
-            raise RequestError("unknown_model", str(exc), 404) from exc
+            # KeyError's str() adds quotes around the message (task 19).
+            raise RequestError("unknown_model", exc.args[0] if exc.args else str(exc), 404) from exc
 
     def unload(self, model_id: str) -> dict:
         spec = self.registry.get(model_id)
@@ -1192,7 +1236,9 @@ class Engine:
                 if time.monotonic() >= deadline or exc.headroom <= best:
                     raise
                 best = exc.headroom
-            time.sleep(RECLAIM_POLL_S)
+            cancel = kwargs.get("cancel")
+            if cancel is not None and cancel.wait(RECLAIM_POLL_S):
+                raise JobAborted("cancelled", "Generation cancelled")
             self.memory.monitor._last = sysmem.snapshot()
 
     def _run(self, job: Job) -> None:
@@ -1211,6 +1257,8 @@ class Engine:
                 strategy=job.strategy,
                 force=job.force,
                 skip=skip,
+                pixels=job.request.width * job.request.height,
+                cancel=job.cancel_event,
             )
             self.memory.job_started(plan, spec.activation_bytes(job.request.width, job.request.height,
                                                                 len(job.request.image_paths)))
@@ -1224,6 +1272,11 @@ class Engine:
             job.status = "error"
             job.error = {"code": exc.code, "message": exc.message}
             job.emit("error", job.error)
+            return
+        except JobAborted as exc:  # a Stop while the plan was freeing other models: no more are freed
+            job.status = "cancelled"
+            job.error = {"code": exc.code, "message": exc.message}
+            job.emit("cancelled", job.error)
             return
 
         import mlx.core as mx
@@ -1278,6 +1331,9 @@ class Engine:
                 job.emit("image", {"index": i, "result_id": rid, "seed": req.seed})
         except JobAborted as exc:
             stopped = exc.code, exc.message
+        except Exception as exc:  # noqa: BLE001 - a crashed job frees its memory too, below
+            log.exception("job %s crashed", job.id)
+            stopped = "internal_error", str(exc)
         else:
             stopped = None
         if stopped is not None:
@@ -1289,6 +1345,10 @@ class Engine:
             job.error = {"code": code, "message": message}
             if code == "memory_pressure" or job.task == "upscale":
                 self.memory.unload_model(spec.id)
+            else:
+                # What the plan frees at the end of a job (task 19: a Stop mid-denoise kept 3.23 GB of
+                # Z-Image resident in a sequential plan, and the next model ran streamed beside it).
+                guard.release_after_stop()
             job.report = {**guard.report(), **rewrite, "total_seconds": round(time.monotonic() - started, 3)}
             job.emit("cancelled" if code == "cancelled" else "error", {**job.error, "report": job.report})
             return

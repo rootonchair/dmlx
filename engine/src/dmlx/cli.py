@@ -64,12 +64,16 @@ def _serve(args) -> None:
 
 
 def _pull(args) -> None:
-    from huggingface_hub import snapshot_download
-
+    """Download a model as the app does: every repo it needs, resumable (task 19)."""
+    from dmlx import downloads
     from dmlx.registry import Registry
 
     spec = Registry.load_builtin().get(args.model)
-    print(snapshot_download(spec.repo))
+    state = downloads.DownloadState(spec.id)
+    downloads.Downloader()._run(spec, state, None)
+    if state.status != "done":
+        raise SystemExit(state.error or state.status)
+    print(downloads.local_path(spec))
 
 
 def _models(_args) -> None:

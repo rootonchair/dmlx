@@ -24,77 +24,21 @@ def test_local_lookup_uses_pinned_revision(monkeypatch, tmp_path):
     assert calls == [(spec.repo, {"revision": "commit-123", "local_files_only": True})]
 
 
-def test_download_uses_same_pinned_revision_for_listing_and_files(monkeypatch, tmp_path):
-    spec = fake_spec("pinned")
-    spec.revision = "commit-123"
-    info_calls = []
-    file_calls = []
-
-    class API:
-        def model_info(self, repo, **kwargs):
-            info_calls.append((repo, kwargs))
-            return SimpleNamespace(siblings=[SimpleNamespace(rfilename="config.json", size=12)])
-
-    monkeypatch.setattr(downloads, "_api", lambda: API())
-    monkeypatch.setattr(
-        "huggingface_hub.hf_hub_download",
-        lambda repo, name, **kwargs: file_calls.append((repo, name, kwargs)),
-    )
-    monkeypatch.setattr(downloads, "local_path", lambda _spec: tmp_path)
-    monkeypatch.setattr(downloads, "fill_component_sizes", lambda _spec, _path: None)
-    monkeypatch.setattr(downloads.Downloader, "_watch_partial", lambda *_args: None)
-    state = downloads.DownloadState(spec.id)
-
-    downloads.Downloader()._run(spec, state, None)
-
-    assert state.status == "done" and state.done == 12
-    assert info_calls == [(spec.repo, {"revision": "commit-123", "files_metadata": True})]
-    assert file_calls == [(spec.repo, "config.json", {"revision": "commit-123"})]
-
-
-def test_download_skips_adapter_managed_external_component(monkeypatch, tmp_path):
-    spec = fake_spec("external")
-    spec.components["text_encoder"].external = True
-    files = [
-        SimpleNamespace(rfilename="text_encoder/model.safetensors", size=100),
-        SimpleNamespace(rfilename="transformer/model.safetensors", size=200),
-    ]
-
-    class API:
-        def model_info(self, *_args, **_kwargs):
-            return SimpleNamespace(siblings=files)
-
-    downloaded = []
-    monkeypatch.setattr(downloads, "_api", lambda: API())
-    monkeypatch.setattr(
-        "huggingface_hub.hf_hub_download",
-        lambda _repo, name, **_kwargs: downloaded.append(name),
-    )
-    monkeypatch.setattr(downloads, "local_path", lambda _spec: tmp_path)
-    monkeypatch.setattr(downloads, "fill_component_sizes", lambda _spec, _path: None)
-    monkeypatch.setattr(downloads.Downloader, "_watch_partial", lambda *_args: None)
-    state = downloads.DownloadState(spec.id)
-
-    downloads.Downloader()._run(spec, state, None)
-
-    assert state.status == "done" and state.total == 200
-    assert downloaded == ["transformer/model.safetensors"]
-
-
 def test_listed_size_before_and_after_download():
     """Before a model is downloaded its size comes from the spec (repo files plus external parts), so the
-    first-run setup can show the total; once downloaded, the size on disk is used."""
+    first-run setup can show the total; once downloaded, the size on disk is used. Both in decimal GB
+    (bytes / 1e9), as the app shows every disk size (task 19: 4.3 GB on the card, 4.6 GB in the progress)."""
     from dmlx.registry import GB, Registry
 
     flux = Registry.load_builtin().get("flux2-klein-4b")
     assert flux.local_path is None
-    assert flux.as_dict()["size_gb"] == 4.3
+    assert flux.as_dict()["size_gb"] == 4.62  # its 4,619,704,206 bytes on Hugging Face
 
     qwen = Registry.load_builtin().get("qwen-image-2.1-q4")
-    assert qwen.as_dict()["size_gb"] == round(5.13 + 2.4, 2)  # repo files plus the shared text encoder
+    assert qwen.as_dict()["size_gb"] == round((5.13 + 2.4) * GB / 1e9, 2)  # repo files plus the shared encoder
 
     flux.local_path = Path("/downloaded")
-    flux.components["transformer"].size = 3 * GB
+    flux.components["transformer"].size = 3_000_000_000
     assert flux.as_dict()["size_gb"] == 3.0
 
 

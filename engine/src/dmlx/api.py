@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import errno
 import json
 import os
+import logging
 import time
 
 from fastapi import Depends, FastAPI, HTTPException, Request
@@ -15,7 +17,41 @@ from dmlx import __version__
 from dmlx.engine import Engine, Job, RequestError
 from dmlx.workflow import WorkflowError, WorkflowPlan
 
+log = logging.getLogger("dmlx.api")
+
 TERMINAL_EVENTS = {"done", "error", "cancelled"}
+HEIF_BRANDS = (b"heic", b"heix", b"heim", b"heis", b"hevc", b"hevx", b"mif1", b"msf1", b"avif")
+
+
+def _unreadable(name: str, data: bytes) -> RequestError:
+    """The 415 for a file Pillow cannot open: it names the file, and says what HEIC needs (the app turns
+    HEIC into PNG before it uploads; this is for other clients)."""
+    lower = name.lower()
+    heif = lower.endswith((".heic", ".heif", ".avif")) or (data[4:8] == b"ftyp" and data[8:12] in HEIF_BRANDS)
+    if heif:
+        message = f"{name} is a HEIC photo, which the engine can't open. Convert it to PNG or JPEG first."
+    else:
+        message = f"{name} is not an image dMLX can open. Use a PNG, JPEG or WebP image."
+    return RequestError("unsupported_image", message, 415)
+
+
+def _save_upload(engine: Engine, name: str | None, data: bytes) -> str:
+    from PIL import Image, UnidentifiedImageError
+
+    name = os.path.basename(name or "") or "The file"
+    try:
+        image = engine.results.decode_upload(data)
+    except (UnidentifiedImageError, Image.DecompressionBombError, OSError, ValueError, SyntaxError) as exc:
+        log.info("upload %s refused: %s", name, exc)
+        raise _unreadable(name, data) from None
+    try:
+        return engine.results.save_upload_image(image)
+    except OSError as exc:
+        # Saving failed, not reading: a full disk or a folder dMLX cannot write is not "not an image" (task 19).
+        log.warning("could not save upload %s: %s", name, exc)
+        full = exc.errno == errno.ENOSPC
+        reason = "the disk is full" if full else "dMLX could not write to its folder"
+        raise RequestError("upload_failed", f"Couldn't save {name}: {reason}.", 507 if full else 500) from None
 
 
 def create_app(engine: Engine | None = None, token: str | None = None) -> FastAPI:
@@ -37,7 +73,8 @@ def create_app(engine: Engine | None = None, token: str | None = None) -> FastAP
 
     @app.exception_handler(KeyError)
     async def key_error(_request: Request, exc: KeyError):
-        return JSONResponse(status_code=404, content={"error": {"code": "not_found", "message": str(exc).strip("'\"")}})
+        message = exc.args[0] if exc.args else str(exc)  # str() of a KeyError adds quotes
+        return JSONResponse(status_code=404, content={"error": {"code": "not_found", "message": message}})
 
     # -- health / models --------------------------------------------------------------
     @app.get("/health")
@@ -46,7 +83,9 @@ def create_app(engine: Engine | None = None, token: str | None = None) -> FastAP
 
     @app.get("/v1/models", dependencies=[Depends(auth)])
     async def models():
-        return {"object": "list", "data": engine.models()}
+        # In a thread: it reads the disk (partial downloads) and the memory manager; the event loop must
+        # stay free for a Stop (fix round 2 of task 19: a poll during an eviction stalled every request).
+        return {"object": "list", "data": await asyncio.to_thread(engine.models)}
 
     @app.get("/v1/capabilities", dependencies=[Depends(auth)])
     async def capabilities():
@@ -105,7 +144,7 @@ def create_app(engine: Engine | None = None, token: str | None = None) -> FastAP
             for key in ("image", "image[]"):
                 for upload in form.getlist(key):
                     if hasattr(upload, "read"):
-                        image_ids.append(engine.results.save_upload(await upload.read()))
+                        image_ids.append(_save_upload(engine, getattr(upload, "filename", None), await upload.read()))
             ext = json.loads(body.get("dmlx", "{}") or "{}")
         else:
             body = await request.json()
@@ -137,7 +176,7 @@ def create_app(engine: Engine | None = None, token: str | None = None) -> FastAP
         upload = form.get("file")
         if upload is None or not hasattr(upload, "read"):
             raise RequestError("missing_file", "Send the image as multipart field 'file'.")
-        rid = engine.results.save_upload(await upload.read())
+        rid = _save_upload(engine, getattr(upload, "filename", None), await upload.read())
         return {"id": rid}
 
     @app.get("/v1/results/{result_id}", dependencies=[Depends(auth)])
@@ -159,7 +198,7 @@ def create_app(engine: Engine | None = None, token: str | None = None) -> FastAP
 
     @app.delete("/v1/jobs/{job_id}", dependencies=[Depends(auth)])
     async def job_cancel(job_id: str):
-        return engine.cancel(job_id).as_dict()
+        return (await asyncio.to_thread(engine.cancel, job_id)).as_dict()
 
     @app.post("/v1/jobs/{job_id}/retry", dependencies=[Depends(auth)])
     async def job_retry(job_id: str, request: Request):
@@ -171,6 +210,10 @@ def create_app(engine: Engine | None = None, token: str | None = None) -> FastAP
     @app.post("/admin/models/{model_id}/pull", dependencies=[Depends(auth)])
     async def pull(model_id: str):
         return engine.pull(model_id)
+
+    @app.delete("/admin/models/{model_id}/pull", dependencies=[Depends(auth)])
+    async def cancel_pull(model_id: str):
+        return await asyncio.to_thread(engine.cancel_pull, model_id)
 
     @app.post("/admin/models/{model_id}/load", dependencies=[Depends(auth)])
     async def load(model_id: str, request: Request):
@@ -252,7 +295,7 @@ def create_app(engine: Engine | None = None, token: str | None = None) -> FastAP
 
     @app.get("/admin/memory", dependencies=[Depends(auth)])
     async def memory():
-        return engine.status()
+        return await asyncio.to_thread(engine.status)
 
     # -- helpers ----------------------------------------------------------------------
     async def _respond(job: Job, stream: bool, response_format: str | None):

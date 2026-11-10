@@ -253,7 +253,7 @@ class Inspection:
             "license": self.license,
             "permissive_license": self.permissive_license,
             "quantization": self.quantization,
-            "size_gb": round(self.size_bytes / 1024**3, 2),
+            "size_gb": round(self.size_bytes / 1e9, 2),  # decimal GB, as shown
             "url": f"https://huggingface.co/{self.repo}",
         }
 
@@ -655,7 +655,7 @@ _sizes: dict[str, float] = {}
 
 
 def repo_sizes(repos: list[str]) -> dict[str, float]:
-    """Download size (GiB) of each repo's weights, read from its file list (nothing is downloaded).
+    """Download size (decimal GB) of each repo's weights, read from its file list (nothing is downloaded).
     Repos that cannot be read are left out; sizes are kept for the engine's lifetime."""
     from concurrent.futures import ThreadPoolExecutor
 
@@ -667,7 +667,7 @@ def repo_sizes(repos: list[str]) -> dict[str, float]:
         except Exception:
             return repo, None
         total = sum(s.size or 0 for s in info.siblings or [] if s.rfilename.endswith(".safetensors"))
-        return repo, round(total / 1024**3, 2) if total else None
+        return repo, round(total / 1e9, 2) if total else None
 
     wanted = [r for r in dict.fromkeys(repos) if r not in _sizes][:16]
     if wanted:

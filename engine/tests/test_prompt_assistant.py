@@ -1,6 +1,7 @@
 import pytest
 
 from dmlx.intelligence.base import IntelligenceError
+from dmlx.prompting.local_vlm import MODELS as AGENT_MODELS
 from dmlx.prompting.local_vlm import LocalVLMPromptProvider, parse_reply
 
 
@@ -160,3 +161,97 @@ def test_parse_reply_drops_unsupported_negative_and_rejects_empty():
     assert parse_reply('{"positive": "p", "negative": "n"}', supports_negative=False) == ("p", None)
     with pytest.raises(IntelligenceError):
         parse_reply('{"positive": ""}', supports_negative=True)
+
+
+# -- the agent models' file lists (test round 5 of task 19) -------------------------------------------------
+# An agent counts as installed only when every name in `AgentModel.files` is in its snapshot. A new agent
+# without the list never reads as installed; a revision bump that renames or adds a file reads wrong. Each
+# entry here is the revision and its file list as checked against Hugging Face's listing at that commit
+# (all files but README.md and .gitattributes). Changing a revision or a list without checking it again
+# fails here: check the new listing (huggingface_hub `model_info(repo, revision=...).siblings`), fix `files`,
+# then write the new fingerprint below.
+_CHECKED_AGENT_FILES = {
+    "qwen3-vl-8b-instruct-4bit": ("defcdea7cc7a4b0858fea563cbbce171d328e457", "4842269d5cbd0e69"),
+    "qwen3.5-9b-mlx-4bit": ("938d8919941c6e7efd3c7150eff7fe9d12afa631", "0ccf60776682b624"),
+    "ministral-3-3b-instruct-2512-4bit": ("a962dcb09eee4169c890e544c9eb938f1113fdee", "59c3d2f24e382a7a"),
+    "qwen3-vl-4b-instruct-4bit": ("2fd8dacbdb8f1e54b8c005f081ec5bf79c56376b", "8fbe990d66cf093e"),
+}
+
+
+def _files_fingerprint(files) -> str:
+    import hashlib
+
+    return hashlib.sha256("\n".join(sorted(files)).encode()).hexdigest()[:16]
+
+
+def _weight_shards_complete(files) -> bool:
+    """One `model.safetensors`, or every `model-0000k-of-0000N.safetensors` for k = 1..N with its index."""
+    import re
+
+    weights = [f for f in files if f.endswith(".safetensors")]
+    if not weights:
+        return False
+    shards = [re.fullmatch(r"model-(\d+)-of-(\d+)\.safetensors", f) for f in weights if f != "model.safetensors"]
+    if not shards:
+        return True
+    if not all(shards) or "model.safetensors.index.json" not in files:
+        return False
+    totals = {int(m.group(2)) for m in shards}
+    if len(totals) != 1:
+        return False
+    (total,) = totals
+    return sorted(int(m.group(1)) for m in shards) == list(range(1, total + 1))
+
+
+@pytest.mark.parametrize("model_id", sorted(AGENT_MODELS))
+def test_every_agent_has_a_pinned_revision_and_a_complete_file_list(model_id):
+    import re
+
+    from dmlx.prompting.local_vlm import MODELS
+
+    model = MODELS[model_id]
+    assert re.fullmatch(r"[0-9a-f]{40}", model.revision), f"{model_id}: pin a full commit, not {model.revision!r}"
+    files = set(model.files)
+    assert files, f"{model_id} has no `files`: it would download but never read as installed"
+    assert len(files) == len(model.files), f"{model_id} lists a file twice"
+    assert "config.json" in files
+    assert "tokenizer_config.json" in files and ({"tokenizer.json", "tekken.json"} & files)
+    assert _weight_shards_complete(files), f"{model_id}: the weight files are not a complete set: {sorted(files)}"
+    assert not files & {"README.md", ".gitattributes"}  # never needed, and not counted
+
+
+@pytest.mark.parametrize("model_id", sorted(AGENT_MODELS))
+def test_an_agents_revision_and_files_were_checked_together(model_id):
+    from dmlx.prompting.local_vlm import MODELS
+
+    model = MODELS[model_id]
+    assert model_id in _CHECKED_AGENT_FILES, (
+        f"New agent {model_id}: check its `files` against Hugging Face's listing at {model.revision}, then add "
+        f"({model.revision!r}, {_files_fingerprint(model.files)!r}) to _CHECKED_AGENT_FILES.")
+    revision, fingerprint = _CHECKED_AGENT_FILES[model_id]
+    assert model.revision == revision, (
+        f"{model_id} moved to revision {model.revision} (checked: {revision}). Its files may have changed: check "
+        f"`files` against Hugging Face's listing at the new commit, then update _CHECKED_AGENT_FILES.")
+    assert _files_fingerprint(model.files) == fingerprint, (
+        f"{model_id}'s `files` changed but its revision did not: check the list against Hugging Face's listing at "
+        f"{revision}, then write {_files_fingerprint(model.files)!r} into _CHECKED_AGENT_FILES.")
+
+
+def test_the_file_list_checks_catch_a_missing_shard_or_an_unchecked_revision(monkeypatch):
+    import dataclasses
+
+    from dmlx.prompting import local_vlm
+
+    assert not _weight_shards_complete(("config.json", "model-00001-of-00002.safetensors",
+                                        "model.safetensors.index.json"))
+    assert not _weight_shards_complete(("config.json", "model-00001-of-00002.safetensors",
+                                        "model-00002-of-00002.safetensors"))  # no index
+    assert not _weight_shards_complete(("config.json",))
+    model_id = "ministral-3-3b-instruct-2512-4bit"
+    bumped = dataclasses.replace(local_vlm.MODELS[model_id], revision="0" * 40)
+    monkeypatch.setitem(local_vlm.MODELS, model_id, bumped)
+    with pytest.raises(AssertionError, match="moved to revision"):
+        test_an_agents_revision_and_files_were_checked_together(model_id)
+    monkeypatch.setitem(local_vlm.MODELS, model_id, dataclasses.replace(bumped, files=()))
+    with pytest.raises(AssertionError, match="no `files`"):
+        test_every_agent_has_a_pinned_revision_and_a_complete_file_list(model_id)

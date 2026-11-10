@@ -7,7 +7,7 @@ import SwiftUI
 /// write snapshots of the app's own window (no Screen Recording permission needed).
 ///
 /// Script: {"out": "/dir", "steps": [{"newSession": true}, {"send": "a boat"}, {"waitIdle": 300},
-///          {"snapshot": "name"}, {"variation": true}, {"attachFile": "/path.png"}, {"draft": "text"}, {"sleep": 1},
+///          {"snapshot": "name"}, {"variation": true}, {"attachFile": "/path.png"}, {"attachFiles": ["/a.png", "/b.heic"]}, {"logAttach": "label"}, {"draft": "text"}, {"sleep": 1},
 ///          {"onboarding": true|false}, {"onboardingStep": "welcome"|"setup"}, {"onboardingDownload": true} (presses Download or Start Creating), {"agentService": {"service": "ollama", "model": "…"}}, {"guideNext": "chat"|"image"|"editor"} (the tip's Next; DMLX_RESET_TIPS=1 shows the guide again), {"settings": true}, {"selectSession": 0}, {"renderChat": "name"} (add "chatWidth": 384 to draw the turns at that width, e.g. the
 ///          detail column of the smallest window),
 ///          {"modelChoice": "auto"|"<model id>"} (both tasks), {"generateModel": "…"}, {"editModel": "…"}, {"logPreview": true},
@@ -169,6 +169,25 @@ enum DevHarness {
             model.turns[t] = turn
         }
         if let path = step["attachFile"] as? String { model.attach(files: [URL(fileURLWithPath: path)]) }
+        // Several files at once, as a drop or the file picker gives them (task 19).
+        if let paths = step["attachFiles"] as? [String] { model.attach(files: paths.map { URL(fileURLWithPath: $0) }) }
+        if step["cancelHeldSend"] != nil { model.cancelHeldSend() }
+        if let label = step["logSheets"] as? String {
+            log("sheets[\(label)] showOnboarding=\(model.showOnboarding) attached=\(NSApp.windows.filter { $0.attachedSheet != nil }.count)")
+        }
+        if step["pullAgent"] != nil, let client = model.client {
+            model.noteAgentDownload(try? await client.pullPromptAssistant())
+        }
+        if let label = step["logDownloads"] as? String {
+            log("downloads[\(label)] models=\(model.runningDownloads.map(\.name)) agent=\(model.agentDownload ?? "-")")
+        }
+        if let label = step["logAttach"] as? String {
+            let user = model.turns.last(where: { $0.kind == .user })
+            log("attach[\(label)] attachments=\(model.attachments.map(\.label)) uploading=\(model.uploading.map(\.label)) "
+                + "sendAfterUpload=\(model.sendAfterUpload ?? "-") draft=\(model.draft) toast=\(model.toast ?? "-") "
+                + "lastUser=\(user?.text ?? "-") lastUserAttachments=\(user?.attachments.count ?? 0) "
+                + "planning=\(model.planningMessage ?? "-") hint=\(model.routePreview)")
+        }
         if let name = step["onboardingStep"] as? String, let value = OnboardingStep(rawValue: name) { model.onboardingStep = value }
         if let show = step["onboarding"] as? Bool { model.showOnboarding = show }
         if step["onboardingDownload"] != nil { model.harnessOnboardingDownload += 1 }

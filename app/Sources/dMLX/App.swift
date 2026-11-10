@@ -6,11 +6,28 @@ import TipKit
 final class AppDelegate: NSObject, NSApplicationDelegate {
     let model = AppModel()
 
+    func applicationWillFinishLaunching(_ notification: Notification) {
+        // A quit from the Dock, a logout, restart or shut down arrives as this Apple Event, which AppKit
+        // refuses while a sheet is open (the first-run sheet opens at launch). It takes the Quit command's
+        // path instead: ask during a download, close any sheet, then quit (task 19).
+        NSAppleEventManager.shared().setEventHandler(
+            self, andSelector: #selector(handleQuit(_:withReplyEvent:)),
+            forEventClass: AEEventClass(kCoreEventClass), andEventID: AEEventID(kAEQuitApplication))
+    }
+
+    @objc private func handleQuit(_ event: NSAppleEventDescriptor, withReplyEvent reply: NSAppleEventDescriptor) {
+        model.quit()
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
         AppAppearance.stored.apply()
         NSApp.activate()
         DevHarness.startIfRequested(model)
+    }
+
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        return model.confirmQuit() ? .terminateNow : .terminateCancel
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -38,6 +55,12 @@ struct DMLXApp: App {
         }
         .windowToolbarStyle(.unified(showsTitle: false))
         .commands {
+            // AppKit ignores Quit while a sheet is open (the first-run sheet opens at launch), so Quit
+            // closes any sheet first, then quits (task 19). The Dock's Quit and a logout come in as an
+            // Apple Event and take the same path (AppDelegate).
+            CommandGroup(replacing: .appTermination) {
+                Button("Quit dMLX") { model.quit() }.keyboardShortcut("q")
+            }
             CommandGroup(replacing: .newItem) {
                 Button("New Creation") { model.newSession() }.keyboardShortcut("n")
             }

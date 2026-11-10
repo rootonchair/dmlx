@@ -113,9 +113,13 @@ final class AppModel {
 
     // UI
     var toast: String?
+    /// The composer's height with its margins: the toast is drawn above it (task 19).
+    var composerHeight: CGFloat = 104
     var showOnboarding = false
     var onboardingStep: OnboardingStep = .welcome
     static let onboardingCompletedKey = "onboardingCompleted"
+    /// The sheet opened by itself once this launch: an engine restart does not open it again (task 19).
+    private var onboardingOffered = false
     var storeError: String?
 
     private var streams: [String: _Concurrency.Task<Void, Never>] = [:]
@@ -242,14 +246,21 @@ final class AppModel {
             normalizeModelChoices()
             let catalog = try? await client.capabilities()
             if catalog != capabilityCatalog { capabilityCatalog = catalog }
-            let installed = (try? await client.promptAssistant())?.installed ?? false
+            let agent = try? await client.promptAssistant()
+            let installed = agent?.installed ?? false
             if installed != promptAssistantInstalled { promptAssistantInstalled = installed }
+            noteAgentDownload(agent)
             // First run, or no image model yet. Someone who finished setup without the agent is not asked again.
+            // Once per launch: after an engine restart (a crash, Restart engine, Save and Restart) it stays
+            // closed, and sending with no model opens the setup step instead (task 19).
             let completed = UserDefaults.standard.bool(forKey: Self.onboardingCompletedKey)
-            if openOnboarding && (defaultModel(for: .t2i) == nil || (!completed && !promptAssistantInstalled)) {
+            if openOnboarding && OnboardingRule.opensByItself(
+                alreadyOfferedThisLaunch: onboardingOffered, hasImageModel: defaultModel(for: .t2i) != nil,
+                setupCompleted: completed, agentInstalled: promptAssistantInstalled) {
                 onboardingStep = .welcome
                 showOnboarding = true
             }
+            if openOnboarding { onboardingOffered = true }
         }
     }
 
@@ -267,6 +278,36 @@ final class AppModel {
                 show("Download failed: \(error.localizedDescription)")
             }
         }
+    }
+
+    /// Stops a running download; its files stay, so Download resumes it (task 19).
+    func cancelDownload(_ model: EngineModel) {
+        _Concurrency.Task {
+            do {
+                guard let client else { throw EngineClientError.notRunning }
+                try await client.cancelPull(model: model.id)
+                await refreshModels()
+                show("Download of \(model.name) stopped. It resumes where it stopped when you download it again.")
+            } catch EngineClientError.http(404, _, _) {
+                await refreshModels()  // it had just finished or failed
+            } catch {
+                show("Couldn't stop the download: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    /// Image models downloading now (the quit confirmation names them).
+    var runningDownloads: [EngineModel] { models.filter(\.isDownloading) }
+
+    /// The agent model downloading now, by name (the quit confirmation names it too; task 19).
+    private(set) var agentDownload: String?
+
+    /// Called with each agent status read: the poll, and right after Onboarding or Settings starts a download.
+    func noteAgentDownload(_ status: PromptAssistantStatus?) {
+        guard let status else { return }
+        let name = status.models?.first(where: \.isDownloading)?.name
+            ?? (status.isDownloading ? "The agent model" : nil)
+        if name != agentDownload { agentDownload = name }
     }
 
     // MARK: adding and removing models
@@ -323,7 +364,7 @@ final class AppModel {
                     for task in [GenTask.t2i, .edit] where modelChoice(for: task) == m.id { setModelChoice("auto", for: [task]) }
                 }
                 await refreshModels()
-                show(freed > 0 ? "Removed \(m.name) · freed \(String(format: "%.1f", freed)) GB" : "Removed \(m.name)")
+                show(DiskSize.removedMessage(name: m.name, freedGB: freed))
             } catch {
                 show("Couldn't remove \(m.name): \(error.localizedDescription)")
             }
@@ -483,14 +524,14 @@ final class AppModel {
     /// agent picks the model on send among several, those models ("the agent picks A or B").
     private func hintModelText(for operation: String, decision: WorkflowDecision) -> String? {
         if hasChosenModel(for: operation) {
-            return defaultModel(for: operation).map { "\($0.name)\(loadHint($0))" }
+            return defaultModel(for: operation).map { hintName($0) }
         }
         let ids = RouteModel.named(chosen: nil, decision: decision, runnable: runnableModels(for: operation),
                                    auto: defaultModel(for: operation)?.id, checked: !routeModelUnchecked)
         if ids.isEmpty, routeModelUnchecked { return "" }  // no model named until the engine answers
         let named = ids.compactMap { id in models.first(where: { $0.id == id }) }
         if named.count > 1 { return RouteModel.agentPicks(named.map(\.name)) }
-        return named.first.map { "\($0.name)\(loadHint($0))" }
+        return named.first.map { hintName($0) }
     }
 
     /// A hint and the model it names, or the hint alone while that is not known yet (empty).
@@ -546,10 +587,11 @@ final class AppModel {
         } ?? does + maturity + compatibility
     }
 
-    /// Appended to the route preview when sending would swap another model out of memory.
-    private func loadHint(_ m: EngineModel) -> String {
-        guard !m.resident, models.contains(where: { $0.resident && $0.id != m.id }), let gb = m.size_gb else { return "" }
-        return " · loads \(String(format: "%.1f", gb)) GB"
+    /// The model in the route preview; "loads <model> · about X GB" when sending would swap another model out
+    /// of memory (its memory need, not its download size; task 19).
+    private func hintName(_ m: EngineModel) -> String {
+        let loads = !m.resident && models.contains(where: { $0.resident && $0.id != m.id })
+        return LoadHint.text(name: m.name, loads: loads, memoryGB: m.memory_gb)
     }
 
     func modelName(_ id: String) -> String {
@@ -688,8 +730,17 @@ final class AppModel {
         }
     }
 
+    /// No image model on this Mac yet (the engine's list is loaded and none is downloaded).
+    var hasNoImageModel: Bool { !models.isEmpty && !models.contains(where: \.downloaded) }
+
     var routePreview: String {
+        // Nothing could make an image: say so, not "edit or create new" (task 19).
+        if hasNoImageModel {
+            return models.contains(where: \.isDownloading) ? "Image model still downloading" : "No image model downloaded"
+        }
         let message = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        // The route counts the attachments: decided once the ones still uploading are there (task 19).
+        if !uploading.isEmpty { return UploadWait.hint(attaching: uploading.count) }
         guard !message.isEmpty else {
             return isAutoModel ? "Model picked for you" : ""  // the model menu already names the choice
         }
@@ -864,8 +915,18 @@ final class AppModel {
         WorkflowDecision(intent: "ambiguous", confidence: 0, probabilities: [:], provider: provider)
     }
 
-    private func clearComposerContext() {
-        attachments = []
+    /// `sent`: a message just went out. Only its own images leave the composer; images attached or still
+    /// attaching while it was planned stay for the next message (task 19). Without it (the chat changed),
+    /// everything goes.
+    private func clearComposerContext(sent: PendingRoute? = nil) {
+        if let sent {
+            attachments = SentAttachments.kept(attachments, sent: sent.attachmentIds)
+        } else {
+            attachments = []
+            // A message held for an upload, and the upload itself, belong to the chat they were started in.
+            // The composer of that chat is gone (attachments are not kept per chat), so they are dropped.
+            dropUploads()
+        }
         clearPendingLayout()
         routeTask?.cancel()
         routeDecision = nil
@@ -895,6 +956,11 @@ final class AppModel {
             return show("Not sent: download an image model first.")
         }
         if let planning = planningMessage { return show("Not sent yet: “\(planning)” is still being planned.") }
+        // An image still uploading would be left out of this message (task 19): send when it is attached.
+        if !uploading.isEmpty {
+            sendAfterUpload = text ?? ""
+            return
+        }
         guard !isGeneratingHere else { return show("Not sent: wait for the image to finish, or stop it.") }
         if let pending = pendingRoute, let question = pendingAsk, promptAssistantInstalled {
             if text == nil { draft = "" }
@@ -1228,7 +1294,7 @@ final class AppModel {
                 route: Self.operationLabel(operation), size: nil, decision: decision,
                 promptSpec: pending.promptSpec, operation: operation)
         }
-        clearComposerContext()
+        clearComposerContext(sent: pending)
         touchSession()
     }
 
@@ -1635,7 +1701,7 @@ final class AppModel {
     func applyEditor(_ document: EditorDocument) {
         guard !isExportingEditor, let sessionId = currentSessionId, let image = editorImage,
               let client else { return }
-        guard attachments.count < 3 else {
+        guard attachments.count < attachLimit.count else {
             return show("Remove an attachment before adding the prepared image.")
         }
         var rect = CGRect(origin: .zero, size: image.size)
@@ -1678,20 +1744,98 @@ final class AppModel {
         attachments.insert(item, at: destination)
     }
 
+    /// How many images this message can carry: the edit model's own limit, at most 3 (task 19). The edit
+    /// model is the one chosen for edits, or on Auto the one dMLX would pick.
+    var attachLimit: AttachLimit {
+        let m = defaultModel(for: .edit)
+        return AttachLimit(modelName: m.map { $0.group_name ?? $0.name }, modelMax: m?.max_references)
+    }
+
+    /// Files being uploaded, by a token: they show in the composer, hold a place among the 3, and a send
+    /// waits for them (task 19).
+    private(set) var uploading: [(token: UUID, label: String)] = []
+    /// A message sent while an image was uploading: sent when the uploads end ("" = the composer's text).
+    private(set) var sendAfterUpload: String?
+    /// The running upload batches. Cancelled when the chat changes or the held send is cancelled.
+    private var uploadTasks: [UUID: _Concurrency.Task<Void, Never>] = [:]
+    private var heldUploadFailed = false
+
     func attach(files: [URL]) {
+        guard !files.isEmpty else { return }
         guard let client else { return show("The engine is still starting.") }
-        _Concurrency.Task {
-            let available = max(0, 3 - attachments.count)
-            if available == 0 { return show("This model accepts up to 3 images.") }
-            for url in files.prefix(available) {
+        let limit = attachLimit
+        let plan = AttachPlan(files: files.count, current: attachments.count, uploading: uploading.count,
+                              limit: limit)
+        // Notes from this drop are merged into one toast, so a failed file does not hide the left-out ones.
+        var note = plan.message(limit)
+        if let note { show(note) }
+        // Places are taken now, before any upload ends, so files dropped one by one can't go over the limit.
+        let batch = files.prefix(plan.take).map { (token: UUID(), url: $0) }
+        guard !batch.isEmpty else { return }
+        uploading += batch.map { (token: $0.token, label: $0.url.lastPathComponent) }
+        let batchId = UUID()
+        // One after another, so the attachments keep the order the files were given in.
+        uploadTasks[batchId] = _Concurrency.Task {
+            defer { if uploadTasks[batchId] != nil { uploadTasks[batchId] = nil } }
+            for item in batch {
+                // Dropped with its chat, or cancelled: nothing of it lands anywhere.
+                guard !_Concurrency.Task.isCancelled, uploading.contains(where: { $0.token == item.token }) else { return }
+                let url = item.url
                 do {
-                    let id = try await client.upload(file: url)
+                    // iPhone photos (HEIC) and wide-colour images become sRGB PNG here (task 19).
+                    var file = url
+                    if UploadImage.needsConversion(url) {
+                        file = try await _Concurrency.Task.detached { try UploadImage.convertToPNG(url) }.value
+                    }
+                    defer { if file != url { try? FileManager.default.removeItem(at: file.deletingLastPathComponent()) } }
+                    let id = try await client.upload(file: file, timeout: UploadWait.timeout)
+                    guard !_Concurrency.Task.isCancelled, uploading.contains(where: { $0.token == item.token }) else { return }
                     attachments.append(Attachment(id: id, label: url.lastPathComponent))
                 } catch {
-                    show("Couldn't attach \(url.lastPathComponent): \(error.localizedDescription)")
+                    guard !_Concurrency.Task.isCancelled, uploading.contains(where: { $0.token == item.token }) else { return }
+                    // A message waiting for this image is not sent without it (it would make a new image
+                    // instead of the edit): it goes back to the box.
+                    let held = sendAfterUpload != nil
+                    if held { heldUploadFailed = true }
+                    let reason = (error as? URLError)?.code == .timedOut
+                        ? "Couldn't attach \(url.lastPathComponent): the engine did not answer in time."
+                        : UploadImage.failureMessage(file: url.lastPathComponent, error: error.localizedDescription)
+                    note = ToastText.merged(note, reason + (held ? " Your message was not sent." : ""))
+                    show(note!)
                 }
+                finishUpload(item.token)
             }
         }
+    }
+
+    private func finishUpload(_ token: UUID) {
+        uploading.removeAll { $0.token == token }
+        guard uploading.isEmpty, let held = sendAfterUpload else { return }
+        sendAfterUpload = nil
+        if heldUploadFailed {
+            heldUploadFailed = false
+            if !held.isEmpty && draft.isEmpty { draft = held }
+            return
+        }
+        send(held.isEmpty ? nil : held)
+    }
+
+    /// Stops every upload in flight and forgets a message held for them.
+    private func dropUploads() {
+        uploadTasks.values.forEach { $0.cancel() }
+        uploadTasks = [:]
+        uploading = []
+        sendAfterUpload = nil
+        heldUploadFailed = false
+    }
+
+    /// The composer's Cancel next to "Sends when the image is attached.": the uploads stop, nothing is sent,
+    /// and the message stays in the box (task 19).
+    func cancelHeldSend() {
+        guard let held = sendAfterUpload else { return }
+        dropUploads()
+        if !held.isEmpty && draft.isEmpty { draft = held }
+        show("Not sent: attaching was cancelled. Your message is still in the box.")
     }
 
     func save(_ turnId: String) {
@@ -1717,9 +1861,44 @@ final class AppModel {
         toast = message
         toastTask?.cancel()
         toastTask = _Concurrency.Task {
-            try? await _Concurrency.Task.sleep(for: .seconds(3))
+            try? await _Concurrency.Task.sleep(for: .seconds(ToastText.seconds(for: message)))
             if !_Concurrency.Task.isCancelled { toast = nil }
         }
+    }
+
+    /// Asked once, one question at a time: set once the user agreed to quit, and while the question is open
+    /// a second quit (Dock, ⌘Q, a logout) is turned down instead of opening a second alert (task 19).
+    private var quitGate = QuitGate()
+
+    /// Before quitting during a download (task 19): the files so far stay, and Download resumes from them.
+    func confirmQuit() -> Bool {
+        let detail = QuitQuestion.detail(imageDownloads: runningDownloads.map(\.name), agentDownload: agentDownload)
+        switch quitGate.request(downloading: detail != nil) {
+        case .quit: return true
+        case .ignore:
+            NSApp.activate()
+            return false
+        case .ask: break
+        }
+        let alert = NSAlert()
+        alert.messageText = QuitQuestion.title
+        alert.informativeText = detail ?? ""
+        alert.addButton(withTitle: "Quit")
+        alert.addButton(withTitle: "Cancel")
+        let quit = alert.runModal() == .alertFirstButtonReturn
+        quitGate.answered(quit: quit)
+        return quit
+    }
+
+    /// The Quit command: asks first during a download, closes any open sheet (AppKit won't quit with one
+    /// open), then quits.
+    func quit() {
+        guard confirmQuit() else { return }
+        showOnboarding = false
+        for window in NSApp.windows {
+            if let sheet = window.attachedSheet { window.endSheet(sheet) }
+        }
+        DispatchQueue.main.async { NSApp.terminate(nil) }
     }
 
     func shutdown() {
