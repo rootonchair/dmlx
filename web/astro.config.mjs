@@ -4,7 +4,7 @@ import { defineConfig } from 'astro/config';
 import starlight from '@astrojs/starlight';
 
 export default defineConfig({
-  site: 'https://dmlx.vercel.app',
+  site: 'https://www.dmlx.app',
   vite: { server: { fs: { allow: ['..'] } } },
   redirects: { '/docs': '/docs/getting-started/' },
   integrations: [
@@ -23,7 +23,7 @@ export default defineConfig({
         { tag: 'link', attrs: { rel: 'icon', href: '/favicon.ico', sizes: '48x48' } },
         { tag: 'link', attrs: { rel: 'apple-touch-icon', href: '/apple-touch-icon.png' } },
         { tag: 'meta', attrs: { property: 'og:site_name', content: 'dMLX' } },
-        { tag: 'meta', attrs: { property: 'og:image', content: 'https://dmlx.vercel.app/og.jpg' } },
+        { tag: 'meta', attrs: { property: 'og:image', content: 'https://www.dmlx.app/og.jpg' } },
         { tag: 'meta', attrs: { property: 'og:image:width', content: '1200' } },
         { tag: 'meta', attrs: { property: 'og:image:height', content: '630' } },
         { tag: 'meta', attrs: { name: 'twitter:card', content: 'summary_large_image' } },

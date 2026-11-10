@@ -271,7 +271,7 @@ uses simple rules to route messages. For more data, refer to
 
 ## Install
 
-1. Download `dMLX-<version>-macos-arm64.dmg` from [the dMLX website](https://dmlx.vercel.app/download/) or from
+1. Download `dMLX-<version>-macos-arm64.dmg` from [the dMLX website](https://www.dmlx.app/download/) or from
    [GitHub Releases](https://github.com/rootonchair/dmlx/releases), which also has a `.zip` of the same app.
 2. Open the `.dmg` and drag `dMLX.app` onto the Applications folder.
 3. The beta is not notarized. The first time that you open the app, do this: **right-click the app → Open → Open**.

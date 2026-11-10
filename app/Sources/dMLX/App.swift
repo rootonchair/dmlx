@@ -65,7 +65,7 @@ struct DMLXApp: App {
                 Button("New Creation") { model.newSession() }.keyboardShortcut("n")
             }
             CommandGroup(replacing: .help) {
-                Link("dMLX Guide", destination: URL(string: "https://dmlx.vercel.app/docs/using-dmlx/")!)
+                Link("dMLX Guide", destination: URL(string: "https://www.dmlx.app/docs/using-dmlx/")!)
                 Button("Show Tips Again") { Guide.shared.showAgain() }
             }
             // In the app menu under Settings…: setup opens by itself only on a first launch, and this brings
