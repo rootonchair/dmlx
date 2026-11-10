@@ -26,6 +26,8 @@ const repo = 'https://github.com/rootonchair/dmlx';
 const releases = releasesPage;
 const download = await latestDownload();
 const downloadNote = [download.tag + (download.prerelease && !/alpha|beta|rc/.test(download.tag) ? ' (pre-release)' : ''), download.sizeMB && `${download.sizeMB} MB`, '.dmg'].filter(Boolean).join(' · ');
+// 'v0.1.0-beta5' -> 'v0.1 beta 5', from the release the Download button links to.
+const versionLabel = download.tag.replace(/^v(\d+\.\d+)\.0/, 'v$1').replace(/-(alpha|beta|rc)(\d+)$/, ' $1 $2');
 const title = 'dMLX · Make and edit images by chat. Free, private, on your Mac';
 const description = 'Make and edit images by chatting, all on your Mac. Free and open source. No account, no cloud, no subscription. Every version is kept. For Apple Silicon Macs.';
 
@@ -94,7 +96,7 @@ const examples = [
 <header class="hero">
   <div class="wrap">
     <div class="hero-copy">
-      <span class="eyebrow">Free · Open source · No subscription · Native macOS app · v0.1 beta 4</span>
+      <span class="eyebrow">Free · Open source · No subscription · Native macOS app · {versionLabel}</span>
       <h1>Make and edit images just by asking. <em>Free and private, on your Mac.</em></h1>
       <p class="lede">Describe an image, then say what to change in plain words. dMLX works out which image you mean, writes the prompt, picks the model and keeps every version. No account, no cloud, no subscription, no per-image fees. Make as many images as you like.</p>
       <div class="btns">
@@ -447,7 +449,9 @@ a:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outlin
 .examples { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px }
 @media (max-width: 400px) { .examples { grid-template-columns: 1fr } }
 .ex { margin: 0; background: var(--raise); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; display: grid; grid-template-rows: auto 1fr }
-.ex > img { width: 100%; aspect-ratio: 4/3; object-fit: cover; object-position: top }
+/* The whole screenshot (a poster's title and the version buttons sit at the bottom), on the app's own
+   dark background so the space beside a tall or wide shot reads as part of it. */
+.ex > img { width: 100%; aspect-ratio: 4/3; object-fit: contain; background: #1e1e1e }
 /* Two square crops side by side: 2/1 keeps each half square, so nothing is cut off (at 4/3 the removed mug was). */
 .pair { display: grid; grid-template-columns: 1fr 1fr; gap: 2px; aspect-ratio: 2/1; background: var(--line) }
 .pair > div { position: relative; overflow: hidden }

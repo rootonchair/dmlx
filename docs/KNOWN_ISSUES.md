@@ -1,4 +1,4 @@
-# Known issues — v0.1 beta 4
+# Known issues — v0.1 beta 5
 
 | Area | Issue | Workaround / plan |
 |---|---|---|
@@ -11,7 +11,9 @@
 | Previews | No live preview frames yet; the card shows progress (and the blurred source image while editing). | Planned: cheap latent previews. |
 | Agent services | Ollama is tested end to end. The Claude and ChatGPT connections are tested only against recorded replies, not against the live services. A service's own model can plan differently from the agents on this Mac, which are the ones measured in `docs/benchmarks/`. | Report a problem with the service and model you use. |
 | Features | No video, no mask-based inpainting (Crop / Draw paints visible marks that the edit model reads), no upscaling, no LoRA in this beta. | On the roadmap (`dmlx-spec.md` §13). |
-| Models | Only FLUX.2 Klein, FLUX.3 Klein, Z-Image, Qwen Image 2.1, ERNIE Image Turbo, MOSS Image, Boogu Image Turbo, Iris 3B Turbo and Krea 2 Turbo models in mflux format can be added; other mflux families need a table entry and a memory measurement (task 15). ERNIE, MOSS, Boogu and Krea 2 are slow (minutes per 1024 px image). Memory estimates for added 9B and base models are derived, not measured on every variant. | Pick an mflux-community version; report variants that misbehave. |
+| Models | Only FLUX.2 Klein, FLUX.3 Klein, Z-Image, Qwen Image 2.1, ERNIE Image Turbo, MOSS Image, FIBO 2, Ideogram 4, Boogu Image Turbo, Iris 3B Turbo and Krea 2 Turbo models in mflux format can be added; other mflux families need a table entry and a memory measurement (task 15). ERNIE, MOSS, FIBO 2, Ideogram 4, Boogu and Krea 2 are slow (minutes per 1024 px image). Memory estimates for added 9B and base models are derived, not measured on every variant. | Pick an mflux-community version; report variants that misbehave. |
+| Layout | Ideogram 4 sometimes draws stray, garbled letters in empty parts of a poster. | A model limit; a redraw with another seed, or MOSS Image, usually avoids it. |
+| Layout | A follow-up edit of a Layout poster ("make it warmer") goes to an edit model such as FLUX.2 Klein, which keeps the picture but not the boxes, and can change colours you did not ask for. Moving a box by typing it is not supported yet. | Drag the box in Crop / Draw → Layout and choose **Redraw with layout**. Planned (task 18). |
 | History | A job that is running when you quit the app is not resumed; it shows as stopped. | Retry from the turn. |
 | Cache | Prompt embeddings are cached in memory only and are cleared when the engine restarts. | Planned SSD tier (spec F6). |
 | Network | Models download from Hugging Face once; downloads need network access. | After that dMLX works offline. |
