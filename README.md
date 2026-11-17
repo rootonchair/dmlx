@@ -274,8 +274,10 @@ uses simple rules to route messages. For more data, refer to
 1. Download `dMLX-<version>-macos-arm64.dmg` from [the dMLX website](https://www.dmlx.app/download/) or from
    [GitHub Releases](https://github.com/rootonchair/dmlx/releases), which also has a `.zip` of the same app.
 2. Open the `.dmg` and drag `dMLX.app` onto the Applications folder.
-3. The beta is not notarized. The first time that you open the app, do this: **right-click the app → Open → Open**.
-   As an alternative, run `xattr -dr com.apple.quarantine /Applications/dMLX.app`.
+3. The beta is not notarized, so macOS blocks it the first time. Open `dMLX.app` once, then click **Done** in
+   the warning. Go to **System Settings → Privacy & Security**, scroll down, and click **Open Anyway** next to
+   the message about dMLX. Confirm with your password. (Right-click → Open does not work on macOS 15 and later.)
+   As an alternative, run `xattr -dr com.apple.quarantine /Applications/dMLX.app` in Terminal.
 4. When you start dMLX for the first time, it recommends an image model and an agent model for your Mac, and
    shows the total download size. Click **Download**. You can change either model, or skip the agent, and
    change them later in **Settings**. After this step, dMLX operates offline.

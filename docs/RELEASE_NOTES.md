@@ -33,7 +33,7 @@ Apple Silicon, macOS 15+, 16 GB memory or more. About 7–11 GB of disk for the 
 ## Install
 
 Open the `.dmg` and drag dMLX onto the Applications folder (a `.zip` of the same app is also attached), then
-right-click → Open the first time (beta builds are not notarized). The first-run setup downloads the models.
+open it once and click **Open Anyway** in System Settings → Privacy & Security (beta builds are not notarized). The first-run setup downloads the models.
 
 ## Known issues
 
@@ -63,7 +63,7 @@ Apple Silicon, macOS 15+, 16 GB memory or more. About 7–11 GB of disk for the 
 ## Install
 
 Open the `.dmg` and drag dMLX onto the Applications folder (a `.zip` of the same app is also attached), then
-right-click → Open the first time (beta builds are not notarized). The first-run setup downloads the models.
+open it once and click **Open Anyway** in System Settings → Privacy & Security (beta builds are not notarized). The first-run setup downloads the models.
 
 ## Known issues
 
@@ -102,7 +102,7 @@ Apple Silicon, macOS 15+, 16 GB memory or more. About 7–11 GB of disk for the 
 ## Install
 
 Open the `.dmg` and drag dMLX onto the Applications folder (a `.zip` of the same app is also attached), then
-right-click → Open the first time (beta builds are not notarized). The first-run setup downloads the models.
+open it once and click **Open Anyway** in System Settings → Privacy & Security (beta builds are not notarized). The first-run setup downloads the models.
 
 ## Known issues
 
@@ -143,7 +143,7 @@ Apple Silicon, macOS 15+, 16 GB memory or more. Plus 2.8–6.0 GB disk for an ag
 ## Install
 
 Open the `.dmg` and drag dMLX onto the Applications folder (a `.zip` of the same app is also attached), then
-right-click → Open the first time (beta builds are not notarized).
+open it once and click **Open Anyway** in System Settings → Privacy & Security (beta builds are not notarized).
 Download an agent model in Settings → Intelligence → Agent; without one, messages are routed by rules.
 
 ## Known issues
@@ -186,7 +186,7 @@ Apple Silicon, macOS 15+, 16 GB memory or more.
 
 ## Install
 
-Unzip, move to Applications, then right-click → Open the first time (beta builds are not notarized).
+Unzip, move to Applications, then open it once and click **Open Anyway** in System Settings → Privacy & Security (beta builds are not notarized).
 
 ## Known issues
 

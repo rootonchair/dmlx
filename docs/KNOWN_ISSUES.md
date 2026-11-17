@@ -2,7 +2,7 @@
 
 | Area | Issue | Workaround / plan |
 |---|---|---|
-| Install | The app is ad-hoc signed, not notarized. macOS blocks the first launch. | Right-click → Open, or `xattr -dr com.apple.quarantine /Applications/dMLX.app`. Notarized builds need an Apple Developer ID. |
+| Install | The app is ad-hoc signed, not notarized. macOS blocks the first launch. | Open the app once, then **System Settings → Privacy & Security → Open Anyway**. Or run `xattr -dr com.apple.quarantine /Applications/dMLX.app`. (Right-click → Open no longer works on macOS 15+.) Notarized builds need an Apple Developer ID. |
 | Hardware | The 16 GB target is tested on a loaded 24 GB Mac and on a simulated 16 GB Mac, **not on a real 16 GB machine**. | The simulation holds back the missing memory and applies the same gate (no critical pressure, swap-in ≤ 64 MB/s). |
 | Speed | Edits take about twice as long as new images (the reference image doubles the sequence): ~37 s at 1024² on a base M5, ~45 s when it loads one part at a time to save memory. | Pro/Max chips are proportionally faster. |
 | Speed | Lowest-memory mode (used only when memory is very tight) reads the model from disk block by block: about 25% slower. | Close a few apps; the engine picks a faster mode by itself when there is room. |
