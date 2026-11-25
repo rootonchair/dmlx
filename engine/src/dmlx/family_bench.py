@@ -130,10 +130,9 @@ def run(args) -> None:
         os.environ["DMLX_HOME"] = home
         Path(home, "models").mkdir()
         shutil.copy(args.spec, Path(home, "models", Path(args.spec).name))
-    os.environ.setdefault("DMLX_ROUTER_PROVIDER", "disabled")
     from dmlx.engine import Engine
 
-    engine = Engine()
+    engine = Engine(watch_pressure=False)  # the idle watcher would free models between measurements
     spec = engine.registry.get(args.model)
     low = spec.low_memory_decode
     sizes = [int(s) for s in args.sizes.split(",")]

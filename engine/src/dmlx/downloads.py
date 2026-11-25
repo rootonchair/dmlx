@@ -85,22 +85,25 @@ def delete_local(spec: ModelSpec, keep_repos: Iterable[str] = ()) -> int:
     revisions). `keep_repos`: extra repos another model still uses; they stay."""
     keep = {repo.lower() for repo in keep_repos}
     freed = _delete_repo(spec.repo)
-    for extra in extra_repos(spec):
-        if extra.repo.lower() in keep:
-            continue
-        freed += _delete_repo(extra.repo)
-        if extra.tensors:
-            dest = _mflux_cache() / extra.tensors[2]
-            for path in (dest, dest.with_name(dest.name + ".incomplete")):
-                try:
-                    freed += path.stat().st_size
-                    path.unlink()
-                except OSError:
-                    pass
-    spec.local_path = None
-    spec.disk_size = 0
-    for comp in spec.components.values():
-        comp.stream_size = 0
+    try:
+        for extra in extra_repos(spec):
+            if extra.repo.lower() in keep:
+                continue
+            freed += _delete_repo(extra.repo)
+            if extra.tensors:
+                dest = _mflux_cache() / extra.tensors[2]
+                for path in (dest, dest.with_name(dest.name + ".incomplete")):
+                    try:
+                        freed += path.stat().st_size
+                        path.unlink()
+                    except OSError:
+                        pass
+    finally:
+        # The model's own weights are gone even when an extra repo failed to delete: never list it as downloaded.
+        spec.local_path = None
+        spec.disk_size = 0
+        for comp in spec.components.values():
+            comp.stream_size = 0
     return freed
 
 

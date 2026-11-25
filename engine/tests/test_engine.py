@@ -650,6 +650,18 @@ def test_a_pinned_model_and_a_running_job_keep_their_memory(make_engine, client_
     assert len(engine.memory.resident_components()) == 3
 
 
+def test_the_agent_planning_beside_a_job_is_not_unloaded_when_the_job_ends(make_engine):
+    from dmlx import sysmem
+
+    engine = make_engine()
+    engine.prompt_assistant = agent = _ResidentAgent()
+    _under_pressure(engine, sysmem.PRESSURE_WARN)
+    with engine._agent_lock:  # planning beside a job: the accelerator lock is free once the job ends
+        assert not engine._free_under_pressure()
+    assert agent.resident
+    assert engine._free_under_pressure() and not agent.resident
+
+
 def test_the_agent_is_not_kept_loaded_between_messages_under_pressure(make_engine):
     from dmlx import sysmem
 

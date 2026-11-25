@@ -157,6 +157,12 @@ def _mlx_held() -> int:
     return mx.get_active_memory() + mx.get_cache_memory()
 
 
+def _sentence(text: str) -> str:
+    """`text` ending in a full stop, so it reads as a sentence when another one follows it."""
+    text = text.strip()
+    return text if not text or text[-1] in ".!?" else text + "."
+
+
 def _blank(image) -> bool:
     """An image of one flat colour: what a model's NaNs become when they are cast to pixels."""
     lo, hi = image.convert("L").getextrema()
@@ -182,6 +188,10 @@ class Engine:
         self._queue: "queue.Queue[Job]" = queue.Queue()
         self._lock = threading.Lock()
         self._accelerator_lock = threading.Lock()
+        # Held while the agent is in use. Planning beside a running job holds it without the accelerator lock,
+        # so whatever unloads the agent (the idle watcher, the worker before a job) takes it first.
+        # Order: the accelerator lock, then this one.
+        self._agent_lock = threading.Lock()
         # Memory the unloaded agent is still giving back (`_agent_memory_returning`):
         # (headroom just before it ran, headroom just after the unload, bytes MLX freed, until when).
         self._agent_returning: tuple[int, int, int, float] | None = None
@@ -984,7 +994,8 @@ class Engine:
             try:
                 with self._accelerator_lock:
                     if self.prompt_assistant is not None:
-                        self.prompt_assistant.unload()
+                        with self._agent_lock:  # waits for a plan made beside the previous job
+                            self.prompt_assistant.unload()
                     if job.workflow_plan is not None and len(job.workflow_plan.steps) > 1:
                         self._run_multi(job)
                     else:
@@ -1022,7 +1033,12 @@ class Engine:
                     return False  # the next job plans its own memory
                 assistant = self.prompt_assistant
                 if getattr(assistant, "resident", False):
-                    assistant.unload()
+                    if not self._agent_lock.acquire(blocking=False):
+                        return False  # the agent is planning beside the job that just ended
+                    try:
+                        assistant.unload()
+                    finally:
+                        self._agent_lock.release()
                     log.info("memory pressure while idle: unloaded the agent")
                     return True
                 freed = self.memory.free_least_used()
@@ -1397,6 +1413,7 @@ class Engine:
                 log.warning("agent planning skipped: an image is being made")
                 return None, "skipped_busy", None  # the cheap path answers now
         before = None
+        self._agent_lock.acquire()
         try:
             # Beside a job, never free memory: the components to free would be the running job's.
             if not beside and not self.memory.make_room(self.prompt_assistant.need_bytes):
@@ -1409,10 +1426,15 @@ class Engine:
                                 models=models or None, free_gb=free_gb)
         except (IntelligenceError, KeyError, OSError) as exc:
             log.warning("agent planning failed: %s", exc)
-            return None, "failed", str(exc)
+            # Only an agent service's own message is worth showing (not running, key refused); a KeyError's
+            # text is a bare name.
+            return None, "failed", _sentence(str(exc)) if isinstance(exc, IntelligenceError) else None
         finally:
-            if not beside:
-                self._release_assistant(before)
+            try:
+                if not beside:
+                    self._release_assistant(before)
+            finally:
+                self._agent_lock.release()
             if acquired:
                 self._accelerator_lock.release()
         if result is None:
@@ -1480,15 +1502,17 @@ class Engine:
             if emit:
                 emit("loading", {"component": "prompt_assistant"})
                 emit("rewriting", {})
-            try:
-                return assistant.enhance(text, supports_negative=supports_negative, operation=operation, images=images)
-            except IntelligenceError as exc:
-                raise RequestError("prompt_provider_unavailable", str(exc), 502) from exc
-            finally:
-                if emit is None:
-                    self._release_assistant()
-                else:
-                    assistant.unload()
+            with self._agent_lock:  # on the worker, a plan made beside the job may still be using the agent
+                try:
+                    return assistant.enhance(text, supports_negative=supports_negative, operation=operation,
+                                             images=images)
+                except IntelligenceError as exc:
+                    raise RequestError("prompt_provider_unavailable", str(exc), 502) from exc
+                finally:
+                    if emit is None:
+                        self._release_assistant()
+                    else:
+                        assistant.unload()
         finally:
             if emit is None:
                 self._accelerator_lock.release()
@@ -1581,6 +1605,7 @@ class Engine:
             log.warning("prompt assistant structuring with less free memory than it needs")
         job.emit("loading", {"component": "prompt_assistant"})
         job.emit("rewriting", {})
+        self._agent_lock.acquire()  # a plan made beside this job may still be using the agent
         try:
             for _attempt in range(2):
                 try:
@@ -1595,7 +1620,10 @@ class Engine:
                     reason = str(exc)
             return None, reason
         finally:
-            assistant.unload()  # on the worker: the image model loads next
+            try:
+                assistant.unload()  # on the worker: the image model loads next
+            finally:
+                self._agent_lock.release()
 
     def _plain_rewrite(self, job: Job, spec: ModelSpec) -> tuple[GenRequest, dict]:
         """Edits, and new images in Auto mode, are rewritten on this Mac before the image model loads.

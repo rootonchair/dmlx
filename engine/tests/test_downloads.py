@@ -1,6 +1,5 @@
 import os
 from pathlib import Path
-from types import SimpleNamespace
 
 from conftest import fake_spec
 from dmlx import downloads
@@ -116,6 +115,28 @@ def test_a_failed_delete_raises_and_keeps_the_repo_folder(tmp_path, monkeypatch)
     with pytest.raises(OSError):
         downloads.delete_local(spec)
     assert ours.exists()  # its link into the shared store is not lost
+
+
+def test_a_failed_extra_delete_still_marks_the_model_removed(monkeypatch):
+    import pytest
+
+    from dmlx import downloads
+
+    spec = fake_spec("model")
+    spec.repo = "org/model"
+    spec.local_path = "/somewhere"
+    spec.disk_size = 100
+    monkeypatch.setattr(downloads, "extra_repos", lambda _spec: [downloads.ZEN_IMAGE_EDIT])
+
+    def delete(repo):
+        if repo != "org/model":
+            raise OSError("permission denied")
+        return 100
+
+    monkeypatch.setattr(downloads, "_delete_repo", delete)
+    with pytest.raises(OSError):
+        downloads.delete_local(spec)
+    assert spec.local_path is None and spec.disk_size == 0  # its own weights are gone
 
 
 def test_marks_only_a_data_folder_it_creates(tmp_path, monkeypatch):

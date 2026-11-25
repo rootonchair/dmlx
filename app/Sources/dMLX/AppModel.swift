@@ -1957,6 +1957,17 @@ final class AppModel {
                 """)
             return
         }
+        // Checked before anything is deleted: removeData clears settings and keys first, so a folder it then
+        // refuses (one directly in the home folder, such as ~/dmlx-data) would fail every retry.
+        if let refused = folders.first(where: {
+            FileManager.default.fileExists(atPath: $0.path) && !Uninstaller.isSafeToDelete($0)
+        }) {
+            showUninstallProblem("""
+                dMLX's files are in \(refused.path), which is too close to your home folder for Uninstall to \
+                delete safely. Delete dMLX's files from it by hand.
+                """)
+            return
+        }
         _Concurrency.Task {
             let bytes = await _Concurrency.Task.detached { Uninstaller.size(of: folders) }.value
             let alert = NSAlert()

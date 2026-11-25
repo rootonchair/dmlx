@@ -1,7 +1,6 @@
-"""Score the planning agent (and optionally the router it replaces) on chats from a JSONL dataset.
+"""Score the planning agent on chats from a JSONL dataset.
 
-    uv run --extra local-llm python -m dmlx.prompting.agent_eval \\
-        [--model ID] [--router-model-path PATH --router-revision REV] [--out report.json]
+    uv run --extra agent python -m dmlx.prompting.agent_eval [--model ID] [--out report.json]
 
 Images are synthetic placeholders, so this scores routing (workflow and input images); the prompts the
 agent writes are saved for review but not scored. History entries:
@@ -106,8 +105,6 @@ def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--dataset", type=Path, default=Path("evals/agent-routing.jsonl"))
     parser.add_argument("--model", default=local_vlm.DEFAULT_MODEL, choices=sorted(local_vlm.MODELS))
-    parser.add_argument("--router-model-path", type=Path)
-    parser.add_argument("--router-revision")
     parser.add_argument("--out", type=Path)
     args = parser.parse_args(argv)
     path = local_vlm.locate(args.model)
@@ -136,28 +133,7 @@ def main(argv: list[str] | None = None) -> None:
             rows.append(row)
             print(f"{case['id']:24} agent  {intent:15} {'ok' if ok else 'MISS'} {seconds:5.1f}s", flush=True)
         assistant.unload()
-        if args.router_model_path and args.router_revision:
-            from dmlx.intelligence.local_llm import LocalLLMDecisionProvider
-
-            router = LocalLLMDecisionProvider(args.router_model_path, revision=args.router_revision)
-            for row, case in zip(rows, cases):
-                state, ids = state_for(case)
-                started = time.monotonic()
-                if not state["current_result_id"] and not state["attachments"]:
-                    intent, inputs = "image.generate", []
-                else:
-                    decision = router.decide(state, workflows)
-                    intent = decision.intent
-                    inputs = list(state["attachments"]) or list(decision.input_result_ids) or (
-                        [state["current_result_id"]] if intent == "image.edit" else [])
-                seconds = round(time.monotonic() - started, 2)
-                ok_intent, ok = correct(case, ids, intent, inputs)
-                row["router"] = {"intent": intent, "inputs": inputs, "seconds": seconds, "ok_intent": ok_intent, "ok": ok}
-                print(f"{case['id']:24} router {intent:15} {'ok' if ok else 'MISS'} {seconds:5.1f}s", flush=True)
-            router.unload()
     report = {"model": args.model, "agent": summarize(rows, "agent")}
-    if any("router" in r for r in rows):
-        report["router"] = summarize(rows, "router")
     report["rows"] = rows
     if args.out:
         args.out.write_text(json.dumps(report, indent=1, ensure_ascii=False))
