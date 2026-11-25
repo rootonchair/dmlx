@@ -7,23 +7,41 @@ import SwiftUI
 /// write snapshots of the app's own window (no Screen Recording permission needed).
 ///
 /// Script: {"out": "/dir", "steps": [{"newSession": true}, {"send": "a boat"}, {"waitIdle": 300},
-///          {"snapshot": "name"}, {"variation": true}, {"attachFile": "/path.png"}, {"draft": "text"}, {"sleep": 1},
-///          {"onboarding": true|false}, {"onboardingStep": "welcome"|"setup"}, {"onboardingDownload": true} (presses Download or Start Creating), {"agentService": {"service": "ollama", "model": "…"}}, {"guideNext": "chat"|"image"} (the tip's Next; DMLX_RESET_TIPS=1 shows the guide again), {"settings": true}, {"selectSession": 0}, {"renderChat": "name"},
+///          {"snapshot": "name"}, {"variation": true}, {"attachFile": "/path.png"}, {"attachFiles": ["/a.png", "/b.heic"]}, {"logAttach": "label"}, {"draft": "text"}, {"sleep": 1},
+///          {"onboarding": true|false}, {"onboardingStep": "welcome"|"setup"}, {"onboardingDownload": true} (presses Download or Start Creating), {"agentService": {"service": "ollama", "model": "…"}}, {"guideNext": "chat"|"image"|"editor"} (the tip's Next; DMLX_RESET_TIPS=1 shows the guide again), {"settings": true}, {"selectSession": 0}, {"renderChat": "name"} (add "chatWidth": 384 to draw the turns at that width, e.g. the
+///          detail column of the smallest window),
 ///          {"modelChoice": "auto"|"<model id>"} (both tasks), {"generateModel": "…"}, {"editModel": "…"}, {"logPreview": true},
-///          {"windowSize": [w, h]}, {"measure": true}, {"fakeSessions": n},
+///          {"windowSize": [w, h]}, {"hostWindow": [w, h]} (hides the app's window and shows RootView in a plain window
+///          of that size that macOS does not shrink to the visible screen, e.g. as tall as a screen with the Dock hidden),
+///          {"measure": true}, {"fakeSessions": n},
 ///          {"ask": {"message": "…", "question": "…"}} (as if the agent asked), {"planning": "message"} (as if just sent; "" clears), {"waitRouted": 60},
 ///          {"flags": "label"} (logs whether this or another chat is making an image, and a waiting message),
 ///          {"appearance": "system"|"light"|"dark"}, {"settingsTab": "intelligence"} (with {"settings": true}, which hosts SettingsView in its own window), {"closeSettings": true},
 ///          {"addModel": ""|"<group>"} (Add Model over Settings → Models), {"openModelMenu": "name", "keys": [125]},
 ///          Layout (task 17): {"layoutBoxes": [<LayoutBox json>]} (the composer's chip), {"openLayout": true} (▭ Layout,
-///          a blank canvas), {"layoutTool": true} (with openEditor: open on Layout), {"applyLayout": {"move": {"<label>":
+///          a blank canvas), {"layoutTool": true} (with openEditor: open on Layout),
+///          {"editorTool": "Crop"|"Paint"|"Erase"|"Layout"} (with openEditor: open on that tool), {"selectBox": "<label>"|"*"} (in the
+///          open editor's Layout tool: select that box, "*" the first, as a click does), {"sheetSize": [w, h]}, {"pickVersion": 0}, {"moveBoxes": {"<label>": [y0, x0, y1, x1]}}, {"applyLayout": {"move": {"<label>":
 ///          [y0, x0, y1, x1]}, "describe": {"<label>": "text"}}} (what Redraw with layout sends), {"logLayout": true},
 ///          {"capture": "name", "window": "main"|"settings"|"settingsSheet"} (the real window through screencapture, native
 ///          controls included; needs Screen Recording for the launching terminal),
 ///          {"scroll": "top"|"bottom", "overscroll": 60} (the chat transcript, to capture a chat taller than the
 ///          window in parts),
 ///          {"uninstall": true} (Uninstall dMLX…; only with a throwaway DMLX_HOME and a copy of the app),
+///          {"fakeTurnState": {"status": "error"|"rendering"|"cancelled", "code": "insufficient_memory", "message": "…",
+///          "phase": "Step 3 of 4", "step": 3, "total": 4, "versions": 5}} (in memory only, never saved: the latest
+///          image turn's current version in that state; "versions": n repeats it as v1…vn; an error drops the image),
 ///          {"quit": true}]}
+extension Notification.Name {
+    /// The harness's selectBox: the open editor selects the box with this label (the object).
+    static let dmlxHarnessSelectBox = Notification.Name("dmlx.harness.selectBox")
+}
+
+/// The harness's hostWindow: keeps the size it is given, even taller than the visible screen.
+private final class UnclampedWindow: NSWindow {
+    override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect { frameRect }
+}
+
 @MainActor
 enum DevHarness {
     /// When no SwiftUI window is on screen (e.g. the Mac is locked), render RootView in our own window.
@@ -81,7 +99,9 @@ enum DevHarness {
         if let index = step["selectSession"] as? Int, model.sessions.indices.contains(index) {
             model.select(model.sessions[index].id)
         }
-        if let name = step["renderChat"] as? String { renderChat(model, name: name, out: out) }
+        if let name = step["renderChat"] as? String {
+            renderChat(model, name: name, out: out, width: step["chatWidth"] as? Double ?? 780)
+        }
         if let text = step["draft"] as? String { model.draft = text }
         if let choice = step["modelChoice"] as? String { model.setModelChoice(choice) }
         if let choice = step["generateModel"] as? String { model.setModelChoice(choice, for: [.t2i]) }
@@ -129,7 +149,46 @@ enum DevHarness {
             }
         }
         if step["variation"] != nil, let t = model.latestImageTurn { model.variation(t.id) }
+        if let spec = step["fakeTurnState"] as? [String: Any], let id = model.latestImageTurn?.id,
+           let t = model.turns.firstIndex(where: { $0.id == id }) {
+            var turn = model.turns[t]
+            if let n = spec["versions"] as? Int, n > 1, let v = turn.current {
+                turn.versions = (0..<n).map { _ in var c = v; c.id = UUID().uuidString; return c }
+                turn.activeVersion = n - 1
+            }
+            var v = turn.versions[turn.activeVersion]
+            if let raw = spec["status"] as? String, let status = VersionStatus(rawValue: raw) {
+                v.status = status
+                if status == .error || status == .cancelled { v.resultId = nil }
+            }
+            v.errorCode = spec["code"] as? String ?? v.errorCode
+            v.errorMessage = spec["message"] as? String ?? v.errorMessage
+            v.phase = spec["phase"] as? String ?? v.phase
+            v.step = spec["step"] as? Int ?? v.step
+            v.totalSteps = spec["total"] as? Int ?? v.totalSteps
+            turn.versions[turn.activeVersion] = v
+            model.turns[t] = turn
+        }
         if let path = step["attachFile"] as? String { model.attach(files: [URL(fileURLWithPath: path)]) }
+        // Several files at once, as a drop or the file picker gives them (task 19).
+        if let paths = step["attachFiles"] as? [String] { model.attach(files: paths.map { URL(fileURLWithPath: $0) }) }
+        if step["cancelHeldSend"] != nil { model.cancelHeldSend() }
+        if let label = step["logSheets"] as? String {
+            log("sheets[\(label)] showOnboarding=\(model.showOnboarding) attached=\(NSApp.windows.filter { $0.attachedSheet != nil }.count)")
+        }
+        if step["pullAgent"] != nil, let client = model.client {
+            model.noteAgentDownload(try? await client.pullPromptAssistant())
+        }
+        if let label = step["logDownloads"] as? String {
+            log("downloads[\(label)] models=\(model.runningDownloads.map(\.name)) agent=\(model.agentDownload ?? "-")")
+        }
+        if let label = step["logAttach"] as? String {
+            let user = model.turns.last(where: { $0.kind == .user })
+            log("attach[\(label)] attachments=\(model.attachments.map(\.label)) uploading=\(model.uploading.map(\.label)) "
+                + "sendAfterUpload=\(model.sendAfterUpload ?? "-") draft=\(model.draft) toast=\(model.toast ?? "-") "
+                + "lastUser=\(user?.text ?? "-") lastUserAttachments=\(user?.attachments.count ?? 0) "
+                + "planning=\(model.planningMessage ?? "-") hint=\(model.routePreview)")
+        }
         if let name = step["onboardingStep"] as? String, let value = OnboardingStep(rawValue: name) { model.onboardingStep = value }
         if let show = step["onboarding"] as? Bool { model.showOnboarding = show }
         if step["onboardingDownload"] != nil { model.harnessOnboardingDownload += 1 }
@@ -141,7 +200,8 @@ enum DevHarness {
         }
         if let group = step["guideNext"] as? String {
             // Press Next on the current tip of the "chat" or "image" group.
-            if let tip = (group == "image" ? Guide.shared.image : Guide.shared.chat).currentTip { Guide.shared.next(tip) }
+            if group == "editor" { Guide.shared.next(Guide.shared.editor) }
+            else if let tip = (group == "image" ? Guide.shared.image : Guide.shared.chat).currentTip { Guide.shared.next(tip) }
         }
         // {"settings": true}, or {"settings": {"height": 760}} for a taller window (README screenshots).
         if let value = step["settings"] {
@@ -204,6 +264,7 @@ enum DevHarness {
             let window: NSWindow? = switch step["window"] as? String {
             case "settings": settingsWindow()
             case "settingsSheet": settingsWindow()?.attachedSheet ?? NSApp.windows.first { $0.isSheet && $0.isVisible }
+            case "sheet": mainWindow()?.attachedSheet  // the Crop / Draw editor
             default: mainWindow()
             }
             if let view = window?.contentView, let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) {
@@ -307,7 +368,18 @@ enum DevHarness {
         }
         if step["openLayout"] != nil { model.openBlankLayout() }
         if step["layoutTool"] != nil { model.editorStartTool = "Layout" }
+        if let tool = step["editorTool"] as? String { model.editorStartTool = tool }
+        if let label = step["selectBox"] as? String {
+            NotificationCenter.default.post(name: .dmlxHarnessSelectBox, object: label)
+        }
+        // {"pickVersion": n}: shows version n (0-based) of the latest image, as its v1 / v2 buttons do.
+        if let n = step["pickVersion"] as? Int, let t = model.latestImageTurn { model.pickVersion(t.id, n) }
         if step["openEditor"] != nil, let t = model.latestImageTurn { model.openEditor(t.id) }
+        // {"moveBoxes": {"<label>": [y0, x0, y1, x1]}} (with openEditor): the boxes as if dragged, before the sheet draws.
+        if let moves = step["moveBoxes"] as? [String: [Int]], var boxes = model.editorLayout {
+            for i in boxes.indices { if let box = moves[boxes[i].label] { boxes[i].box = box; boxes[i].byUser = true } }
+            model.editorLayout = boxes
+        }
         if let spec = step["applyLayout"] as? [String: Any], var boxes = model.editorLayout {
             for (label, box) in spec["move"] as? [String: [Int]] ?? [:] {
                 if let i = boxes.firstIndex(where: { $0.label == label }), box.count == 4 {
@@ -328,9 +400,16 @@ enum DevHarness {
                 + "saved=\(v?.layout?.map { "\($0.label)\($0.box)\($0.byUser ? "*" : "")" } ?? []) pending=\(model.pendingLayout?.count ?? 0)")
         }
         if step["closeEditor"] != nil { model.closeEditor() }
+        // {"sheetSize": [w, h]}: the Crop / Draw sheet at its ideal size (it opens at its minimum under the harness).
+        if let size = step["sheetSize"] as? [Double], size.count == 2, let sheet = mainWindow()?.attachedSheet {
+            sheet.setContentSize(NSSize(width: size[0], height: size[1]))
+        }
         // {"editorDoc": {"tool": "Paint", "crop": [x, y, w, h], "paint": [[[x, y], ...]], "erase": [[[x, y], ...]],
-        //  "width": 0.03}}: reopen the editor on the latest image with this crop and these strokes (normalized).
-        if let spec = step["editorDoc"] as? [String: Any], let t = model.latestImageTurn {
+        //  "width": 0.03, "turn": 1}}: reopen the editor on the latest image with this crop and these strokes (normalized).
+        // "turn": n (1-based image number) reopens an older image instead of the latest.
+        if let spec = step["editorDoc"] as? [String: Any],
+           let t = (spec["turn"] as? Int).flatMap({ n in model.turns.first { $0.kind == .image && $0.number == n } })
+               ?? model.latestImageTurn {
             if model.editorDocument != nil {
                 // Let the sheet go away first, or SwiftUI keeps the old editor (its tool and strokes).
                 model.closeEditor()
@@ -394,11 +473,25 @@ enum DevHarness {
            let window = hostWindow ?? NSApp.windows.first(where: { $0.isVisible && $0.frame.width > 300 }) {
             window.setFrame(NSRect(origin: window.frame.origin, size: CGSize(width: size[0], height: size[1])), display: true)
         }
+        if let size = step["hostWindow"] as? [Double], size.count == 2 {
+            for window in NSApp.windows where window.isVisible && window.frame.width > 300 { window.orderOut(nil) }
+            hostWindow?.close()
+            let window = UnclampedWindow(
+                contentRect: NSRect(x: 0, y: 0, width: size[0], height: size[1]),
+                styleMask: [.titled, .closable, .resizable, .fullSizeContentView], backing: .buffered, defer: false)
+            window.title = "dMLX (harness)"
+            window.isReleasedWhenClosed = false
+            window.contentView = NSHostingView(rootView: RootView().environment(model).tint(Theme.accent))
+            window.setFrameOrigin(NSPoint(x: 0, y: (window.screen ?? NSScreen.main)?.frame.minY ?? 0))
+            window.orderFrontRegardless()
+            hostWindow = window
+            log("host window \(Int(window.frame.width))x\(Int(window.frame.height)) on a screen of \(NSScreen.main.map { "\(Int($0.frame.height)) (visible \(Int($0.visibleFrame.height)))" } ?? "?") points")
+        }
         if step["measure"] != nil, let window = hostWindow ?? NSApp.windows.first(where: { $0.isVisible && $0.frame.width > 300 }),
            let content = window.contentView {
             content.layoutSubtreeIfNeeded()
             let root = content.subviews.first
-            log("measure window=\(window.frame.size) fitting=\(root?.fittingSize ?? .zero) rootFrame=\(root?.frame ?? .zero)")
+            log("measure window=\(window.frame.size) minSize=\(window.minSize) fitting=\(root?.fittingSize ?? .zero) rootFrame=\(root?.frame ?? .zero)")
             func find(_ view: NSView, _ match: (NSView) -> Bool) -> NSView? {
                 if match(view) { return view }
                 for sub in view.subviews { if let hit = find(sub, match) { return hit } }
@@ -626,7 +719,7 @@ enum DevHarness {
 
     /// Draws the chat turns and status card with ImageRenderer. AppKit-backed parts (the sidebar list,
     /// scroll view, text field) do not appear in window snapshots, so this is how the chat itself is reviewed.
-    static func renderChat(_ model: AppModel, name: String, out: URL) {
+    static func renderChat(_ model: AppModel, name: String, out: URL, width: Double = 780) {
         let content = HStack(alignment: .top, spacing: 24) {
             VStack(alignment: .leading, spacing: 8) {
                 ForEach(model.sessions.prefix(8)) { s in
@@ -644,7 +737,7 @@ enum DevHarness {
                 ForEach(model.turns) { TurnView(turn: $0) }
                 PendingMessages()
             }
-            .frame(width: 780)
+            .frame(width: width)
         }
         .padding(24)
         .background(Color(nsColor: .windowBackgroundColor))

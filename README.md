@@ -2,13 +2,14 @@
 
 # dMLX
 
-Use chat to make and edit images fully on your Mac. dMLX is a native macOS app and a local engine.
+Make and edit images just by asking, fully on your Mac. dMLX is free and open source: no account, no
+cloud, no subscription and no per-image fees. It is a native macOS app and a local engine.
 The engine uses [MLX](https://github.com/ml-explore/mlx) and [mflux](https://github.com/filipstrand/mflux).
 A small agent on your Mac plans each message.
 
 **You can use your Mac while dMLX works.**
 
-> **Status: v0.1 beta 4.** dMLX makes only images (it generates and edits them). Video is planned.
+> **Status: v0.1 beta 5.** dMLX makes only images (it generates and edits them). Video is planned.
 > The app is not notarized yet.
 > Refer to the [release notes](docs/RELEASE_NOTES.md) and the [known issues](docs/KNOWN_ISSUES.md).
 
@@ -19,21 +20,29 @@ A small agent on your Mac plans each message.
 
 ## Highlights
 
-- **Use chat to make and edit images.** Describe an image. Then write in simple words what to change
+- **Make and edit images just by asking.** Describe an image. Then write in simple words what to change
   ("make the boat red"). Each image has a number. Thus you can write "image 1" or "the first one".
-- **An agent plans each message.** A vision-language model on your Mac reads the chat and examines the
-  images. Then it decides: a new image or an edit, the image to change, the images to use as references,
-  and the correct image model.
-- **The agent replies in the chat.** If a message is not clear, the agent asks one short question. If you
+- **No prompts to write.** A vision-language model on your Mac reads the chat and examines the images.
+  Then it decides: a new image or an edit, the image to change, the images to use as references, and the
+  image model. It writes the prompt for you. It never overrides a model that you select.
+- **It asks when it is not sure.** If a message is not clear, the agent asks one short question. If you
   send a greeting or a question about the app, the agent replies and does not make an image.
-- **Your Mac stays available for use.** The engine does a check of the memory before each image job. If
-  memory is low, the engine loads models in parts. The engine stops a job before macOS starts to swap.
-  dMLX is for Macs with 16 GB of memory or more.
-- **The app keeps all versions.** It does not overwrite an image. Variations show as v1, v2, v3. You can
+- **It does not start a job that would freeze your Mac.** The engine does a check of the memory before
+  each image job. If memory is low, the engine loads models in parts. The engine stops a job before macOS
+  starts to swap. dMLX is for Macs with 16 GB of memory or more.
+- **When words are not enough, circle it.** In Crop / Draw, crop the image and paint a mark on the part to
+  change. Then write what to do. The original image does not change.
+- **Drag text and objects into place. The rest stays.** With MOSS Image, Ideogram 4 or FIBO 2, the agent
+  plans a layout: a box for each title, line of text and main object. Move a box, then redraw. The part
+  that you moved goes to its new place, and the rest stays where it was. Thus you can move one part and not
+  start again.
+- **Every version is kept.** The app does not overwrite an image. Variations show as v1, v2, v3. You can
   edit each version. You can also edit your prompt and run it again.
-- **Private and offline.** After you download the models, all work occurs on your Mac. You do not need an
-  account or a cloud service.
-- **A local API.** The engine has an OpenAI-compatible images API for other apps and agents.
+- **Private and offline by default.** After you download the models, all work occurs on your Mac. You do
+  not need an account or a cloud service. If you select your own AI service for the agent, your messages
+  and the images in the chat go to that service. The images are still made on your Mac.
+- **An image API on your Mac.** The engine has an OpenAI-compatible images API for other apps and agents,
+  with no per-image fees.
 
 ## What you can make
 
@@ -82,21 +91,61 @@ Click **Attach edited image**. Then write what to do. The app does not change th
 
 | 1 · Crop | 2 · Paint a mark | 3 · Erase an incorrect mark |
 |---|---|---|
-| <img src="docs/screenshots/edit-1-crop.jpg" alt="The Crop / Draw editor with the Crop tool. A dashed crop frame surrounds a white teapot on a wooden table. The area outside the frame is dark."> | <img src="docs/screenshots/edit-2-paint.jpg" alt="The Paint tool. A red circle surrounds the body of the teapot. An incorrect red line goes from the circle onto the table."> | <img src="docs/screenshots/edit-3-erase.jpg" alt="The Erase tool. The incorrect red line is gone. The red circle stays. The text below the image says 'Drag to erase paint. The original image is never erased.'"> |
-| The dark area is not in the prepared image. | The circle shows the area to change. The line onto the table is an error. | Erase removes only paint. The image below the paint does not change. |
+| <img src="docs/screenshots/edit-1-crop.jpg" alt="The Crop / Draw editor with the Crop tool. The toolbar shows Tool: Crop, Paint, Erase, then undo, redo and Original. A dashed crop frame surrounds a white teapot on a wooden table; the area outside the frame is dimmed. Below the image: Crop: Full, Square, 3:2, 2:3, then Reset, Cancel and Attach edited image."> | <img src="docs/screenshots/edit-2-paint.jpg" alt="The Paint tool. A red circle surrounds the body of the teapot, and an incorrect red line is on the table below it. Below the image: the red color, the brush size slider and 'Drag over the image to paint.'"> | <img src="docs/screenshots/edit-3-erase.jpg" alt="The Erase tool. The incorrect red line is gone. The red circle stays. Below the image: the brush size slider and 'Drag to erase paint. The original image is never erased.'"> |
+| The dimmed area is not in the prepared image. | The circle shows the area to change. The line on the table is an error. The color and brush size are below the image. | Erase removes only paint. The image below the paint does not change. |
 
 **4 · Attach and ask.** **Attach edited image** puts the prepared image in the message box. The agent
 gets the prepared image, a note that tells it the image is image 1 after Crop / Draw, and your words.
 The marks are part of the prepared image. Write "remove the marks" in your message, or the result can
 keep them. The prepared image is one of the 3 images that you can attach.
 
-<img src="docs/screenshots/edit-4-attach.jpg" alt="The message box with 'Prepared image 1' attached and the message 'paint a blue and white floral pattern on the teapot where I circled in red, and remove the red marks'. Above the message box: 'Will edit the attached image · FLUX.2 Klein 4B'.">
+<img src="docs/screenshots/edit-4-attach.jpg" alt="The message box with 'Prepared image 1' attached and the message 'paint a blue and white floral pattern on the teapot where I circled in red, and remove the red marks'. Below the message: 'Will edit the attached image · FLUX.2 Klein 4B'.">
 
-| Before (the prepared image 1) | After (image 2, "Edited from the prepared image 1") |
+| Before (image 1 after Crop / Draw) | After (image 2, "Edited from image 1 after Crop / Draw") |
 |---|---|
 | <img src="docs/screenshots/edit-prepared.jpg" alt="The prepared image: the cropped area of image 1, a plain white teapot on a wooden table, with a red circle around its body."> | <img src="docs/screenshots/edit-after.jpg" alt="Image 2: the same teapot. A blue and white floral pattern covers it. No red marks remain."> |
 
 The result has the size and the framing of the cropped area, not of the full image 1.
+
+## Place things with Layout
+
+Some image models can put each part of an image in a box. For these models, the agent writes a layout
+with the prompt: a box for each title, each line of text and each main object. After the image is done,
+the boxes show on it. Click **Hide boxes** to see the image only.
+
+To change the layout, open **Crop / Draw** and select **Layout**. Drag a box to move it, or drag on an
+empty area to add a box. The boxes that you move or add turn blue. Click a box to rename it or to
+describe it. Then click **Redraw with layout**. The app makes a new version of the image. When you redraw,
+every box on the canvas counts as yours, so the agent keeps them where they are. If no box moved, the new version uses
+the same seed.
+
+<img src="docs/screenshots/layout-editor.jpg" width="640" alt="The Crop / Draw editor with the Layout tool selected, over version v1 of the Ideogram 4 jazz poster. A white dashed box from the agent, named JAZZ NIGHT, surrounds the title. The date FRIDAY 9 PM is still under the title in the image, but its blue dashed box has been dragged to the bottom right corner. Below the image: 'Blue boxes are yours.', with Reset, Cancel and Redraw with layout.">
+
+You can also draw a layout before the first image: click **Layout** in the message box, draw the boxes,
+and click **Use layout**. The boxes go with your next message. Dashed boxes are for text, and solid boxes
+are for objects. For FIBO 2, each box shows the place word that the model gets.
+
+| Draw the boxes on a blank canvas | The layout goes with your next message |
+|---|---|
+| <img src="docs/screenshots/layout-blank.jpg" alt="The Layout sheet on a blank square canvas. Three boxes: a dashed box 'JAZZ NIGHT · top', a solid box 'saxophone player · center' and a dashed box 'FRIDAY 9 PM · bottom right'. Below: Reset, Cancel and Use layout."> | <img src="docs/screenshots/layout-composer.jpg" alt="The message box with the chip 'Layout · 3 boxes', Change and a remove button, above the message 'a poster for a jazz night with the words JAZZ NIGHT and FRIDAY 9 PM'. Below: Layout, Square · 1024², New: FIBO 2 and 'Will generate · FIBO 2 (6-bit)'."> |
+
+<img src="docs/screenshots/layout-chat.jpg" width="640" alt="Chat: the message 'a poster for a jazz night with the words JAZZ NIGHT and FRIDAY 9 PM'. Image 1, version v2, made with Ideogram 4: JAZZ NIGHT at the top and FRIDAY 9 PM at the bottom right, each in a dashed box with its name. Below the image: v1, v2, Hide boxes, Variations and Crop / Draw.">
+
+| v1: the agent's layout | v2: FRIDAY 9 PM moved to the bottom right |
+|---|---|
+| <img src="docs/screenshots/layout-before.jpg" alt="Ideogram 4 jazz poster: JAZZ NIGHT at the top, FRIDAY 9 PM below it, musicians in silhouette on red and gold waves."> | <img src="docs/screenshots/layout-after.jpg" alt="The redraw: JAZZ NIGHT still at the top, FRIDAY 9 PM in the bottom right corner."> |
+
+| Model | How exact | Time at 1024² on an M5 | License |
+|---|---|---|---|
+| Ideogram 4 (4-bit, 13.9 GB) | Exact boxes; the best at text | about 5 min | non-commercial |
+| MOSS Image (4-bit) | Exact boxes | about 5 min | Apache-2.0 |
+| FIBO 2 (6-bit, 10.3 GB) | Each box becomes a place word, such as "top center" | about 5.5 min | non-commercial |
+
+Add these models in **Settings → Models → Add Model…**. The **Layout** button shows when the selected
+model can use a layout, or in **Auto** when one of these models is downloaded. In **Auto**, a message with
+a layout goes only to these models. FIBO 2
+gets no boxes from the agent, only the boxes that you draw. FIBO 2 sometimes adds small text that you did
+not ask for.
 
 ## Tour of the app
 
@@ -147,9 +196,9 @@ You can attach a maximum of 3 images with the paper clip or with drag and drop. 
 
 ### Auto selects the model, and the engine first does a memory check
 
-For a title in the image, the agent selected Qwen Image 2.1, because this model is the best at text in images. This model needed 9.5 GB, but only 9.2 GB was available without slowing down the Mac. Thus the engine refused the job. **Try anyway** runs the job in the mode that uses the least memory. If the Mac becomes slow, the engine stops the job.
+For a title in the image, the agent selected Qwen Image 2.1, because this model is the best at text in images. This model needed 9.5 GB, but only 6.2 GB was available without slowing down the Mac. Thus the engine refused the job. **Try anyway** runs the job in the mode that uses the least memory. If the Mac becomes slow, the engine stops the job.
 
-<img src="docs/screenshots/memory-check.jpg" width="640" alt="The message 'write the title NIGHT BLADE in the banner at the top' gives Image 2 with Qwen Image 2.1 Base Q4 and this text: 'needs about 9.5 GB but only 9.2 GB can be used without slowing down your Mac'. Retry and Try anyway show below the text.">
+<img src="docs/screenshots/memory-check.jpg" width="640" alt="The message 'write the title NIGHT BLADE in the banner at the top' gives Image 2 with Qwen Image 2.1 Base Q4 and this text: 'needs about 9.5 GB but only 6.2 GB can be used without slowing down your Mac. Close some apps, or choose a lighter model.' Retry and Try anyway show below the text.">
 
 ### Add models
 
@@ -161,7 +210,7 @@ Use the search field to find community versions of the supported families. You c
 
 You can see the installed models, remove models, and set the default model. If you set Auto, the agent selects the model.
 
-<img src="docs/screenshots/settings-models.jpg" width="480" alt="Settings, Models. FLUX.2 Klein 4B, Qwen Image 2.1 Base Q4 and Z-Image Turbo are downloaded, each with Remove. The default model is Auto. The window also shows Add Model.">
+<img src="docs/screenshots/settings-models.jpg" width="480" alt="Settings, Models. New images and Edits are both set to Auto (FLUX.2 Klein 4B). Under Your Models, with Add Model: FLUX.2 Klein 4B (4.6 GB), Qwen Image 2.1 Base (7.6 GB) and Z-Image Turbo (5.9 GB) are downloaded, each with Remove.">
 
 ## The agent
 
@@ -222,11 +271,13 @@ uses simple rules to route messages. For more data, refer to
 
 ## Install
 
-1. Download `dMLX-<version>-macos-arm64.dmg` from [the dMLX website](https://dmlx.vercel.app/download/) or from
+1. Download `dMLX-<version>-macos-arm64.dmg` from [the dMLX website](https://www.dmlx.app/download/) or from
    [GitHub Releases](https://github.com/rootonchair/dmlx/releases), which also has a `.zip` of the same app.
 2. Open the `.dmg` and drag `dMLX.app` onto the Applications folder.
-3. The beta is not notarized. The first time that you open the app, do this: **right-click the app → Open → Open**.
-   As an alternative, run `xattr -dr com.apple.quarantine /Applications/dMLX.app`.
+3. The beta is not notarized, so macOS blocks it the first time. Open `dMLX.app` once, then click **Done** in
+   the warning. Go to **System Settings → Privacy & Security**, scroll down, and click **Open Anyway** next to
+   the message about dMLX. Confirm with your password. (Right-click → Open does not work on macOS 15 and later.)
+   As an alternative, run `xattr -dr com.apple.quarantine /Applications/dMLX.app` in Terminal.
 4. When you start dMLX for the first time, it recommends an image model and an agent model for your Mac, and
    shows the total download size. Click **Download**. You can change either model, or skip the agent, and
    change them later in **Settings**. After this step, dMLX operates offline.
@@ -271,7 +322,7 @@ space, delete the `models--` folders of dMLX's models there, or run `hf cache rm
 | Qwen Image 2.1 Base (4-bit) | generate, edit, a maximum of 10 images in a set order | Qwen Research License (non-commercial) | ~10.6 GB | Experimental; best for exact words in the image; ~4 min per image; needs ~9.5 GB of free memory |
 
 **Settings → Models → Add Model…** shows community versions of the supported families (FLUX.2 Klein
-4B/9B, FLUX.3 Klein, Z-Image Turbo/base, Qwen Image 2.1 Base, ERNIE Image Turbo, MOSS Image, Boogu Image Turbo, Iris 3B Turbo, Krea 2 Turbo). It also
+4B/9B, FLUX.3 Klein, Z-Image Turbo/base, Qwen Image 2.1 Base, ERNIE Image Turbo, MOSS Image, FIBO 2, Ideogram 4, Boogu Image Turbo, Iris 3B Turbo, Krea 2 Turbo). It also
 accepts any Hugging Face repo in mflux format. One adapter runs all of these families from mflux's own
 model classes, so a new mflux family needs a table entry and a memory measurement
 ([`docs/benchmarks/families.md`](docs/benchmarks/families.md)).

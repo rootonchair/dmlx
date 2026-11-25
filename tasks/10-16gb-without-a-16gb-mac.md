@@ -14,7 +14,7 @@ Things installs from the App Store.
 - The simulation tells the engine the Mac has 16 GB and holds the rest in a ballast
   (`python -m dmlx.nohang ballast`): random bytes, so they cannot be compressed, but macOS can still swap
   them out. A real 16 GB Mac cannot do that, so the simulation is gentler than the real thing.
-- Install needs right-click → Open or `xattr -dr com.apple.quarantine`.
+- Install needs System Settings → Privacy & Security → Open Anyway, or `xattr -dr com.apple.quarantine`.
 
 ## To do
 - [ ] **A wired ballast:** `nohang ballast --wired` holds the memory as MLX buffers under

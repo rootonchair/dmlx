@@ -11,7 +11,8 @@ import yaml
 from dmlx.capabilities import CapabilitySpec, parse_capabilities
 from dmlx.prompting.formats import FORMAT_BY_ADAPTER, FORMATS
 
-GB = 1024**3
+GB = 1024**3  # memory sizes
+DISK_GB = 1e9  # disk and download sizes shown to people: decimal GB, as Finder and Hugging Face show them
 
 
 @dataclass
@@ -67,6 +68,8 @@ class ModelSpec:
     prompt_format: str | None = None  # a structured caption the model wants (task 17): fibo-json, ideogram-json, moss-layout
     user_added: bool = False  # added from the app; stored in the user's models folder and removable
     download_size: int = 0  # the repo's files on Hugging Face, for showing the size before the model is downloaded
+    extra_size: int = 0  # other repos it downloads with it (Qwen Image 2.1's small text encoder), in bytes
+    disk_size: int = 0  # every file it has on disk once downloaded (its repo and the extra repos)
     aliases: list[str] = field(default_factory=list)  # ids of added models of the same repo it replaces
     local_path: Path | None = field(default=None, repr=False)
     capabilities: dict[str, CapabilitySpec] = field(default_factory=dict)
@@ -113,11 +116,14 @@ class ModelSpec:
 
     @property
     def listed_size(self) -> int:
-        """On disk once downloaded; before that, the repo's download size plus the parts it shares with other
-        models (external), so the first-run setup can show the total."""
-        if self.local_path is not None or not self.download_size:
+        """Disk bytes: every file on disk once downloaded; before that, the repo's download size plus the
+        extra repos it downloads with it, so the first-run setup can show the total. One number before and
+        after the download (task 19: Klein 4B read 4.62 GB, then 4.61, the weights alone)."""
+        if self.local_path is not None:
+            return self.disk_size or self.size
+        if not self.download_size:
             return self.size
-        external = sum(c.size for c in self.components.values() if c.external)
+        external = self.extra_size or sum(c.size for c in self.components.values() if c.external)
         return max(self.size, self.download_size + external)
 
     def as_dict(self) -> dict:
@@ -138,7 +144,7 @@ class ModelSpec:
             "user_added": self.user_added,
             "defaults": self.defaults,
             "prompt_format": self.prompt_format,
-            "size_gb": round(self.listed_size / GB, 2) if self.listed_size else None,
+            "size_gb": round(self.listed_size / DISK_GB, 2) if self.listed_size else None,
             "capabilities": {name: capability.as_dict() for name, capability in self.capabilities.items()},
             **self.grouping(),
             **({"aliases": list(self.aliases)} if self.aliases else {}),
@@ -158,13 +164,29 @@ def _prompt_format(data: dict) -> str | None:
 
 
 # Catalog values that have since changed, per adapter: a spec saved with the old value (it is a snapshot
-# taken when the model was added) moves to the new one. A value the user set themselves is kept.
-_RETIRED_DEFAULTS = {"mflux.moss_image": {"steps": (50, 30)}}
-_RETIRED_NOTES = {
-    "mflux.moss_image": ("New images only; very slow (about 13 minutes at 1024 px, 3 minutes at 512 px); "
-                         "use only when the user asks for it.",
-                         "New images only; very slow (about 8 minutes at 1024 px, 2 minutes at 512 px); "
+# taken when the model was added) moves to the new one. A value the user set themselves is kept, unless it
+# equals the old default: then it moves too. Left so on purpose: there is no steps setting in the app, only
+# hand-edited specs.
+_RETIRED_DEFAULTS = {
+    "mflux.moss_image": {"steps": (50, 30)},
+    "mflux.fibo2": {"steps": (30, 20)},  # task 17: same layout and lettering at 20 steps
+    "mflux.ideogram4": {"steps": (20, 12)},  # task 17: its 12-step preset kept the layout and lettering
+}
+_RETIRED_NOTES = {  # adapter -> (notes saved by earlier versions, the current note)
+    "mflux.moss_image": (("New images only; very slow (about 13 minutes at 1024 px, 3 minutes at 512 px); "
+                          "use only when the user asks for it.",
+                          "New images only; very slow (about 8 minutes at 1024 px, 2 minutes at 512 px); "
+                          "use only when the user asks for it."),
+                         "New images only; very slow (about 5 minutes at 1024 px at 30 steps, 2 minutes at 512 px); "
                          "use only when the user asks for it."),
+    "mflux.fibo2": (("New images only; about 8 minutes at 1024 px; follows detailed descriptions and draws text well; "
+                     "non-commercial license.",),
+                    "New images only; about 5.5 minutes at 1024 px; follows detailed descriptions and draws text well; "
+                    "non-commercial license."),
+    "mflux.ideogram4": (("New images only; about 8.5 minutes at 1024 px; the strongest at typography and exact "
+                         "placement; non-commercial license.",),
+                        "New images only; about 5 minutes at 1024 px; the strongest at typography and exact placement; "
+                        "non-commercial license."),
 }
 
 
@@ -178,8 +200,8 @@ def _current_defaults(data: dict) -> dict:
 
 def _current_note(data: dict) -> str:
     note = str(data.get("agent_note", ""))
-    old, new = _RETIRED_NOTES.get(data.get("adapter", ""), (None, None))
-    return new if note == old else note
+    old, new = _RETIRED_NOTES.get(data.get("adapter", ""), ((), None))
+    return new if note in old else note
 
 
 def _parse(data: dict) -> ModelSpec:
@@ -225,7 +247,8 @@ def _parse(data: dict) -> ModelSpec:
         agent_note=_current_note(data),
         prompt_format=_prompt_format(data),
         user_added=bool(data.get("user_added", False)),
-        download_size=int(float(data.get("download_gb", 0)) * GB),
+        # Exact bytes where the spec has them (built-in models); download_gb (GiB) is rounded.
+        download_size=int(data.get("download_bytes") or float(data.get("download_gb", 0)) * GB),
         capabilities=parse_capabilities(data.get("capabilities"), tasks, max_references),
     )
 

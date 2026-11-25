@@ -3,7 +3,7 @@ import SwiftUI
 
 /// Crop / Draw → Layout (task 17): boxes over the image for models that place things from a layout.
 /// Drag a box to move it, pull its corner to resize, drag on empty space to add one. Boxes the user
-/// touched turn amber: they are theirs and stay put on later turns. Nothing here shows JSON.
+/// touched turn blue: they are theirs and stay put on later turns. Nothing here shows JSON.
 struct LayoutCanvas: View {
     @Binding var boxes: [LayoutBox]
     @Binding var selected: String?
@@ -114,7 +114,7 @@ struct LayoutCanvas: View {
     }
 }
 
-/// One box: dashed for text, solid for a picture, amber when the user placed it.
+/// One box: dashed for text, solid for a picture, blue (the accent) when the user placed it.
 struct BoxView: View {
     let box: LayoutBox
     var selected = false
@@ -165,44 +165,84 @@ struct LayoutBar: View {
 
     var body: some View {
         if let i = boxes.firstIndex(where: { $0.id == selected }) {
-            Text("Box:").foregroundStyle(.secondary)
-            Picker("Kind", selection: kindBinding(i)) {
-                Text("Picture").tag(LayoutBox.Kind.obj)
-                Text("Text").tag(LayoutBox.Kind.text)
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .frame(width: 140)
-            TextField(boxes[i].kind == .text ? "Exact words to draw" : "Name, e.g. saxophonist", text: labelBinding(i))
-                .textFieldStyle(.roundedBorder)
-                .frame(width: 170)
-            TextField(boxes[i].kind == .text ? "Lettering style (optional): the agent picks one"
-                      : "What it looks like (optional): the agent writes it", text: descBinding(i))
-                .textFieldStyle(.roundedBorder)
-                .frame(width: 280)
-                .focused(describing)
-            if boxes[i].descByUser {
-                Button("Let the agent write it") {
-                    onBeginChange()
-                    boxes[i].desc = ""
-                    boxes[i].descByUser = false
+            // One row in a wide sheet; in a narrow one the description moves to a second row and the
+            // fields shrink, so nothing is cut off.
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 8) {
+                    boxHeader(i)
+                    nameField(i).frame(width: 170)
+                    descField(i).frame(width: 280)
+                    letAgentButton(i)
+                    deleteButton(i)
                 }
-                .help("Clear your description; the agent writes one")
-            }
-            Button("Delete") {
-                onBeginChange()
-                boxes.remove(at: i)
-                selected = nil
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(spacing: 8) {
+                        boxHeader(i)
+                        nameField(i).frame(minWidth: 100, maxWidth: .infinity)
+                        deleteButton(i)
+                    }
+                    HStack(spacing: 8) {
+                        descField(i).frame(minWidth: 120, maxWidth: .infinity)
+                        letAgentButton(i)
+                    }
+                }
             }
         } else {
+            // Wraps, so the long hint never pushes Redraw with layout out of the sheet.
             Text(hint).font(.caption).foregroundStyle(.secondary)
+                .frame(maxWidth: 420, alignment: .leading)
+                .fixedSize(horizontal: false, vertical: true)
         }
+    }
+
+    @ViewBuilder private func boxHeader(_ i: Int) -> some View {
+        Text("Box:").foregroundStyle(.secondary).fixedSize()
+        Picker("Kind", selection: kindBinding(i)) {
+            Text("Picture").tag(LayoutBox.Kind.obj)
+            Text("Text").tag(LayoutBox.Kind.text)
+        }
+        .pickerStyle(.segmented)
+        .labelsHidden()
+        .frame(width: 140)
+    }
+
+    private func nameField(_ i: Int) -> some View {
+        TextField(boxes[i].kind == .text ? "Exact words to draw" : "Name, e.g. saxophonist", text: labelBinding(i))
+            .textFieldStyle(.roundedBorder)
+    }
+
+    private func descField(_ i: Int) -> some View {
+        TextField(boxes[i].kind == .text ? "Lettering style (optional): the agent picks one"
+                  : "What it looks like (optional): the agent writes it", text: descBinding(i))
+            .textFieldStyle(.roundedBorder)
+            .focused(describing)
+    }
+
+    @ViewBuilder private func letAgentButton(_ i: Int) -> some View {
+        if boxes[i].descByUser {
+            Button("Let the agent write it") {
+                onBeginChange()
+                boxes[i].desc = ""
+                boxes[i].descByUser = false
+            }
+            .help("Clear your description; the agent writes one")
+            .fixedSize()
+        }
+    }
+
+    private func deleteButton(_ i: Int) -> some View {
+        Button("Delete") {
+            onBeginChange()
+            boxes.remove(at: i)
+            selected = nil
+        }
+        .fixedSize()
     }
 
     private var hint: String {
         if blank { return "Drag on the canvas to draw a box for each thing, then name it. The agent writes whatever you leave empty." }
-        let words = placesByWords ? " This model places things roughly: the word on each box is what it gets." : ""
-        return "Click a box to rename or describe it. Drag to move, or drag on empty space to add one. Amber boxes are yours and stay put.\(words)"
+        let words = placesByWords ? " This model gets each box as a place word." : ""
+        return "Click a box to name or describe it. Drag to move it, or drag on empty space to add one. Blue boxes are yours.\(words)"
     }
 
     private func kindBinding(_ i: Int) -> Binding<LayoutBox.Kind> {

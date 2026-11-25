@@ -1,0 +1,62 @@
+[
+ {
+  "agent": "qwen3.5-9b-mlx-4bit",
+  "format": "moss-layout",
+  "boxes": 0,
+  "load_s": 3.9,
+  "caption_s": 11.3,
+  "total_s": 15.2,
+  "tries": 1,
+  "valid": true,
+  "reply_chars": 720,
+  "reason": null
+ },
+ {
+  "agent": "qwen3.5-9b-mlx-4bit",
+  "format": "fibo-json",
+  "boxes": 0,
+  "load_s": 0.0,
+  "caption_s": 20.4,
+  "total_s": 20.4,
+  "tries": 1,
+  "valid": true,
+  "reply_chars": 1728,
+  "reason": null
+ },
+ {
+  "agent": "qwen3.5-9b-mlx-4bit",
+  "format": "ideogram-json",
+  "boxes": 0,
+  "load_s": 0.0,
+  "caption_s": 14.7,
+  "total_s": 14.7,
+  "tries": 1,
+  "valid": true,
+  "reply_chars": 1086,
+  "reason": null
+ },
+ {
+  "agent": "qwen3.5-9b-mlx-4bit",
+  "format": "ideogram-json",
+  "boxes": 3,
+  "load_s": 0.0,
+  "caption_s": 18.1,
+  "total_s": 18.1,
+  "tries": 1,
+  "valid": true,
+  "reply_chars": 1156,
+  "reason": null
+ },
+ {
+  "agent": "qwen3.5-9b-mlx-4bit",
+  "format": "moss-layout",
+  "boxes": 0,
+  "load_s": 0.0,
+  "caption_s": 10.7,
+  "total_s": 10.7,
+  "tries": 1,
+  "valid": true,
+  "reply_chars": 720,
+  "reason": null
+ }
+]

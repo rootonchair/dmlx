@@ -104,6 +104,7 @@ struct PromptAssistantRow: View {
             do {
                 guard let client = app.client else { return }
                 status = try await client.pullPromptAssistant(model: id)
+                app.noteAgentDownload(status)
                 error = nil
             } catch {
                 self.error = error.localizedDescription
@@ -122,6 +123,7 @@ struct PromptAssistantRow: View {
                 }
                 status = next
                 app.promptAssistantInstalled = app.runsChosenAgent(next)
+                app.noteAgentDownload(next)
                 error = nil
             } catch {
                 self.error = error.localizedDescription
@@ -152,6 +154,56 @@ struct IntelligenceSettings: View {
             }
         }
         .formStyle(.grouped)
+    }
+}
+
+/// A labeled text box on a form row, its text and placeholder starting at the left of a visible box (a plain
+/// form field right-aligns them, so a placeholder reads like a value that is already set).
+private struct FormField: View {
+    let label: String
+    @Binding var text: String
+    var prompt: String = ""
+    var secure = false
+
+    init(_ label: String, text: Binding<String>, prompt: String = "", secure: Bool = false) {
+        self.label = label
+        _text = text
+        self.prompt = prompt
+        self.secure = secure
+    }
+
+    var body: some View {
+        LabeledContent(label) {
+            Group {
+                if secure {
+                    SecureField(label, text: $text, prompt: Text(prompt))
+                } else {
+                    TextField(label, text: $text, prompt: Text(prompt))
+                }
+            }
+            .labelsHidden()
+            .textFieldStyle(.roundedBorder)
+            .multilineTextAlignment(.leading)
+            .frame(maxWidth: 300)
+        }
+    }
+}
+
+/// "Timeout  [ 30 ] seconds" on one form row (a TextField's own label would show beside the box).
+private struct SecondsField: View {
+    @Binding var value: Double
+
+    var body: some View {
+        LabeledContent("Timeout") {
+            HStack(spacing: 6) {
+                TextField("Timeout", value: $value, format: .number)
+                    .labelsHidden()
+                    .textFieldStyle(.roundedBorder)
+                    .multilineTextAlignment(.trailing)
+                    .frame(width: 60)
+                Text("seconds").foregroundStyle(.secondary)
+            }
+        }
     }
 }
 
@@ -216,14 +268,14 @@ struct MemorySettings: View {
     var body: some View {
         Form {
             if let m = model.memory {
-                LabeledContent("Memory tier", value: "\(m.ram_tier_gb) GB")
+                LabeledContent("Memory in this Mac", value: "\(m.ram_tier_gb) GB")
                 LabeledContent("Available now", value: String(format: "%.1f GB", m.memory.system.available_gb))
                 LabeledContent("dMLX may use", value: String(format: "%.1f GB", max(m.memory.headroom_gb, 0)))
                 LabeledContent("Kept free for macOS", value: String(format: "%.1f GB", m.memory.reserve_gb))
                 LabeledContent("Memory pressure", value: m.memory.system.pressure.capitalized)
                 LabeledContent("Swap in use", value: String(format: "%.1f GB", m.memory.system.swap_used_gb))
                 if m.memory.degraded {
-                    Text("Recently under memory pressure: using low-memory mode for a few minutes.")
+                    Text("Your Mac was short of memory recently, so for a few minutes images load with less memory, more slowly.")
                         .font(.caption).foregroundStyle(.orange)
                 }
                 Section("In memory") {

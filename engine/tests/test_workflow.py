@@ -9,7 +9,6 @@ from PIL import Image
 from dmlx.capabilities import CapabilitySpec
 from dmlx.capabilities import InputConstraint
 from conftest import fake_spec
-from dmlx.prompting.compiler import CompiledPrompt
 from dmlx.adapters.fake import FakeAdapter
 from dmlx.workflow import WorkflowPlan
 

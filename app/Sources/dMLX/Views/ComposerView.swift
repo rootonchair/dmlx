@@ -8,19 +8,25 @@ struct ComposerView: View {
     @Environment(AppModel.self) private var model
     @FocusState private var focused: Bool
     @State private var dropTargeted = false
+    /// The message field's width. The field is rebuilt when it changes: its text view otherwise keeps wrapping
+    /// at the old width after the window is resized (lines cut off at the edge, or the last line hidden).
+    @State private var fieldWidth: CGFloat = 0
 
     private let suggestions = ["Make it foggy", "Add warm evening light", "Make it black and white", "Variations"]
 
     var canSend: Bool {
         model.isEngineRunning && model.planningMessage == nil && !model.isGeneratingHere
+            && model.sendAfterUpload == nil
             && !model.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     var body: some View {
         @Bindable var model = model
         VStack(alignment: .leading, spacing: 10) {
-            if model.latestImageTurn?.current?.isActive == false && model.draft.isEmpty && model.attachments.isEmpty {
-                FlowLayout(spacing: 8) {
+            // Not while a message is being planned or waits on the agent's question: a chip would send another.
+            if model.latestImageTurn?.current?.isActive == false && model.draft.isEmpty && model.attachments.isEmpty
+                && model.planningMessage == nil && !model.needsRouteChoice && model.pendingAsk == nil {
+                FlowLayout(spacing: 8, alignment: .leading) {
                     ForEach(suggestions, id: \.self) { s in
                         Button(s) {
                             if s == "Variations", let t = model.latestImageTurn {
@@ -76,7 +82,7 @@ struct ComposerView: View {
                 }
 
                 if model.needsRouteChoice {
-                    FlowLayout(spacing: 8) {
+                    FlowLayout(spacing: 8, alignment: .leading) {
                         // The agent's question is in the chat; here are the shortcuts to answer it.
                         Text(model.pendingAsk == nil ? "Choose the workflow" : "Reply in the chat, or:")
                             .font(.caption)
@@ -89,6 +95,7 @@ struct ComposerView: View {
                         Button("Cancel") { model.cancelPendingRoute() }
                             .buttonStyle(.borderless)
                             .controlSize(.small)
+                            .keyboardShortcut(.cancelAction)
                     }
                 }
 
@@ -108,8 +115,8 @@ struct ComposerView: View {
                     .help("These boxes go with your next message; the agent writes the rest")
                 }
 
-                if !model.attachments.isEmpty {
-                    FlowLayout(spacing: 6) {
+                if !model.attachments.isEmpty || !model.uploading.isEmpty {
+                    FlowLayout(spacing: 6, alignment: .leading) {
                         ForEach(Array(model.attachments.enumerated()), id: \.element.id) { index, a in
                             HStack(spacing: 6) {
                                 Thumbnail(resultId: a.id, size: 22)
@@ -122,6 +129,28 @@ struct ComposerView: View {
                                 return true
                             }
                         }
+                        // Still uploading: shown so a send can wait for it (task 19).
+                        ForEach(model.uploading, id: \.token) { item in
+                            HStack(spacing: 6) {
+                                ProgressView().controlSize(.mini)
+                                Text("Attaching \(item.label)…").font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                            }
+                            .padding(.horizontal, 8).padding(.vertical, 4)
+                            .background(.quaternary.opacity(0.6), in: RoundedRectangle(cornerRadius: 7))
+                            .accessibilityElement(children: .combine)
+                        }
+                    }
+                }
+
+                if model.sendAfterUpload != nil {
+                    HStack(spacing: 6) {
+                        ProgressView().controlSize(.small)
+                        Text("Sends when the image is attached.").font(.caption).foregroundStyle(.secondary)
+                        // A way out if the engine hangs: the uploads stop and the message stays (task 19).
+                        Button("Cancel") { model.cancelHeldSend() }
+                            .buttonStyle(.borderless)
+                            .controlSize(.small)
+                            .help("Stop attaching and keep the message in the box")
                     }
                 }
 
@@ -145,98 +174,108 @@ struct ComposerView: View {
                 .focused($focused)
                 .onSubmit { if canSend { model.send() } }
                 .accessibilityLabel("Describe an image or a change")
+                .id(fieldWidth)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .onGeometryChange(for: CGFloat.self) { $0.size.width.rounded() } action: { width in
+                    let wasFocused = focused
+                    fieldWidth = width
+                    if wasFocused { _Concurrency.Task { @MainActor in focused = true } }
+                }
                 .guideTip(ComposerTip.self, in: Guide.shared.chat, edge: .bottom)
+                // The text view takes file drops itself and pastes their paths; this catches them first and
+                // attaches the files, while text drops and clicks still reach the field (task 19).
+                .overlay(FileDropCatcher(targeted: $dropTargeted) { model.attach(files: $0) })
 
-                HStack(spacing: 8) {
-                    ScrollView(.horizontal) {
-                        HStack(spacing: 8) {
-                            Button {
-                                pickFiles()
-                            } label: {
-                                Image(systemName: "paperclip")
+                HStack(alignment: .bottom, spacing: 8) {
+                    // Wraps when narrow (the route preview moves to its own line), so every control stays in view.
+                    FlowLayout(spacing: 8, alignment: .leading) {
+                        Button {
+                            pickFiles()
+                        } label: {
+                            Image(systemName: "paperclip")
+                        }
+                        .buttonStyle(.borderless)
+                        .help(model.attachLimit.count == 1 ? "Attach 1 image" : "Attach up to \(model.attachLimit.count) images")
+                        .accessibilityLabel("Attach reference images")
+                        .guideTip(AttachTip.self, in: Guide.shared.chat, edge: .bottom)
+
+                        if model.layoutAvailable {
+                            Button { model.openBlankLayout() } label: {
+                                Label("Layout", systemImage: "rectangle.dashed").font(.caption)
                             }
                             .buttonStyle(.borderless)
-                            .help("Attach up to 3 reference images")
-                            .accessibilityLabel("Attach reference images")
-                            .guideTip(AttachTip.self, in: Guide.shared.chat, edge: .bottom)
+                            .help("Draw where things go before the image is made")
+                            .accessibilityLabel("Draw a layout")
+                        }
 
-                            if model.layoutAvailable {
-                                Button { model.openBlankLayout() } label: {
-                                    Label("Layout", systemImage: "rectangle.dashed").font(.caption)
+                        if model.promptAssistantInstalled {
+                            Button { model.enhanceDraft() } label: {
+                                if model.isEnhancingPrompt {
+                                    ProgressView().controlSize(.small)
+                                } else {
+                                    Image(systemName: "sparkles")
                                 }
-                                .buttonStyle(.borderless)
-                                .help("Draw where things go before the image is made")
-                                .accessibilityLabel("Draw a layout")
                             }
+                            .buttonStyle(.borderless)
+                            .disabled(model.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || model.isEnhancingPrompt)
+                            .help("Preview the agent's rewrite before sending")
+                            .accessibilityLabel("Enhance prompt")
+                        }
 
-                            if model.promptAssistantInstalled {
-                                Button { model.enhanceDraft() } label: {
-                                    if model.isEnhancingPrompt {
-                                        ProgressView().controlSize(.small)
-                                    } else {
-                                        Image(systemName: "sparkles")
+                        Menu {
+                            ForEach(Aspect.allCases) { a in
+                                Button(a.label) { model.aspect = a }
+                            }
+                        } label: {
+                            Text(model.aspect.label).font(.caption)
+                        }
+                        .menuStyle(.borderlessButton)
+                        .fixedSize()
+                        .help("Size for new images (edits keep the source size)")
+                        .guideTip(SizeTip.self, in: Guide.shared.chat, edge: .bottom)
+
+                        if model.hasModelChoice {
+                            // With a model chosen and nothing typed, the route preview is empty: the tip about
+                            // choosing new image or edit points here instead of at nothing.
+                            ModelMenu()
+                                .guideTip(ModeTip.self, in: model.routePreview.isEmpty ? Guide.shared.chat : nil, edge: .bottom)
+                        }
+
+                        Group {
+                        if model.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || model.hasNoImageModel {
+                            Text(model.routePreview)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                        } else {
+                            Menu {
+                                Button(AppModel.operationLabel("image.generate")) { model.overrideRoute("image.generate") }
+                                if model.latestImageTurn != nil || !model.attachments.isEmpty {
+                                    Button(model.attachments.isEmpty ? AppModel.operationLabel("image.edit") : "Edit attached") { model.overrideRoute("image.edit") }
+                                    if model.defaultModel(for: "image.upscale") != nil {
+                                        Button("Upscale current image 2×") { model.overrideRoute("image.upscale") }
+                                    }
+                                    if model.defaultModel(for: "image.restore") != nil {
+                                        Button("Restore current image") { model.overrideRoute("image.restore") }
+                                    }
+                                    if model.defaultModel(for: "image.enhance") != nil {
+                                        Button("Enhance current image") { model.overrideRoute("image.enhance") }
                                     }
                                 }
-                                .buttonStyle(.borderless)
-                                .disabled(model.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || model.isEnhancingPrompt)
-                                .help("Preview the agent's rewrite before sending")
-                                .accessibilityLabel("Enhance prompt")
-                            }
-
-                            Menu {
-                                ForEach(Aspect.allCases) { a in
-                                    Button(a.label) { model.aspect = a }
-                                }
                             } label: {
-                                Text(model.aspect.label).font(.caption)
-                            }
-                            .menuStyle(.borderlessButton)
-                            .fixedSize()
-                            .help("Size for new images (edits keep the source size)")
-                            .guideTip(SizeTip.self, in: Guide.shared.chat, edge: .bottom)
-
-                            if model.hasModelChoice {
-                                ModelMenu()
-                            }
-
-                            Group {
-                            if model.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                                 Text(model.routePreview)
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
-                            } else {
-                                Menu {
-                                    Button("Create a new image") { model.overrideRoute("image.generate") }
-                                    if model.latestImageTurn != nil || !model.attachments.isEmpty {
-                                        Button("Edit current or attached images") { model.overrideRoute("image.edit") }
-                                        if model.defaultModel(for: "image.upscale") != nil {
-                                            Button("Upscale current image 2×") { model.overrideRoute("image.upscale") }
-                                        }
-                                        if model.defaultModel(for: "image.restore") != nil {
-                                            Button("Restore current image") { model.overrideRoute("image.restore") }
-                                        }
-                                        if model.defaultModel(for: "image.enhance") != nil {
-                                            Button("Enhance current image") { model.overrideRoute("image.enhance") }
-                                        }
-                                    }
-                                } label: {
-                                    Text(model.routePreview)
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                        .lineLimit(1)
-                                }
-                                .menuStyle(.borderlessButton)
-                                .fixedSize()
-                                .help("Choose the workflow")
+                                    .lineLimit(1)
                             }
-                            }
-                            .guideTip(ModeTip.self, in: Guide.shared.chat, edge: .bottom)
+                            .menuStyle(.borderlessButton)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .help("\(model.routePreview). Click to choose the workflow")
                         }
-                        .fixedSize(horizontal: true, vertical: false)
+                        }
+                        .guideTip(ModeTip.self, in: model.routePreview.isEmpty ? nil : Guide.shared.chat, edge: .bottom)
                     }
-                    .scrollIndicators(.hidden)
-
-                    Spacer(minLength: 0)
+                    .frame(maxWidth: .infinity, alignment: .leading)
 
                     if model.isGeneratingHere {
                         // The next message may refer to the image being made, so it waits for it; Stop ends it.
@@ -276,6 +315,13 @@ struct ComposerView: View {
                 return true
             }
         }
+        // The window's minimum size is measured with the composer at its narrowest. Unbounded, its chips and
+        // text then wrap one word per line and the minimum height outgrows short windows, which clips the
+        // whole window (the reply box falls off the bottom). The smallest window's chat column is wider than this.
+        // In a window as tall as the screen it also crashed the app on send (AppKit "more Update Constraints in
+        // Window passes than there are views", from the chat's LazyVStack prefetch): the window could not grow
+        // to the new minimum. Keep this and FlowLayout's real row widths (task 17, Bugs).
+        .frame(minWidth: 300)
         .onAppear { focused = true }
         .onAppear { model.scheduleRoutePreview() }
         .onChange(of: model.draft) { model.scheduleRoutePreview() }
@@ -284,6 +330,8 @@ struct ComposerView: View {
             model.scheduleRoutePreview()
         }
         .onChange(of: "\(model.generateChoice)|\(model.editChoice)") { model.scheduleRoutePreview() }
+        .onChange(of: model.pendingLayout) { model.scheduleRoutePreview() }  // a layout can change the model
+        .onChange(of: model.aspect) { model.scheduleRoutePreview() }  // the memory check counts the size
     }
 
     private func pickFiles() {
@@ -295,12 +343,72 @@ struct ComposerView: View {
         }
     }
 
+    /// All dropped files go to `attach` at once, so it can say how many did not fit (task 19).
     private func loadDropped(_ providers: [NSItemProvider]) {
-        for provider in providers {
+        let group = DispatchGroup()
+        let lock = NSLock()
+        var urls: [(Int, URL)] = []
+        for (index, provider) in providers.enumerated() {
+            group.enter()
             _ = provider.loadObject(ofClass: URL.self) { url, _ in
-                guard let url else { return }
-                _Concurrency.Task { @MainActor in model.attach(files: [url]) }
+                if let url { lock.withLock { urls.append((index, url)) } }
+                group.leave()
             }
+        }
+        group.notify(queue: .main) {
+            let files = lock.withLock { urls.sorted { $0.0 < $1.0 }.map(\.1) }
+            MainActor.assumeIsolated { model.attach(files: files) }
+        }
+    }
+}
+
+/// A transparent view over the message field that takes only file drops (task 19). Clicks pass through
+/// (hitTest is nil), and AppKit picks the drop target by registered drag types, so a plain text drop still
+/// goes to the field below.
+struct FileDropCatcher: NSViewRepresentable {
+    @Binding var targeted: Bool
+    let onDrop: ([URL]) -> Void
+
+    func makeNSView(context: Context) -> CatcherView {
+        let view = CatcherView()
+        view.registerForDraggedTypes([.fileURL])
+        return view
+    }
+
+    func updateNSView(_ view: CatcherView, context: Context) {
+        view.onDrop = onDrop
+        view.onTargeted = { targeted = $0 }
+    }
+
+    final class CatcherView: NSView {
+        var onDrop: ([URL]) -> Void = { _ in }
+        var onTargeted: (Bool) -> Void = { _ in }
+
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+        private func files(_ info: NSDraggingInfo) -> [URL] {
+            info.draggingPasteboard.readObjects(
+                forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL] ?? []
+        }
+
+        override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+            guard !files(sender).isEmpty else { return [] }
+            onTargeted(true)
+            return .copy
+        }
+
+        override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
+            files(sender).isEmpty ? [] : .copy
+        }
+
+        override func draggingExited(_ sender: NSDraggingInfo?) { onTargeted(false) }
+
+        override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+            onTargeted(false)
+            let urls = files(sender)
+            guard !urls.isEmpty else { return false }
+            onDrop(urls)
+            return true
         }
     }
 }
@@ -312,9 +420,8 @@ struct ContextChip: View {
     var body: some View {
         Button(action: onRemove) {
             HStack(spacing: 4) {
-                Text(title)
+                Text(Self.short(title))
                     .lineLimit(1)
-                    .truncationMode(.middle)
                 Image(systemName: "xmark").font(.caption2.weight(.bold))
             }
             .font(.caption)
@@ -323,8 +430,16 @@ struct ContextChip: View {
             .background(Theme.accent.opacity(0.18), in: RoundedRectangle(cornerRadius: 7))
         }
         .buttonStyle(.plain)
-        .frame(maxWidth: 240)
+        // Its own width: a flexible frame here stretched every chip to 240 pt, far from its thumbnail.
+        .fixedSize()
         .accessibilityLabel("\(title). Remove")
+    }
+
+    /// A long file name shortened in the middle ("IMG_2024…1234.png").
+    static func short(_ title: String, max: Int = 32) -> String {
+        guard title.count > max else { return title }
+        let half = (max - 1) / 2
+        return title.prefix(half) + "…" + title.suffix(max - 1 - half)
     }
 }
 

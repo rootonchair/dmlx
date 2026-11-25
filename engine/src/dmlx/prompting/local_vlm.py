@@ -33,32 +33,49 @@ class AgentModel:
     repo: str
     revision: str
     license: str
-    size_gb: float  # weights on disk
+    size_gb: float  # the repo on disk, decimal GB (bytes / 1e9)
     note: str = ""
     # False: kept working for anyone who already chose it, but no longer offered.
     listed: bool = True
+    # Every file of the pinned revision the model needs (all but README.md and .gitattributes). It counts
+    # as installed only when each is there (fix round 4 of task 19): the downloader links each file into
+    # the snapshot as soon as it is done, and the index can't say which shards exist (Qwen3-VL 8B's names
+    # four, the repo has two; Qwen3-VL 4B's names two, the repo has one).
+    files: tuple[str, ...] = ()
 
     def as_dict(self) -> dict:
         return {"id": self.id, "name": self.name, "repo": self.repo, "revision": self.revision,
                 "license": self.license, "size_gb": self.size_gb, "note": self.note}
 
 
+_QWEN3_VL_FILES = ("added_tokens.json", "chat_template.jinja", "chat_template.json", "config.json",
+                   "generation_config.json", "merges.txt", "model.safetensors.index.json",
+                   "preprocessor_config.json", "special_tokens_map.json", "tokenizer.json", "tokenizer_config.json",
+                   "video_preprocessor_config.json", "vocab.json")
+_TWO_SHARDS = ("model-00001-of-00002.safetensors", "model-00002-of-00002.safetensors")
+
 # Measured 2026-10-25 on the 36-case routing eval and 8 real-image cases (docs/benchmarks/agent-models.md).
 MODELS: dict[str, AgentModel] = {m.id: m for m in (
     AgentModel("qwen3-vl-8b-instruct-4bit", "Qwen3-VL 8B", "mlx-community/Qwen3-VL-8B-Instruct-4bit",
-               "defcdea7cc7a4b0858fea563cbbce171d328e457", "apache-2.0", 5.76,
-               "Recommended for 24 GB and up · about 8 s per message"),
+               "defcdea7cc7a4b0858fea563cbbce171d328e457", "apache-2.0", 5.78,
+               "Recommended for 24 GB and up · about 8 s per message", files=_QWEN3_VL_FILES + _TWO_SHARDS),
     AgentModel("qwen3.5-9b-mlx-4bit", "Qwen3.5 9B", "mlx-community/Qwen3.5-9B-MLX-4bit",
-               "938d8919941c6e7efd3c7150eff7fe9d12afa631", "apache-2.0", 5.95,
+               "938d8919941c6e7efd3c7150eff7fe9d12afa631", "apache-2.0", 5.98,
                "Nearly as good as Qwen3-VL 8B · about 10 s per message",
                # Never ahead of Qwen3-VL 8B (35/36 vs 36/36, 8/8 vs 8/8), and larger and slower.
-               listed=False),
+               listed=False,
+               files=("chat_template.jinja", "config.json", "model.safetensors.index.json", "preprocessor_config.json",
+                      "processor_config.json", "tokenizer.json", "tokenizer_config.json",
+                      "video_preprocessor_config.json", "vocab.json") + _TWO_SHARDS),
     AgentModel("ministral-3-3b-instruct-2512-4bit", "Ministral 3 3B", "mlx-community/Ministral-3-3B-Instruct-2512-4bit",
-               "a962dcb09eee4169c890e544c9eb938f1113fdee", "apache-2.0", 2.75,
-               "Recommended for 16 GB · about 6 s per message"),
+               "a962dcb09eee4169c890e544c9eb938f1113fdee", "apache-2.0", 2.78,
+               "Recommended for 16 GB · about 6 s per message",
+               files=("chat_template.jinja", "config.json", "generation_config.json", "model.safetensors",
+                      "model.safetensors.index.json", "params.json", "processor_config.json", "tekken.json",
+                      "tokenizer.json", "tokenizer_config.json")),
     AgentModel("qwen3-vl-4b-instruct-4bit", "Qwen3-VL 4B", "mlx-community/Qwen3-VL-4B-Instruct-4bit",
-               "2fd8dacbdb8f1e54b8c005f081ec5bf79c56376b", "apache-2.0", 3.09,
-               "Least memory and fastest · makes more mistakes"),
+               "2fd8dacbdb8f1e54b8c005f081ec5bf79c56376b", "apache-2.0", 3.11,
+               "Least memory and fastest · makes more mistakes", files=_QWEN3_VL_FILES + ("model.safetensors",)),
 )}
 DEFAULT_MODEL = "qwen3-vl-8b-instruct-4bit"
 SMALL_MAC_MODEL = "ministral-3-3b-instruct-2512-4bit"  # the default under 24 GB: 4.2 GB peak instead of 6.2 GB
@@ -108,12 +125,20 @@ def locate(model_id: str = DEFAULT_MODEL) -> Path | None:
         path = Path(snapshot_download(model.repo, revision=model.revision, local_files_only=True))
     except Exception:  # noqa: BLE001 - absent, partial or offline all mean "not available"
         return None
-    # Qwen3-VL-8B's model.safetensors.index.json names four shards but ships two, so check the
-    # weight files themselves: each header states how many bytes of tensor data must follow it.
-    shards = sorted(path.glob("*.safetensors"))
-    if not (path / "config.json").exists() or not shards:
-        return None
-    return path if all(_complete(shard) for shard in shards) else None
+    return path if installed(model, path) else None
+
+
+def installed(model: AgentModel, path: Path) -> bool:
+    """Whether every file the model needs is in its snapshot and complete. A quit during the download
+    leaves some files linked and others missing or in `blobs/<etag>.incomplete`; that is not installed,
+    and the next pull resumes it."""
+    if not model.files or any(not (path / name).is_file() for name in model.files):
+        return False
+    blobs = path.parent.parent / "blobs"
+    if blobs.is_dir() and any(blobs.glob("*.incomplete")):
+        return False
+    # Each weight file's header states how many bytes of tensor data must follow it.
+    return all(_complete(path / name) for name in model.files if name.endswith(".safetensors"))
 
 
 def _complete(shard: Path) -> bool:

@@ -56,7 +56,12 @@ final class AppModel {
     var draft = ""
     var attachments: [Attachment] = []
     var aspect: Aspect = .square
-    var routeDecision: WorkflowDecision?
+    var routeDecision: WorkflowDecision? {
+        didSet { routeModelUnchecked = false }
+    }
+    /// On Auto, set while the hint shows the app's own decision and the engine's check of its model is on
+    /// the way: the hint then names no model (the engine may swap the app's Auto model out).
+    private var routeModelUnchecked = false
     var isResolvingRoute = false
     var promptSuggestion: CompiledPromptResponse?
     var promptSuggestionApplied = false
@@ -100,9 +105,13 @@ final class AppModel {
 
     // UI
     var toast: String?
+    /// The composer's height with its margins: the toast is drawn above it (task 19).
+    var composerHeight: CGFloat = 104
     var showOnboarding = false
     var onboardingStep: OnboardingStep = .welcome
     static let onboardingCompletedKey = "onboardingCompleted"
+    /// The sheet opened by itself once this launch: an engine restart does not open it again (task 19).
+    private var onboardingOffered = false
     var storeError: String?
 
     private var streams: [String: _Concurrency.Task<Void, Never>] = [:]
@@ -240,14 +249,21 @@ final class AppModel {
             normalizeModelChoices()
             let catalog = try? await client.capabilities()
             if catalog != capabilityCatalog { capabilityCatalog = catalog }
-            let installed = (try? await client.promptAssistant()).map(runsChosenAgent) ?? false
+            let agent = try? await client.promptAssistant()
+            let installed = agent.map(runsChosenAgent) ?? false
             if installed != promptAssistantInstalled { promptAssistantInstalled = installed }
+            noteAgentDownload(agent)
             // First run, or no image model yet. Someone who finished setup without the agent is not asked again.
+            // Once per launch: after an engine restart (a crash, Restart engine, Save and Restart) it stays
+            // closed, and sending with no model opens the setup step instead (task 19).
             let completed = UserDefaults.standard.bool(forKey: Self.onboardingCompletedKey)
-            if openOnboarding && (defaultModel(for: .t2i) == nil || (!completed && !promptAssistantInstalled)) {
+            if openOnboarding && OnboardingRule.opensByItself(
+                alreadyOfferedThisLaunch: onboardingOffered, hasImageModel: defaultModel(for: .t2i) != nil,
+                setupCompleted: completed, agentInstalled: promptAssistantInstalled) {
                 onboardingStep = .welcome
                 showOnboarding = true
             }
+            if openOnboarding { onboardingOffered = true }
         }
     }
 
@@ -265,6 +281,36 @@ final class AppModel {
                 show("Download failed: \(error.localizedDescription)")
             }
         }
+    }
+
+    /// Stops a running download; its files stay, so Download resumes it (task 19).
+    func cancelDownload(_ model: EngineModel) {
+        _Concurrency.Task {
+            do {
+                guard let client else { throw EngineClientError.notRunning }
+                try await client.cancelPull(model: model.id)
+                await refreshModels()
+                show("Download of \(model.name) stopped. It resumes where it stopped when you download it again.")
+            } catch EngineClientError.http(404, _, _) {
+                await refreshModels()  // it had just finished or failed
+            } catch {
+                show("Couldn't stop the download: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    /// Image models downloading now (the quit confirmation names them).
+    var runningDownloads: [EngineModel] { models.filter(\.isDownloading) }
+
+    /// The agent model downloading now, by name (the quit confirmation names it too; task 19).
+    private(set) var agentDownload: String?
+
+    /// Called with each agent status read: the poll, and right after Onboarding or Settings starts a download.
+    func noteAgentDownload(_ status: PromptAssistantStatus?) {
+        guard let status else { return }
+        let name = status.models?.first(where: \.isDownloading)?.name
+            ?? (status.isDownloading ? "The agent model" : nil)
+        if name != agentDownload { agentDownload = name }
     }
 
     // MARK: adding and removing models
@@ -321,7 +367,7 @@ final class AppModel {
                     for task in [GenTask.t2i, .edit] where modelChoice(for: task) == m.id { setModelChoice("auto", for: [task]) }
                 }
                 await refreshModels()
-                show(freed > 0 ? "Removed \(m.name) · freed \(String(format: "%.1f", freed)) GB" : "Removed \(m.name)")
+                show(DiskSize.removedMessage(name: m.name, freedGB: freed))
             } catch {
                 show("Couldn't remove \(m.name): \(error.localizedDescription)")
             }
@@ -407,10 +453,39 @@ final class AppModel {
         return chosen
     }
 
-    /// Part of the routing key: a hint computed for one choice is not reused after the choice changes.
+    /// The model the app runs per workflow on Auto when the engine's decision names none (its default),
+    /// so the engine can name another when that one won't fit in memory now. Never the user's choice.
+    var autoModels: [String: String] {
+        var auto: [String: String] = [:]
+        for operation in ["image.generate", "image.edit", "image.upscale", "image.restore", "image.enhance"]
+            where !hasChosenModel(for: operation) {
+            if let m = defaultModel(for: operation) { auto[operation] = m.id }
+        }
+        return auto
+    }
+
+    /// Whether the user chose the model for this workflow (the others run on Auto).
+    func hasChosenModel(for operation: String) -> Bool {
+        Self.task(for: operation).flatMap { chosenModel(for: $0) } != nil
+    }
+
+    /// Part of the routing key: a hint computed for one choice (or one layout, or one image size) is not
+    /// reused after it changes. The size is in it because the engine's memory check counts it: a bigger
+    /// image can tip a borderline model over, and the hint must not name a model the send then swaps.
     private var selectionKey: String? {
         let chosen = selectedModels
-        return chosen.isEmpty ? nil : chosen.keys.sorted().map { "\($0)=\(chosen[$0]!)" }.joined(separator: ",")
+        var parts = chosen.keys.sorted().map { "\($0)=\(chosen[$0]!)" }
+        if let layout = previewLayout {
+            parts.append("layout=" + layout.map { "\($0.kind)\($0.label)\($0.box)" }.joined(separator: ";"))
+        }
+        parts.append("size=" + aspect.size)
+        return parts.joined(separator: ",")
+    }
+
+    /// The composer's boxes as the next send will take them (`layoutForNextMessage`), without using them up.
+    var previewLayout: [LayoutBox]? {
+        guard let layout = pendingLayout, !layout.isEmpty, layoutAvailable else { return nil }
+        return layout
     }
 
     static func task(for operation: String) -> GenTask? {
@@ -442,13 +517,35 @@ final class AppModel {
 
     /// On Auto, the model the agent picked for this message when it can run it; otherwise the usual choice.
     private func model(for operation: String, decision: WorkflowDecision) -> EngineModel? {
-        let chosen = Self.task(for: operation).flatMap { chosenModel(for: $0) }
-        if chosen == nil, let picked = decision.model,
-           let model = models.first(where: { $0.id == picked && $0.downloaded }),
-           capabilityCatalog?.operations[operation]?.contains(where: { $0.model == picked }) == true {
-            return model
+        if hasChosenModel(for: operation) { return defaultModel(for: operation) }
+        let id = RouteModel.running(chosen: nil, decision: decision, runnable: runnableModels(for: operation),
+                                    auto: defaultModel(for: operation)?.id)
+        return models.first(where: { $0.id == id })
+    }
+
+    /// What the route hint names for a workflow: the model `model(for:decision:)` will run, or, when the
+    /// agent picks the model on send among several, those models ("the agent picks A or B").
+    private func hintModelText(for operation: String, decision: WorkflowDecision) -> String? {
+        if hasChosenModel(for: operation) {
+            return defaultModel(for: operation).map { hintName($0) }
         }
-        return defaultModel(for: operation)
+        let ids = RouteModel.named(chosen: nil, decision: decision, runnable: runnableModels(for: operation),
+                                   auto: defaultModel(for: operation)?.id, checked: !routeModelUnchecked)
+        if ids.isEmpty, routeModelUnchecked { return "" }  // no model named until the engine answers
+        let named = ids.compactMap { id in models.first(where: { $0.id == id }) }
+        if named.count > 1 { return RouteModel.agentPicks(named.map(\.name)) }
+        return named.first.map { hintName($0) }
+    }
+
+    /// A hint and the model it names, or the hint alone while that is not known yet (empty).
+    private func hint(_ base: String, _ model: String) -> String {
+        model.isEmpty ? base : "\(base) · \(model)"
+    }
+
+    /// Downloaded models that can run this workflow (from the capability catalog).
+    private func runnableModels(for operation: String) -> Set<String> {
+        let capable = Set(capabilityCatalog?.operations[operation]?.map(\.model) ?? [])
+        return Set(models.filter { $0.downloaded && capable.contains($0.id) }.map(\.id))
     }
 
     /// The model that runs a workflow: the one chosen for its task; on Auto, the model chosen for the other
@@ -493,10 +590,11 @@ final class AppModel {
         } ?? does + maturity + compatibility
     }
 
-    /// Appended to the route preview when sending would swap another model out of memory.
-    private func loadHint(_ m: EngineModel) -> String {
-        guard !m.resident, models.contains(where: { $0.resident && $0.id != m.id }), let gb = m.size_gb else { return "" }
-        return " · loads \(String(format: "%.1f", gb)) GB"
+    /// The model in the route preview; "loads <model> · about X GB" when sending would swap another model out
+    /// of memory (its memory need, not its download size; task 19).
+    private func hintName(_ m: EngineModel) -> String {
+        let loads = !m.resident && models.contains(where: { $0.resident && $0.id != m.id })
+        return LoadHint.text(name: m.name, loads: loads, memoryGB: m.memory_gb)
     }
 
     func modelName(_ id: String) -> String {
@@ -635,28 +733,39 @@ final class AppModel {
         }
     }
 
+    /// No image model on this Mac yet (the engine's list is loaded and none is downloaded).
+    var hasNoImageModel: Bool { !models.isEmpty && !models.contains(where: \.downloaded) }
+
     var routePreview: String {
+        // Nothing could make an image: say so, not "edit or create new" (task 19).
+        if hasNoImageModel {
+            return models.contains(where: \.isDownloading) ? "Image model still downloading" : "No image model downloaded"
+        }
         let message = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        // The route counts the attachments: decided once the ones still uploading are there (task 19).
+        if !uploading.isEmpty { return UploadWait.hint(attaching: uploading.count) }
         guard !message.isEmpty else {
             return isAutoModel ? "Model picked for you" : ""  // the model menu already names the choice
         }
         guard routeDecisionKey == routingKey(message: message), let decision = routeDecision else {
-            return isResolvingRoute ? "Determining workflow…"
+            return isResolvingRoute ? "Checking: new image or edit…"
                 : promptAssistantInstalled ? "Planned by the agent when you send"
-                : agentChoice.service != .local ? "The agent isn't connected" : "New image or edit: asked when you send"
+                : agentChoice.service != .local ? "The agent isn't connected" : "New image or edit: decided when you send"
         }
         switch decision.intent {
+        // The model that runs: on Auto the decision's, when the engine named one that fits in memory now.
         case "image.generate":
-            return defaultModel(for: .t2i).map { "Will generate · \($0.name)\(loadHint($0))" } ?? "No image model downloaded"
+            return hintModelText(for: decision.intent, decision: decision).map { hint("Will generate", $0) }
+                ?? "No image model downloaded"
         case "image.edit":
-            guard let m = defaultModel(for: .edit) else { return "No model that can edit is downloaded" }
+            guard let m = hintModelText(for: decision.intent, decision: decision) else { return "No model that can edit is downloaded" }
             let what = attachments.isEmpty ? latestImageTurn.map { "image \($0.number)" } ?? "the current image" : "the attached image\(attachments.count == 1 ? "" : "s")"
-            return "Will edit \(what) · \(m.name)\(loadHint(m))"
+            return hint("Will edit \(what)", m)
         case "image.upscale", "image.restore", "image.enhance":
-            guard let m = defaultModel(for: decision.intent) else {
-                return "No installed executor for \(Self.operationLabel(decision.intent).lowercased())"
+            guard let m = hintModelText(for: decision.intent, decision: decision) else {
+                return "No downloaded model can \(Self.operationLabel(decision.intent).lowercased())"
             }
-            return "Will \(Self.operationLabel(decision.intent).lowercased()) · \(m.name)\(loadHint(m))"
+            return hint("Will \(Self.operationLabel(decision.intent).lowercased())", m)
         default:
             return "Choose whether to edit or create new"
         }
@@ -684,18 +793,72 @@ final class AppModel {
             isResolvingRoute = false
             return
         }
-        if let decision = structuralDecision() {
+        let structural = structuralDecision()
+        if let decision = structural {
             routeDecision = decision
             routeDecisionKey = key
             routeRequest = nil
             isResolvingRoute = false
+        }
+        // On Auto the engine checks the app's model fits in memory now and may name another, also with the
+        // agent (the route then runs no agent, and lists its choices when it will pick); with several
+        // workflows and the agent, the message is planned on send and the hint says so.
+        guard let query = RoutePreviewQuery.make(
+            structural: structural?.intent, onAuto: structural.map { !hasChosenModel(for: $0.intent) } ?? true,
+            agentInstalled: promptAssistantInstalled, layout: previewLayout) else {
+            if structural == nil {
+                routeDecision = nil
+                routeDecisionKey = nil
+                routeRequest = nil
+                isResolvingRoute = false
+            }
             return
         }
-        // Anything the rules can't tell is planned by the agent when sent, or asked about without it.
-        routeDecision = nil
-        routeDecisionKey = nil
-        routeRequest = nil
-        isResolvingRoute = false
+        if structural != nil, client == nil { return }
+        if structural != nil { routeModelUnchecked = true }  // the app's decision, its model not yet checked
+        if structural == nil {
+            routeDecision = nil
+            routeDecisionKey = nil
+            isResolvingRoute = true
+        }
+        let currentResultId = latestImageTurn?.current?.resultId
+        let currentPrompt = latestImageTurn?.current?.prompt
+        let attachmentIds = attachments.map(\.id)
+        let request = RouteRequestIdentity(context: routingContext(message: message))
+        routeRequest = request
+        routeTask = _Concurrency.Task { [weak self] in
+            do {
+                try await _Concurrency.Task.sleep(for: .milliseconds(300))
+                guard let self, !_Concurrency.Task.isCancelled,
+                      self.routeRequest?.accepts(
+                        context: self.routingContext(message: message), requestID: request.id) == true else { return }
+                guard let client = self.client else {
+                    self.routeDecision = Self.ambiguousDecision(provider: "unavailable")
+                    self.routeDecisionKey = key
+                    self.isResolvingRoute = false
+                    return
+                }
+                let decision = try await client.routeWorkflow(
+                    message: message, currentResultId: currentResultId,
+                    currentPrompt: currentPrompt, attachments: attachmentIds,
+                    history: self.routingHistory, selectedModels: self.selectedModels,
+                    autoModels: self.autoModels, size: self.aspect.size,
+                    layout: query.layout, candidates: query.candidates)
+                guard !_Concurrency.Task.isCancelled,
+                      self.routeRequest?.accepts(
+                        context: self.routingContext(message: message), requestID: request.id) == true else { return }
+                self.routeDecision = structural?.checked(by: decision) ?? decision
+                self.routeDecisionKey = key
+                self.isResolvingRoute = false
+            } catch is CancellationError {
+            } catch {
+                guard let self, self.routeRequest?.accepts(
+                    context: self.routingContext(message: message), requestID: request.id) == true else { return }
+                self.routeDecision = structural ?? Self.ambiguousDecision(provider: "unavailable")
+                self.routeDecisionKey = key
+                self.isResolvingRoute = false
+            }
+        }
     }
 
     private func routingKey(message: String) -> String {
@@ -756,8 +919,18 @@ final class AppModel {
         WorkflowDecision(intent: "ambiguous", confidence: 0, probabilities: [:], provider: provider)
     }
 
-    private func clearComposerContext() {
-        attachments = []
+    /// `sent`: a message just went out. Only its own images leave the composer; images attached or still
+    /// attaching while it was planned stay for the next message (task 19). Without it (the chat changed),
+    /// everything goes.
+    private func clearComposerContext(sent: PendingRoute? = nil) {
+        if let sent {
+            attachments = SentAttachments.kept(attachments, sent: sent.attachmentIds)
+        } else {
+            attachments = []
+            // A message held for an upload, and the upload itself, belong to the chat they were started in.
+            // The composer of that chat is gone (attachments are not kept per chat), so they are dropped.
+            dropUploads()
+        }
         clearPendingLayout()
         routeTask?.cancel()
         routeDecision = nil
@@ -787,17 +960,23 @@ final class AppModel {
             return show("Not sent: download an image model first.")
         }
         if let planning = planningMessage { return show("Not sent yet: “\(planning)” is still being planned.") }
+        // An image still uploading would be left out of this message (task 19): send when it is attached.
+        if !uploading.isEmpty {
+            sendAfterUpload = text ?? ""
+            return
+        }
         guard !isGeneratingHere else { return show("Not sent: wait for the image to finish, or stop it.") }
         if let pending = pendingRoute, let question = pendingAsk, promptAssistantInstalled {
             if text == nil { draft = "" }
             return answer(pending, question: question, with: message)
         }
         if let held = pendingRoute?.message { return show("Choose what to do with “\(held)” first, or cancel it.") }
+        // The key before the layout is taken: the hint's decision was made with it (task 17).
+        let key = routingKey(message: message)
         let snapshot = PendingRoute(
             message: message, attachmentInputs: attachments.enumerated().map { $0.element.mediaInput(order: $0.offset) },
             latestResultId: latestImageTurn?.current?.resultId, latestTurnId: latestImageTurn?.id,
             promptSpec: selectedPromptSpec(for: message), layout: layoutForNextMessage())
-        let key = routingKey(message: message)
         // An agent on a service is chosen but not connected (the engine restarted and reconnecting failed,
         // or hasn't finished): connect now rather than let the rules decide without saying so.
         if !promptAssistantInstalled, agentChoice.service != .local, !reconnectingAgent {
@@ -807,7 +986,29 @@ final class AppModel {
         // With the agent, every sent message is planned by it; the rules only check its answer (in the engine).
         let planned = promptAssistantInstalled
         if !planned, let decision = structuralDecision() {
-            execute(snapshot, decision: decision)
+            // A workflow on Auto: the engine checks the app's model fits in memory now and may name one that
+            // does (task 17); before, this path never asked, and a model that won't fit was refused.
+            guard !hasChosenModel(for: decision.intent), let client else {
+                execute(snapshot, decision: decision)
+                return
+            }
+            routeTask?.cancel()
+            routeRequest = nil
+            isResolvingRoute = false
+            planningMessage = message
+            if text == nil { draft = "" }
+            let history = routingHistory
+            let currentPrompt = latestImageTurn?.current?.prompt
+            planTask = _Concurrency.Task { [weak self] in
+                let checked = try? await client.routeWorkflow(
+                    message: message, currentResultId: snapshot.latestResultId, currentPrompt: currentPrompt,
+                    attachments: snapshot.attachmentIds, history: history,
+                    selectedModels: self?.selectedModels ?? [:], autoModels: self?.autoModels ?? [:],
+                    size: self?.aspect.size, layout: snapshot.layout, candidates: [decision.intent])
+                guard let self, !_Concurrency.Task.isCancelled else { return }
+                self.planningMessage = nil
+                self.execute(snapshot, decision: decision.checked(by: checked))
+            }
             return
         }
         // A workflow the user picked in the composer ("Create a new image", "Edit current") is followed as
@@ -835,7 +1036,8 @@ final class AppModel {
                 let decision = try await client.routeWorkflow(
                     message: message, currentResultId: snapshot.latestResultId, currentPrompt: currentPrompt,
                     attachments: snapshot.attachmentIds, attachmentNotes: notes, history: history,
-                    selectedModels: self?.selectedModels ?? [:],
+                    selectedModels: self?.selectedModels ?? [:], autoModels: self?.autoModels ?? [:],
+                    size: self?.aspect.size,
                     plan: planned, wait: waits, layout: snapshot.layout)
                 guard let self, !_Concurrency.Task.isCancelled else { return }
                 self.planningMessage = nil
@@ -952,7 +1154,8 @@ final class AppModel {
                     message: reply, currentResultId: pending.latestResultId,
                     currentPrompt: self?.latestImageTurn?.current?.prompt, attachments: pending.attachmentIds,
                     attachmentNotes: self?.attachmentNotes(pending.attachmentInputs) ?? [:],
-                    history: history, selectedModels: self?.selectedModels ?? [:], plan: true, wait: waits)
+                    history: history, selectedModels: self?.selectedModels ?? [:], autoModels: self?.autoModels ?? [:],
+                    size: self?.aspect.size, plan: true, wait: waits)
                 guard let self, !_Concurrency.Task.isCancelled else { return }
                 self.planningMessage = nil
                 guard self.pendingAsk == question else { return }
@@ -1107,7 +1310,7 @@ final class AppModel {
             var route = "Edited from the attached image"
             if let source = inputs.first {
                 if let attached = pending.attachmentInputs.first(where: { $0.id == source.id }) {
-                    if let base = preparedFrom(attached) { route = "Edited from the prepared image \(base.number)" }
+                    if let base = preparedFrom(attached) { route = "Edited from image \(base.number) after Crop / Draw" }
                 } else if let t = turns.first(where: { $0.versions.contains { $0.resultId == source.id } }) {
                     let version = t.versions.firstIndex { $0.resultId == source.id } ?? t.activeVersion
                     route = "Edited from image \(t.number) · v\(version + 1)"
@@ -1130,7 +1333,7 @@ final class AppModel {
                 route: Self.operationLabel(operation), size: nil, decision: decision,
                 promptSpec: pending.promptSpec, operation: operation)
         }
-        clearComposerContext()
+        clearComposerContext(sent: pending)
         touchSession()
     }
 
@@ -1297,22 +1500,32 @@ final class AppModel {
         }
     }
 
+    /// A model part in plain words. mflux models report their own names (Ideogram's two "conditional" and
+    /// "unconditional" transformers, MOSS's second transformer): every transformer is the image model.
     static func componentName(_ c: String?) -> String {
         switch c {
         case "text_encoder": return "text encoder"
         case "prompt_assistant": return "prompt assistant"
-        case "transformer": return "image model"
         case "vae": return "decoder"
+        case let c? where c.contains("transformer"): return "image model"
+        case let c? where !c.isEmpty: return c.replacingOccurrences(of: "_", with: " ")
         default: return "model"
         }
     }
 
+    /// The parts a job loaded, each named once, in the order they loaded.
+    static func loadedParts(_ loads: [String]) -> String {
+        var seen = Set<String>()
+        return loads.map { componentName($0) }.filter { seen.insert($0).inserted }.joined(separator: ", ")
+    }
+
     /// Shown in a result's details when the engine had to save memory; nothing for the normal mode.
+    /// Each names what the engine did, from the lightest saving to the most.
     static func strategyLabel(_ strategy: String?) -> String? {
         switch strategy {
-        case "phase_free": return "memory-saving mode"
-        case "sequential": return "low-memory mode"
-        case "streamed": return "lowest-memory mode"
+        case "phase_free": return "text encoder freed early to save memory"
+        case "sequential": return "one part at a time to save memory"
+        case "streamed": return "image model streamed from disk to save memory"
         default: return nil
         }
     }
@@ -1527,7 +1740,7 @@ final class AppModel {
     func applyEditor(_ document: EditorDocument) {
         guard !isExportingEditor, let sessionId = currentSessionId, let image = editorImage,
               let client else { return }
-        guard attachments.count < 3 else {
+        guard attachments.count < attachLimit.count else {
             return show("Remove an attachment before adding the prepared image.")
         }
         var rect = CGRect(origin: .zero, size: image.size)
@@ -1570,20 +1783,98 @@ final class AppModel {
         attachments.insert(item, at: destination)
     }
 
+    /// How many images this message can carry: the edit model's own limit, at most 3 (task 19). The edit
+    /// model is the one chosen for edits, or on Auto the one dMLX would pick.
+    var attachLimit: AttachLimit {
+        let m = defaultModel(for: .edit)
+        return AttachLimit(modelName: m.map { $0.group_name ?? $0.name }, modelMax: m?.max_references)
+    }
+
+    /// Files being uploaded, by a token: they show in the composer, hold a place among the 3, and a send
+    /// waits for them (task 19).
+    private(set) var uploading: [(token: UUID, label: String)] = []
+    /// A message sent while an image was uploading: sent when the uploads end ("" = the composer's text).
+    private(set) var sendAfterUpload: String?
+    /// The running upload batches. Cancelled when the chat changes or the held send is cancelled.
+    private var uploadTasks: [UUID: _Concurrency.Task<Void, Never>] = [:]
+    private var heldUploadFailed = false
+
     func attach(files: [URL]) {
+        guard !files.isEmpty else { return }
         guard let client else { return show("The engine is still starting.") }
-        _Concurrency.Task {
-            let available = max(0, 3 - attachments.count)
-            if available == 0 { return show("This model accepts up to 3 images.") }
-            for url in files.prefix(available) {
+        let limit = attachLimit
+        let plan = AttachPlan(files: files.count, current: attachments.count, uploading: uploading.count,
+                              limit: limit)
+        // Notes from this drop are merged into one toast, so a failed file does not hide the left-out ones.
+        var note = plan.message(limit)
+        if let note { show(note) }
+        // Places are taken now, before any upload ends, so files dropped one by one can't go over the limit.
+        let batch = files.prefix(plan.take).map { (token: UUID(), url: $0) }
+        guard !batch.isEmpty else { return }
+        uploading += batch.map { (token: $0.token, label: $0.url.lastPathComponent) }
+        let batchId = UUID()
+        // One after another, so the attachments keep the order the files were given in.
+        uploadTasks[batchId] = _Concurrency.Task {
+            defer { if uploadTasks[batchId] != nil { uploadTasks[batchId] = nil } }
+            for item in batch {
+                // Dropped with its chat, or cancelled: nothing of it lands anywhere.
+                guard !_Concurrency.Task.isCancelled, uploading.contains(where: { $0.token == item.token }) else { return }
+                let url = item.url
                 do {
-                    let id = try await client.upload(file: url)
+                    // iPhone photos (HEIC) and wide-colour images become sRGB PNG here (task 19).
+                    var file = url
+                    if UploadImage.needsConversion(url) {
+                        file = try await _Concurrency.Task.detached { try UploadImage.convertToPNG(url) }.value
+                    }
+                    defer { if file != url { try? FileManager.default.removeItem(at: file.deletingLastPathComponent()) } }
+                    let id = try await client.upload(file: file, timeout: UploadWait.timeout)
+                    guard !_Concurrency.Task.isCancelled, uploading.contains(where: { $0.token == item.token }) else { return }
                     attachments.append(Attachment(id: id, label: url.lastPathComponent))
                 } catch {
-                    show("Couldn't attach \(url.lastPathComponent): \(error.localizedDescription)")
+                    guard !_Concurrency.Task.isCancelled, uploading.contains(where: { $0.token == item.token }) else { return }
+                    // A message waiting for this image is not sent without it (it would make a new image
+                    // instead of the edit): it goes back to the box.
+                    let held = sendAfterUpload != nil
+                    if held { heldUploadFailed = true }
+                    let reason = (error as? URLError)?.code == .timedOut
+                        ? "Couldn't attach \(url.lastPathComponent): the engine did not answer in time."
+                        : UploadImage.failureMessage(file: url.lastPathComponent, error: error.localizedDescription)
+                    note = ToastText.merged(note, reason + (held ? " Your message was not sent." : ""))
+                    show(note!)
                 }
+                finishUpload(item.token)
             }
         }
+    }
+
+    private func finishUpload(_ token: UUID) {
+        uploading.removeAll { $0.token == token }
+        guard uploading.isEmpty, let held = sendAfterUpload else { return }
+        sendAfterUpload = nil
+        if heldUploadFailed {
+            heldUploadFailed = false
+            if !held.isEmpty && draft.isEmpty { draft = held }
+            return
+        }
+        send(held.isEmpty ? nil : held)
+    }
+
+    /// Stops every upload in flight and forgets a message held for them.
+    private func dropUploads() {
+        uploadTasks.values.forEach { $0.cancel() }
+        uploadTasks = [:]
+        uploading = []
+        sendAfterUpload = nil
+        heldUploadFailed = false
+    }
+
+    /// The composer's Cancel next to "Sends when the image is attached.": the uploads stop, nothing is sent,
+    /// and the message stays in the box (task 19).
+    func cancelHeldSend() {
+        guard let held = sendAfterUpload else { return }
+        dropUploads()
+        if !held.isEmpty && draft.isEmpty { draft = held }
+        show("Not sent: attaching was cancelled. Your message is still in the box.")
     }
 
     func save(_ turnId: String) {
@@ -1609,9 +1900,44 @@ final class AppModel {
         toast = message
         toastTask?.cancel()
         toastTask = _Concurrency.Task {
-            try? await _Concurrency.Task.sleep(for: .seconds(3))
+            try? await _Concurrency.Task.sleep(for: .seconds(ToastText.seconds(for: message)))
             if !_Concurrency.Task.isCancelled { toast = nil }
         }
+    }
+
+    /// Asked once, one question at a time: set once the user agreed to quit, and while the question is open
+    /// a second quit (Dock, ⌘Q, a logout) is turned down instead of opening a second alert (task 19).
+    private var quitGate = QuitGate()
+
+    /// Before quitting during a download (task 19): the files so far stay, and Download resumes from them.
+    func confirmQuit() -> Bool {
+        let detail = QuitQuestion.detail(imageDownloads: runningDownloads.map(\.name), agentDownload: agentDownload)
+        switch quitGate.request(downloading: detail != nil) {
+        case .quit: return true
+        case .ignore:
+            NSApp.activate()
+            return false
+        case .ask: break
+        }
+        let alert = NSAlert()
+        alert.messageText = QuitQuestion.title
+        alert.informativeText = detail ?? ""
+        alert.addButton(withTitle: "Quit")
+        alert.addButton(withTitle: "Cancel")
+        let quit = alert.runModal() == .alertFirstButtonReturn
+        quitGate.answered(quit: quit)
+        return quit
+    }
+
+    /// The Quit command: asks first during a download, closes any open sheet (AppKit won't quit with one
+    /// open), then quits.
+    func quit() {
+        guard confirmQuit() else { return }
+        showOnboarding = false
+        for window in NSApp.windows {
+            if let sheet = window.attachedSheet { window.endSheet(sheet) }
+        }
+        DispatchQueue.main.async { NSApp.terminate(nil) }
     }
 
     func shutdown() {

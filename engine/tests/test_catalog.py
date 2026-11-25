@@ -290,7 +290,7 @@ def test_repo_sizes_read_the_file_list_once(monkeypatch):
             calls.append(repo)
             if repo.endswith("missing"):
                 raise RuntimeError("404")
-            return SimpleNamespace(siblings=[SimpleNamespace(rfilename="transformer/0.safetensors", size=2 * 1024**3),
+            return SimpleNamespace(siblings=[SimpleNamespace(rfilename="transformer/0.safetensors", size=2_000_000_000),
                                              SimpleNamespace(rfilename="README.md", size=10)])
 
     monkeypatch.setattr(huggingface_hub, "HfApi", Api)

@@ -10,7 +10,7 @@ extension ModelHints {
     static func group(_ id: String) -> String {
         switch id {
         case "flux-2-klein-4b": "Fast and good at most things."
-        case "flux-2-klein-9b": "Sharper, more faithful images and edits than Klein 4B. Slower and larger."
+        case "flux-2-klein-9b": "More detail than Klein 4B in new images and edits, but about twice as slow."
         case "flux-2-klein-9b-kv": "Klein 9B made faster at edits that use several images."
         case "flux-2-klein-base-4b", "flux-2-klein-base-9b":
             "The untuned original of Klein: much slower, with more varied results. For experts."
@@ -19,11 +19,15 @@ extension ModelHints {
         case "z-image-base": "The untuned original of Z-Image: much slower, more varied. For experts."
         case "qwen-image-2-1-base": "Best at writing words in images, like posters, and careful edits. Very slow."
         case "ernie-image-turbo": "Follows long, detailed descriptions well. Slow: about 2.5 minutes per image."
-        case "moss-image": "Very slow: minutes per image. Use it when you want its particular look."
+        case "moss-image": "Places text and objects where you draw boxes (Layout). Very slow: about 5 minutes per image."
         case "boogu-image-turbo": "Photographic, and good at text in English and Chinese. Slow."
         case "krea-2-turbo": "Strong photographic realism. About 2.5 minutes per image."
         case "iris-3b-turbo": "Small and fast, with simpler detail than the larger models."
-        default: "An image model saved in mflux format."
+        case let id where id.hasPrefix("fibo"):
+            "Follows detailed descriptions and draws text well. Places things where you draw boxes (Layout). Very slow: about 5.5 minutes per image."
+        case let id where id.hasPrefix("ideogram"):
+            "The strongest at lettering and exact placement: puts things where you draw boxes (Layout). Very slow: about 5 minutes per image."
+        default: "An image model you added."
         }
     }
 
@@ -36,17 +40,28 @@ extension ModelHints {
         bits.map { "\($0)-bit" } ?? "Full size"
     }
 
-    /// What choosing a version means, without the word quantization.
-    static func variantHint(_ bits: Int?) -> String {
-        switch bits {
-        case 3: "Smallest download, lower quality"
-        case 4: "Small download, good quality"
-        case 5: "Slightly better quality, a bit larger"
-        case 6: "Better quality, larger download"
-        case 8: "Close to full quality, large download"
-        case nil: "Full quality, largest download"
-        default: "Smaller download, slightly lower quality"
+    /// What choosing a version means, without the word quantization: its quality (from the bits), and how big
+    /// the download is (from its real size when known, so a 14 GB 4-bit build is not called small).
+    static func variantHint(_ bits: Int?, sizeGB: Double? = nil) -> String {
+        let quality = switch bits {
+        case 3: "Lower quality"
+        case 4: "Good quality"
+        case 5: "Slightly better quality"
+        case 6: "Better quality"
+        case 8: "Close to full quality"
+        case nil: "Full quality"
+        default: "Slightly lower quality"
         }
+        guard let gb = sizeGB, gb > 0 else {
+            let download = switch bits {
+            case 3, 4: "smaller download"
+            case nil: "largest download"
+            default: "larger download"
+            }
+            return "\(quality), \(download)"
+        }
+        let download = gb < 4 ? "small download" : gb < 9 ? "medium-size download" : "large download"
+        return "\(quality), \(download)"
     }
 
     /// A license's readable name; for one dMLX does not know, its id in words ("Krea 2 Community License").
@@ -175,13 +190,16 @@ struct VariantLine: View {
                         Text("· Experimental").font(.callout).foregroundStyle(.secondary)
                     }
                 }
-                Text(ModelHints.variantHint(model.quantization)).font(.caption).foregroundStyle(.secondary)
+                Text(ModelHints.variantHint(model.quantization, sizeGB: model.size_gb)).font(.caption).foregroundStyle(.secondary)
                 if let error = model.download.error, model.download.status == "error" {
                     Text("Download failed: \(error)").font(.caption).foregroundStyle(.red).lineLimit(2)
                 }
             }
             Spacer(minLength: 8)
-            Text(sizeText).font(.callout).monospacedDigit().foregroundStyle(.secondary)
+            // While downloading, or part way, the progress or Resume button says the size.
+            if !model.isDownloading && !model.hasPartialDownload {
+                Text(sizeText).font(.callout).monospacedDigit().foregroundStyle(.secondary)
+            }
             actions
         }
         .accessibilityElement(children: .contain)
@@ -211,17 +229,25 @@ struct VariantLine: View {
                     .controlSize(.small)
                     .accessibilityLabel("Remove \(title)")
             }
-        } else if model.download.status == "downloading" {
-            VStack(alignment: .trailing, spacing: 3) {
-                ProgressView(value: model.download.progress).frame(width: 110).controlSize(.small)
-                Text(String(format: "%.1f of %.1f GB", Double(model.download.done_bytes) / 1e9, Double(model.download.total_bytes) / 1e9))
-                    .font(.caption2).monospacedDigit().foregroundStyle(.secondary)
+        } else if model.isDownloading {
+            HStack(spacing: 8) {
+                VStack(alignment: .trailing, spacing: 3) {
+                    ProgressView(value: model.download.progress).frame(width: 110).controlSize(.small)
+                    Text(DiskSize.progress(done: model.download.done_bytes, total: model.download.total_bytes))
+                        .font(.caption2).monospacedDigit().foregroundStyle(.secondary)
+                }
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("Downloading, \(Int(model.download.progress * 100)) percent")
+                // The files so far stay: Download resumes from them (task 19).
+                Button("Cancel") { app.cancelDownload(model) }
+                    .controlSize(.small)
+                    .help("Stop the download. It resumes where it stopped next time.")
+                    .accessibilityLabel("Cancel download of \(title)")
             }
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel("Downloading, \(Int(model.download.progress * 100)) percent")
         } else {
             HStack(spacing: 6) {
-                Button("Download") {
+                Button(model.hasPartialDownload
+                       ? DiskSize.resumeLabel(partialBytes: model.partialBytes, totalBytes: model.sizeBytes) : "Download") {
                     if model.requiresLicenseAcceptance && !ModelLicenseAcceptance.hasAccepted(model) {
                         showLicense = true
                     } else {
@@ -230,9 +256,17 @@ struct VariantLine: View {
                 }
                 .controlSize(.small)
                 .disabled(!app.isEngineRunning)
-                .accessibilityLabel("Download \(title)")
+                .accessibilityLabel(model.hasPartialDownload ? "Resume download of \(title)" : "Download \(title)")
+                if model.hasPartialDownload && !model.isUserAdded {
+                    // The part downloaded so far (Remove deletes it; an added model's button below does too).
+                    Button { app.remove(model) } label: { Image(systemName: "trash") }
+                        .buttonStyle(.borderless)
+                        .foregroundStyle(.secondary)
+                        .help("Delete the \(DiskSize.amount(bytes: model.partialBytes)) downloaded so far")
+                        .accessibilityLabel("Delete the partial download of \(title)")
+                }
                 if model.isUserAdded {
-                    // Not downloaded, so nothing to delete: only take it off the list.
+                    // Not downloaded: take it off the list (with any part downloaded so far).
                     Button { app.remove(model) } label: { Image(systemName: "xmark.circle.fill") }
                         .buttonStyle(.borderless)
                         .foregroundStyle(.secondary)
@@ -246,7 +280,7 @@ struct VariantLine: View {
     private var removeTitle: String { model.isUserAdded ? "Remove \(title)?" : "Delete the files of \(title)?" }
 
     private var removeMessage: String {
-        let files = "This deletes \(sizeText) from the Hugging Face cache on this Mac. Other apps that use the same model would need to download it again."
+        let files = "This deletes \(sizeText) from dMLX's models folder on this Mac."
         return model.isUserAdded ? files : files + " It stays in the list, and you can download it again anytime."
     }
 

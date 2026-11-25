@@ -124,7 +124,8 @@ struct AddModelView: View {
             }
         }
         .padding(20)
-        .frame(width: 600, height: 640)
+        // Shorter on a small screen, so Cancel and Download stay on it (the list scrolls).
+        .frame(width: 600, height: min(640, max(420, (NSScreen.main?.visibleFrame.height ?? 800) - 160)))
         .task {
             selectedGroup = initialGroup ?? ModelHints.recommendedGroup
             await app.loadCatalog()
@@ -315,7 +316,8 @@ private struct GroupChoice: View {
                         .labelsHidden()
                         .fixedSize()
                     }
-                    Text(ModelHints.variantHint(group.variant(variant)?.quantization))
+                    Text(ModelHints.variantHint(group.variant(variant)?.quantization,
+                                               sizeGB: group.variant(variant).flatMap { $0.model?.size_gb ?? sizes[$0.repo] }))
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .padding(.leading, 62)

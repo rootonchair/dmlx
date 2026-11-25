@@ -64,3 +64,33 @@ def test_small_sizes_are_estimated_as_one_megapixel():
     assert spec.decode_bytes(512, 512, "tiled") == spec.decode_bytes(1000, 1000, "tiled") == int(6.8 * GB)
     assert spec.activation_bytes(512, 512) == spec.activation_bytes(1000, 1000)
     assert spec.decode_bytes(2000, 1000, "tiled") == int(6.8 * 2 * GB)
+
+
+def test_the_refusal_never_reads_as_needing_what_it_has():
+    """Test round 3 of task 17: "needs about 3.3 GB but only 3.3 GB can be used"."""
+    from dmlx.memory import GB, InsufficientMemory
+
+    close = str(InsufficientMemory(int(3.34 * GB), int(3.26 * GB), "klein-9b", "FLUX.2 Klein 9B"))
+    assert "needs about 3.34 GB but only 3.26 GB can be used" in close
+    closer = str(InsufficientMemory(int(3.3449 * GB), int(3.3401 * GB), "klein-9b"))
+    assert "needs about 3.345 GB but only 3.340 GB" in closer
+    apart = str(InsufficientMemory(int(9.5 * GB), int(7.6 * GB), "qwen-image", "Qwen Image 2.1"))
+    assert "needs about 9.5 GB but only 7.6 GB can be used" in apart
+    assert "only 0.0 GB" in str(InsufficientMemory(int(2 * GB), -5, "x"))
+
+
+def test_the_refusal_suggests_a_smaller_size_only_when_there_is_one(make_engine):
+    """Task 19: "pick a smaller size" at 1024x1024, the app's smallest size."""
+    from dmlx.memory import GB, InsufficientMemory
+
+    at_1mp = str(InsufficientMemory(int(9.5 * GB), int(7.3 * GB), "q", "Qwen", pixels=1216 * 832))
+    assert at_1mp.endswith("Close some apps, or choose a lighter model.")
+    big = str(InsufficientMemory(int(9.5 * GB), int(7.3 * GB), "q", "Qwen", pixels=1536 * 1536))
+    assert big.endswith("Close some apps, pick a smaller size, or choose a lighter model.")
+
+    engine = make_engine(headroom_gb=1.0)
+    for size, smaller in (("1024x1024", False), ("2048x2048", True)):
+        job = engine.submit(task="t2i", prompt="a boat", model="fake-a", size=size)
+        assert job.finished.wait(10)
+        assert job.error["code"] == "insufficient_memory"
+        assert ("pick a smaller size" in job.error["message"]) is smaller

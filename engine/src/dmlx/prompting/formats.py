@@ -345,11 +345,157 @@ def _merge_locked(drafted: list[Box], layout: list[Box], fixes: list[str]) -> li
     if missing:
         fixes.append(f"Put back {len(missing)} box(es) you placed that the caption left out")
         out += [Box(b.id, b.kind, b.label, b.box, b.desc or b.label, b.desc_by_user, True) for b in missing]
+    moods = [b for b in out if _is_mood(b)]
+    if moods:
+        fixes.append(f"Left out {len(moods)} box(es) for light, mood or style; the caption describes them")
+        out = [b for b in out if not _is_mood(b)]
     drop = _backdrops(out)
     if drop:
         fixes.append(f"Left out {len(drop)} backdrop box(es); the caption describes the mood")
         out = [b for b in out if b.id not in drop]
-    return out[:MAX_BOXES]
+    return _clear_text(out, fixes)[:MAX_BOXES]
+
+
+# What a box names when it is not a thing or words: light, mood, atmosphere or style ("glowing
+# spotlights", "smoky haze", "art deco style"). Those belong in the overall description; a box for them
+# makes the model draw a patch of light or a frame. Matched on the name's head noun (its last word):
+# - a word that never names a thing ("atmosphere", "glow", "haze") counts whatever comes before it;
+# - a word that can ("light", "ray", "beam", "shadow", "palette", "flare", "effects", "style") counts
+#   only when every word before it is a light or mood word too: "warm lights", "stage spotlights" and
+#   "lens flare" go, "traffic light", "street light", "manta ray", "wooden beam", "cat shadow",
+#   "painter's palette", "solar flare" and "hair style" stay.
+# "lamp", "neon sign" and "musicians silhouettes" stay: their head nouns are things.
+_MOOD_ALWAYS = frozenset((
+    "lighting", "glow", "glows", "bokeh", "ambiance", "ambience", "atmosphere", "mood",
+    "vibe", "vibes", "haze", "aura", "aesthetic", "aesthetics", "vignette", "gradient",
+))
+_MOOD_IF_ALL_MOOD = frozenset((
+    "light", "lights", "spotlight", "spotlights", "beam", "beams", "ray", "rays", "shadow", "shadows",
+    "fog", "mist", "palette", "tone", "tones", "texture", "backdrop", "background", "smoke",
+    # "lens flare", "light effects" and "retro style" go; "solar flare", "sound effects", "hair style" stay
+    "flare", "flares", "effect", "effects", "style", "styles",
+))
+_MOOD_MODIFIERS = _MOOD_ALWAYS | _MOOD_IF_ALL_MOOD | frozenset((
+    # how light looks
+    "glowing", "warm", "cool", "cold", "soft", "harsh", "hard", "dim", "bright", "brilliant", "radiant",
+    "ambient", "natural", "studio", "stage", "spot", "flood", "rim", "back", "key", "fill", "overhead",
+    "volumetric", "cinematic", "dramatic", "diffuse", "diffused", "low", "high", "contrast", "lens",
+    "neon", "golden", "sun", "sunlight", "moon", "moonlight", "candlelight", "dark", "deep", "long",
+    "faint", "subtle", "gentle", "flickering", "shimmering", "sparkling", "twinkling", "glittering",
+    "colored", "coloured", "colorful", "colourful", "color", "colour", "pastel", "vibrant", "muted",
+    "red", "blue", "purple", "pink", "orange", "green", "yellow", "gold", "amber", "teal", "violet",
+    # mood and style
+    "moody", "smoky", "hazy", "misty", "foggy", "atmospheric", "ethereal", "dreamy", "mysterious",
+    "romantic", "jazzy", "retro", "vintage", "noir", "art", "deco", "nouveau", "overall", "general",
+    "the", "a", "an", "of", "and", "with", "in",
+))
+
+
+def _is_mood(b: Box) -> bool:
+    """An agent's object box named for light, mood or style. Never a box the user placed, never text."""
+    if b.by_user or b.kind != "obj":
+        return False
+    words = re.findall(r"[a-z]+", b.label.lower())
+    if not words:
+        return False
+    head, rest = words[-1], words[:-1]
+    if head in _MOOD_ALWAYS:
+        return True
+    return head in _MOOD_IF_ALL_MOOD and all(word in _MOOD_MODIFIERS for word in rest)
+
+
+_MIN_SIDE = 50  # 5% of the image: a thinner box draws nothing
+_MIN_KEPT = 0.4  # an object box cut to less than this share of itself is no longer the box the agent meant
+
+
+# Things words are written on: an agent box with one of these names around a text box is what the text is
+# on ("neon sign" around "OPEN"), not something covering it.
+_SURFACES = frozenset((
+    "sign", "signs", "signboard", "banner", "banners", "label", "labels", "cover", "poster", "plaque",
+    "board", "billboard", "chalkboard", "blackboard", "whiteboard", "screen", "display", "monitor", "badge",
+    "tag", "sticker", "card", "frame", "panel", "ribbon", "bubble", "button", "logo", "emblem", "menu",
+    "page", "book", "shirt", "jersey", "mug", "cup", "bottle", "can", "jar", "box", "package", "packaging",
+    "carton", "wrapper", "bag", "envelope", "flag", "marquee", "scroll", "placard", "plate", "sheet", "note",
+    "paper", "ticket", "stamp", "cake", "awning", "storefront", "sash", "tablet", "phone", "laptop",
+))
+
+
+def _holds(b: Box, box: tuple[int, int, int, int], text: tuple[int, int, int, int]) -> bool:
+    """Whether the agent's object box is what the text is written on: it holds the whole text box and is
+    named for a surface ("neon sign", "book cover"). By name only: a "crowd" box drawn tight around the
+    date, or "musicians silhouettes" around it, still covers it and is cut or left out."""
+    if not (box[0] <= text[0] and box[1] <= text[1] and text[2] <= box[2] and text[3] <= box[3]):
+        return False
+    words = re.findall(r"[a-z]+", b.label.lower())
+    return bool(words) and words[-1] in _SURFACES
+
+
+def _clear_text(boxes: list[Box], fixes: list[str]) -> list[Box]:
+    """The agent's object boxes cut back off every text box ("musicians silhouettes" over the date): the
+    largest part of the box on one side of the text, or the box left out when that part is too small. A box
+    that holds a text box whole as its surface (a "neon sign" around its "OPEN") keeps it: the text is on it.
+    A box the user placed is never changed; their text boxes are the ones kept clear. Decided against all
+    text boxes at once, so their order does not matter (test round 4: cut off a second text first, a sign
+    could end up half over its own "OPEN")."""
+    texts = [b.box for b in boxes if b.kind == "text"]
+    out, cut, dropped = [], 0, 0
+    for b in boxes:
+        if b.by_user or b.kind != "obj":
+            out.append(b)
+            continue
+        held = [t for t in texts if _holds(b, b.box, t)]
+        box = _clear_of(b.box, [t for t in texts if t not in held], held)
+        if box is None or _area(box) < _MIN_KEPT * _area(b.box):
+            dropped += 1
+            continue
+        if box != b.box:
+            cut += 1
+            b = Box(b.id, b.kind, b.label, box, b.desc, b.desc_by_user, b.by_user)
+        out.append(b)
+    if cut:
+        fixes.append(f"Moved {cut} box(es) off the text")
+    if dropped:
+        fixes.append(f"Left out {dropped} box(es) that covered the text")
+    return out
+
+
+def _meets(a: tuple[int, int, int, int], b: tuple[int, int, int, int]) -> bool:
+    return min(a[2], b[2]) - max(a[0], b[0]) > 0 and min(a[3], b[3]) - max(a[1], b[1]) > 0
+
+
+def _clear_of(box: tuple[int, int, int, int], avoid: list[tuple[int, int, int, int]],
+              held: list[tuple[int, int, int, int]]) -> tuple[int, int, int, int] | None:
+    """The largest part of `box` that meets none of `avoid` and, for each of `held`, holds it whole or
+    misses it: unchanged when nothing in `avoid` meets it, None when no part is wide and tall enough.
+    With one text box: the largest part above, below, left or right of it. Edges are tried only at the
+    box's and the text boxes' edges, and the order of the text boxes plays no part."""
+    avoid = [t for t in avoid if _meets(box, t)]
+    if not avoid:
+        return box
+    rects = avoid + held
+    ys = sorted({box[0], box[2]} | {v for t in rects for v in (t[0], t[2]) if box[0] < v < box[2]})
+    xs = sorted({box[1], box[3]} | {v for t in rects for v in (t[1], t[3]) if box[1] < v < box[3]})
+    best, best_area = None, 0
+    for i, y0 in enumerate(ys):
+        for y1 in ys[i + 1:]:
+            if y1 - y0 < _MIN_SIDE:
+                continue
+            for j, x0 in enumerate(xs):
+                for x1 in xs[j + 1:]:
+                    part = (y0, x0, y1, x1)
+                    if x1 - x0 < _MIN_SIDE or _area(part) <= best_area:
+                        continue
+                    if any(_meets(part, t) for t in avoid):
+                        continue
+                    if any(_meets(part, t) and not (y0 <= t[0] and x0 <= t[1] and t[2] <= y1 and t[3] <= x1)
+                           for t in held):
+                        continue
+                    best, best_area = part, _area(part)
+    return best
+
+
+def _area(box: tuple[int, int, int, int]) -> int:
+    return max(0, box[2] - box[0]) * max(0, box[3] - box[1])
 
 
 _HEX = re.compile(r"^#?[0-9a-fA-F]{6}$")

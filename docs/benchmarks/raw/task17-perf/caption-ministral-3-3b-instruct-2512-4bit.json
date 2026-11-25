@@ -1,0 +1,62 @@
+[
+ {
+  "agent": "ministral-3-3b-instruct-2512-4bit",
+  "format": "moss-layout",
+  "boxes": 0,
+  "load_s": 3.1,
+  "caption_s": 5.6,
+  "total_s": 8.6,
+  "tries": 1,
+  "valid": true,
+  "reply_chars": 997,
+  "reason": null
+ },
+ {
+  "agent": "ministral-3-3b-instruct-2512-4bit",
+  "format": "fibo-json",
+  "boxes": 0,
+  "load_s": 0.0,
+  "caption_s": 12.3,
+  "total_s": 12.3,
+  "tries": 1,
+  "valid": true,
+  "reply_chars": 2836,
+  "reason": null
+ },
+ {
+  "agent": "ministral-3-3b-instruct-2512-4bit",
+  "format": "ideogram-json",
+  "boxes": 0,
+  "load_s": 0.0,
+  "caption_s": 9.2,
+  "total_s": 9.2,
+  "tries": 1,
+  "valid": true,
+  "reply_chars": 1719,
+  "reason": null
+ },
+ {
+  "agent": "ministral-3-3b-instruct-2512-4bit",
+  "format": "ideogram-json",
+  "boxes": 3,
+  "load_s": 0.0,
+  "caption_s": 10.9,
+  "total_s": 10.9,
+  "tries": 1,
+  "valid": true,
+  "reply_chars": 1976,
+  "reason": null
+ },
+ {
+  "agent": "ministral-3-3b-instruct-2512-4bit",
+  "format": "moss-layout",
+  "boxes": 0,
+  "load_s": 0.0,
+  "caption_s": 5.6,
+  "total_s": 5.6,
+  "tries": 1,
+  "valid": true,
+  "reply_chars": 997,
+  "reason": null
+ }
+]

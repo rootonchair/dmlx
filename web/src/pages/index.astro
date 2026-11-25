@@ -1,6 +1,6 @@
 ---
 // The dMLX homepage. Screenshots come from the repo's docs/screenshots/ and are optimized at build time.
-import { Image } from 'astro:assets';
+import { Image, getImage } from 'astro:assets';
 import { latestDownload, releasesPage } from '../lib/release';
 import ThemeSwitch from '../components/ThemeSwitch.astro';
 import AgentFlow from '../components/AgentFlow.astro';
@@ -21,23 +21,27 @@ const shot = (name: string) => {
   return f.default;
 };
 
-const site = new URL('/', Astro.site ?? 'https://dmlx.vercel.app').href;
+const site = new URL('/', Astro.site ?? 'https://www.dmlx.app').href;
 const repo = 'https://github.com/rootonchair/dmlx';
 const releases = releasesPage;
 const download = await latestDownload();
 const downloadNote = [download.tag + (download.prerelease && !/alpha|beta|rc/.test(download.tag) ? ' (pre-release)' : ''), download.sizeMB && `${download.sizeMB} MB`, '.dmg'].filter(Boolean).join(' · ');
+// 'v0.1.0-beta5' -> 'v0.1 beta 5', from the release the Download button links to.
+const versionLabel = download.tag.replace(/^v(\d+\.\d+)\.0/, 'v$1').replace(/-(alpha|beta|rc)(\d+)$/, ' $1 $2');
 const title = 'dMLX · Make and edit images by chat. Free, private, on your Mac';
 const description = 'Make and edit images by chatting, all on your Mac. Free and open source. No account, no cloud, no subscription. Every version is kept. For Apple Silicon Macs.';
 
 const apiExample = '<span class="c"># from a clone of the repo: run the engine without the app</span>\ncd engine && uv run dmlx serve --port 8642\n\n<span class="c"># make an image</span>\ncurl localhost:8642/v1/images/generations \\\n  -H <span class="s">\'content-type: application/json\'</span> \\\n  -d <span class="s">\'{"prompt": "a rowboat on a lake at dawn",\n       "size": "1024x1024"}\'</span>';
 
-// Before/after crops of the removal examples (web/scripts/crop-examples.py cuts them from the screenshots).
-const crops = import.meta.glob<{ default: ImageMetadata }>('../assets/examples/*.jpg', { eager: true });
-const crop = (name: string) => {
-  const f = crops[`../assets/examples/${name}.jpg`];
-  if (!f) throw new Error(`web/src/assets/examples/${name}.jpg not found; run web/scripts/crop-examples.py`);
+// The removal examples' before and after results at full size (from the app's results folder), for the pairs.
+const fulls = import.meta.glob<{ default: ImageMetadata }>('../assets/examples/full/*.jpg', { eager: true });
+const full = (name: string) => {
+  const f = fulls[`../assets/examples/full/${name}.jpg`];
+  if (!f) throw new Error(`web/src/assets/examples/full/${name}.jpg not found`);
   return f.default;
 };
+// Click to enlarge opens the example's app screenshot (docs/screenshots, taken at 2x) at full resolution.
+const zoomSrc = async (name: string) => (await getImage({ src: shot(name), format: 'webp', quality: 85 })).src;
 
 const examples = [
   { img: 'use-remove-object', pair: true, q: 'remove the coffee mug', model: 'FLUX.2 Klein 4B', time: '36 s', alt: 'A desk with a laptop, mug and plant, then the same desk with no mug.' },
@@ -47,6 +51,7 @@ const examples = [
   { img: 'use-banner', q: 'a bakery banner with the words FRESH BREAD DAILY', model: 'Qwen Image 2.1', time: 'about 4 min', extra: 'Landscape', alt: 'A wide bakery banner of loaves with FRESH BREAD DAILY at the top.' },
   { img: 'versions', q: 'make a variation', model: 'Every result keeps v1, v2, v3', time: '', extra: 'Nothing is overwritten. Go back to any version.', alt: 'A red rowboat with version buttons v1 and v2, Variations and Crop / Draw.' },
 ];
+const zooms = await Promise.all(examples.map((e) => zoomSrc(e.img)));
 ---
 <!doctype html>
 <html lang="en">
@@ -86,7 +91,7 @@ const examples = [
     <div class="links">
       <a class="wide-only" href="#examples">Examples</a><a class="wide-only" href="#agent">Agent</a><a class="wide-only" href="#models">Models</a><a href="/docs/getting-started/">Docs</a><a class="mid-only" href={repo}>GitHub</a>
     </div>
-    <a class="nav-dl" href={download.url}>Download</a>
+    <a class="nav-dl" href="/download/">Download</a>
     <ThemeSwitch />
   </div>
 </nav>
@@ -94,19 +99,19 @@ const examples = [
 <header class="hero">
   <div class="wrap">
     <div class="hero-copy">
-      <span class="eyebrow">Free · Open source · No subscription · Native macOS app · v0.1 beta 4</span>
-      <h1>Make and edit images by chatting. <em>Free and private, on your Mac.</em></h1>
-      <p class="lede">Describe an image. Then say what to change. dMLX works out which image you mean, writes the prompt for you, picks a model for the job, and keeps every version. No account, no cloud, no subscription. Make as many images as you like.</p>
+      <span class="eyebrow">Free · Open source · No subscription · Native macOS app · {versionLabel}</span>
+      <h1>Make and edit images just by asking. <em>Free and private, on your Mac.</em></h1>
+      <p class="lede">Describe an image, then say what to change in plain words. dMLX works out which image you mean, writes the prompt, picks the model and keeps every version. No account, no cloud, no subscription, no per-image fees. Make as many images as you like.</p>
       <div class="btns">
-        <a class="btn primary" href={download.url}>
+        <a class="btn primary" href="/download/">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16.4 12.6c0-2.4 2-3.5 2-3.6-1.1-1.6-2.8-1.8-3.4-1.8-1.4-.2-2.8.8-3.5.8-.7 0-1.8-.8-3-.8-1.6 0-3 .9-3.8 2.3-1.6 2.8-.4 7 1.2 9.3.8 1.1 1.7 2.4 2.9 2.3 1.2 0 1.6-.7 3-.7s1.8.7 3 .7c1.3 0 2.1-1.1 2.8-2.3.9-1.3 1.3-2.6 1.3-2.6s-2.5-1-2.5-3.6zM14.1 5.6c.6-.8 1.1-1.9 1-3-.9 0-2.1.6-2.7 1.4-.6.7-1.1 1.8-1 2.9 1 .1 2.1-.5 2.7-1.3z"/></svg>
           Download free for macOS
         </a>
-        <a class="btn" href="/docs/getting-started/">See how to get started</a>
+        <a class="btn" href="/docs/getting-started/">Set up in three steps</a>
       </div>
       <p class="req">{downloadNote} · <a href={releases}>all releases</a></p>
       <p class="req">Apple Silicon (M1 or newer) · macOS 15 or later · 16 GB of memory · about 7–11 GB of disk for models, downloaded on first start</p>
-      <p class="req">This is a beta. The agent can still pick the wrong image or model. <a href="/docs/known-issues/">Known issues</a></p>
+      <p class="req">This is a beta: the agent can still pick the wrong image or model. <a href="/docs/known-issues/">Known issues</a></p>
     </div>
     <div class="shot"><Image src={shot('chat-edit-versions')} widths={[800, 1200, 1600]} sizes="(max-width: 1120px) 100vw, 1088px" alt="A dMLX chat. The message 'make the boat red' turns a wooden rowboat on a misty mountain lake red. The result is Image 2, edited from image 1, with versions v1 and v2." loading="eager" fetchpriority="high" /></div>
   </div>
@@ -117,20 +122,23 @@ const examples = [
   <div class="wrap">
     <div class="head">
       <span class="eyebrow">What you can make</span>
-      <h2>Ask in plain words. Get the image.</h2>
-      <p class="lede">No masks, no prompt tricks. Each example is one chat with the model set to Auto, so the agent picked the model. Times are from an M5 Mac with 24 GB of memory.</p>
+      <h2>Remove a person or add a title in one sentence.</h2>
+      <p class="lede">No masks to paint, no prompt tricks to learn. Each example is one chat with the model on Auto, so the agent chose the model. Times are from an M5 Mac with 24 GB of memory.</p>
     </div>
     <div class="examples">
-      {examples.map((e) => (
+      {examples.map((e, i) => (
         <figure class="ex">
+          <button type="button" class="zoom" data-zoom={zooms[i]} data-alt={e.alt} aria-label={`Enlarge: ${e.alt}`}>
           {e.pair ? (
-            <div class="pair" role="img" aria-label={e.alt}>
-              <div><Image src={crop(`${e.img}-before`)} widths={[200, 400]} sizes="(max-width: 700px) 50vw, 180px" alt="" /><span>Before</span></div>
-              <div><Image src={crop(`${e.img}-after`)} widths={[200, 400]} sizes="(max-width: 700px) 50vw, 180px" alt="" /><span>After</span></div>
+            <div class="pair">
+              <div><Image src={full(`${e.img}-before`)} widths={[200, 400, 600]} sizes="(max-width: 700px) 50vw, 180px" alt="" /><span>Before</span></div>
+              <div><Image src={full(`${e.img}-after`)} widths={[200, 400, 600]} sizes="(max-width: 700px) 50vw, 180px" alt="" /><span>After</span></div>
             </div>
           ) : (
-            <Image src={shot(e.img)} widths={[400, 700]} sizes="(max-width: 700px) 100vw, 360px" alt={e.alt} />
+            <Image src={shot(e.img)} widths={[400, 700, 1000]} sizes="(max-width: 700px) 100vw, 360px" alt={e.alt} />
           )}
+          <span class="zoom-hint" aria-hidden="true">Enlarge</span>
+          </button>
           <figcaption><q>{e.q}</q><div class="meta"><span>{e.model}</span>{e.time && <b>{e.time}</b>}{e.extra && <span>{e.extra}</span>}</div></figcaption>
         </figure>
       ))}
@@ -143,14 +151,14 @@ const examples = [
     <div>
       <div class="head">
         <span class="eyebrow">The agent</span>
-        <h2>You talk. It writes the prompt.</h2>
-        <p class="lede">A small agent on your Mac reads your chat and its images, and plans each message in a few seconds (about 3–10 s). Then it steps aside, so the image model gets the memory.</p>
+        <h2>No prompts to write. Just say what you want.</h2>
+        <p class="lede">An agent on your Mac reads your chat and its images and plans each message in about 3–10 seconds: which image, what prompt, which model. Then it steps aside, so the image model gets the memory. You can also connect an AI service you already use.</p>
       </div>
       <ol class="steps">
-        <li><span class="n">1</span><div><h3>Knows what you asked for</h3><p>A new image, an edit, or no image at all. Say "hello" or "thanks" and it just replies.</p></div></li>
-        <li><span class="n">2</span><div><h3>Keeps track of your images</h3><p>Say "make the boat red" and it edits the boat from image 1, even if you have made other images since.</p></div></li>
-        <li><span class="n">3</span><div><h3>Writes the prompt for you</h3><p>A full description for a new image, or a clear edit instruction. No prompt syntax to learn.</p></div></li>
-        <li><span class="n">4</span><div><h3>Picks a model for the job</h3><p>Quick edits go to FLUX.2 Klein 4B. If you added Qwen Image 2.1, exact words in the image go to it. Your choice wins: it never overrides a model you chose.</p></div></li>
+        <li><span class="n">1</span><div><h3>Knows when to make an image</h3><p>A new image, an edit, or no image at all. Say "hello" or "thanks" and it just replies.</p></div></li>
+        <li><span class="n">2</span><div><h3>Knows which image you mean</h3><p>Say "make the boat red" and it edits the boat from image 1, even if you have made other images since.</p></div></li>
+        <li><span class="n">3</span><div><h3>Writes the prompt, so you don't</h3><p>A full description for a new image, or a clear edit instruction. No prompt syntax to learn.</p></div></li>
+        <li><span class="n">4</span><div><h3>Picks the model, unless you did</h3><p>Quick edits go to FLUX.2 Klein 4B. If you added Qwen Image 2.1, exact words in the image go to it. Your choice wins: it never overrides a model you chose.</p></div></li>
       </ol>
     </div>
     <div class="stack">
@@ -168,22 +176,22 @@ const examples = [
     <div>
       <div class="head flush">
         <span class="eyebrow">Memory check</span>
-        <h2>It checks memory first, not after your Mac slows down.</h2>
-        <p class="lede">Before each image job, dMLX checks how much memory is free. If memory is tight, it loads the model piece by piece. If there still isn't enough, it tells you and doesn't start the job. Tested on a simulated 16 GB Mac; see the <a href="/docs/known-issues/">known issues</a>.</p>
+        <h2>It won't start a job that would freeze your Mac.</h2>
+        <p class="lede">Before each image job, dMLX checks how much memory is free. If memory is tight, it loads the model piece by piece. If it still won't fit, dMLX tells you and doesn't start, so you can keep working. Tested on a simulated 16 GB Mac, not a real one; see the <a href="/docs/known-issues/">known issues</a>.</p>
       </div>
       <div class="facts">
-        <div><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg><span><b>Private and offline.</b> After the models download, every step runs on your Mac. No account, no cloud.</span></div>
-        <div><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12h4l3 8 4-16 3 8h4"/></svg><span><b>Clear about limits.</b> It tells you what a model needs and what is free, and lets you decide whether to try anyway.</span></div>
-        <div><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M8 12l3 3 5-6"/></svg><span><b>Free, with no subscription.</b> No credits and no per-image fees. Your Mac does the work.</span></div>
+        <div><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg><span><b>Private and offline by default.</b> After the models download, every step runs on your Mac. No account, no cloud.</span></div>
+        <div><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12h4l3 8 4-16 3 8h4"/></svg><span><b>You decide.</b> It shows what a model needs and what is free, then lets you choose whether to try anyway.</span></div>
+        <div><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M8 12l3 3 5-6"/></svg><span><b>No credits, no per-image fees.</b> Free and open source, with no subscription. Your Mac does the work.</span></div>
       </div>
       <a class="more" href="/docs/memory/">How dMLX controls memory →</a>
     </div>
-    <div class="gauge" role="img" aria-label="Memory check: Qwen Image 2.1 needs 9.5 GB, but 9.2 GB is free without slowing the Mac, so the job does not start.">
+    <div class="gauge" role="img" aria-label="Memory check: Qwen Image 2.1 needs 9.5 GB, but 6.2 GB is free without slowing the Mac, so the job does not start.">
       <div class="gauge-row"><span>Memory check · Qwen Image 2.1</span><span>M5 Mac, 24 GB</span></div>
       <div class="bar"><div class="used"></div><div class="free"></div><div class="need"></div></div>
-      <div class="legend"><span class="k-used">In use</span><span class="k-free">Free without slowing: 9.2 GB</span><span class="k-need">Model needs: 9.5 GB</span><span class="k-short">Short by 0.3 GB</span></div>
+      <div class="legend"><span class="k-used">In use</span><span class="k-free">Free without slowing: 6.2 GB</span><span class="k-need">Model needs: 9.5 GB</span><span class="k-short">Short by 3.3 GB</span></div>
       <p class="verdict">dMLX doesn't start the job. Choose <b>Retry</b>, or <b>Try anyway</b>, which uses the mode with the least memory and stops if the Mac slows down.</p>
-      <Image src={shot('memory-check')} widths={[600, 1000]} sizes="(max-width: 860px) 100vw, 520px" alt="The app explains that the model needs about 9.5 GB but only 9.2 GB can be used without slowing down the Mac, with Retry and Try anyway." />
+      <Image src={shot('memory-check')} widths={[600, 1000]} sizes="(max-width: 860px) 100vw, 520px" alt="The app explains that the model needs about 9.5 GB but only 6.2 GB can be used without slowing down the Mac, with Retry and Try anyway." />
     </div>
   </div>
 </section>
@@ -192,8 +200,8 @@ const examples = [
   <div class="wrap">
     <div class="head">
       <span class="eyebrow">Crop / Draw</span>
-      <h2>Point at it. Then say what to change.</h2>
-      <p class="lede">When words aren't enough, crop to the area you care about, circle what to change, then attach it and say what to do. Ask it to remove your marks too. Your original image is never changed.</p>
+      <h2>When words aren't enough, circle it.</h2>
+      <p class="lede">Crop to the area you care about, paint a mark around what should change, then attach it and say what to do. It can remove your marks in the same step. Your original image is never changed.</p>
     </div>
     <div class="edit">
       <figure><Image src={shot('edit-1-crop')} widths={[300, 600]} sizes="(max-width: 480px) 100vw, 260px" alt="The crop frame around a white teapot." /><figcaption><b>1 · Crop</b>Keep only the area you care about.</figcaption></figure>
@@ -204,24 +212,48 @@ const examples = [
   </div>
 </section>
 
-<section class="alt" id="api">
+<section class="alt" id="layout">
+  <div class="wrap">
+    <div class="head">
+      <span class="eyebrow">Layout</span>
+      <h2>Drag text and objects into place. The rest stays put.</h2>
+      <p class="lede">Move one part without starting over. With Ideogram 4, MOSS Image or FIBO 2, the agent plans a box for each title, line of text and main object. Drag a box in Crop / Draw → Layout, click Redraw with layout, and the part you moved goes to its new place. Or draw the boxes yourself before the first image.</p>
+    </div>
+    <div class="edit layout">
+      <figure><Image src={shot('layout-before')} widths={[300, 600]} sizes="(max-width: 480px) 100vw, 340px" alt="An Ideogram 4 jazz poster: JAZZ NIGHT at the top, FRIDAY 9 PM below it." /><figcaption><b>1 · The agent's layout</b>The title at the top, the date under it.</figcaption></figure>
+      <figure><Image src={shot('layout-editor')} widths={[340, 680]} sizes="(max-width: 480px) 100vw, 340px" alt="The Crop / Draw editor on Layout over v1: the agent's white box around JAZZ NIGHT, and the FRIDAY 9 PM box, now blue, dragged to the bottom right corner. Below: Redraw with layout." /><figcaption><b>2 · Move a box</b>Crop / Draw → Layout. Drag the date's box to the bottom right.</figcaption></figure>
+      <figure><Image src={shot('layout-after')} widths={[300, 600]} sizes="(max-width: 480px) 100vw, 340px" alt="The redraw: JAZZ NIGHT still at the top, FRIDAY 9 PM in the bottom right corner." /><figcaption><b>3 · Redraw with layout</b>The date moved; the title stayed.</figcaption></figure>
+    </div>
+    <div class="layout-first">
+      <figure><Image src={shot('layout-blank')} widths={[300, 600]} sizes="(max-width: 700px) 100vw, 300px" alt="A blank canvas with three boxes: JAZZ NIGHT · top, saxophone player · center, and FRIDAY 9 PM · bottom right, with Use layout." /></figure>
+      <div>
+        <h3>Or plan the layout before the first image</h3>
+        <p>Click Layout in the message box, draw a box for each thing and name it, then click Use layout. The boxes go with your next message.</p>
+        <Image src={shot('layout-composer')} widths={[600, 1100]} sizes="(max-width: 700px) 100vw, 640px" alt="The message box with the chip Layout · 3 boxes above the message about a jazz night poster." />
+      </div>
+    </div>
+    <p class="sub foot">Ideogram 4 and MOSS Image place things in exact boxes; FIBO 2 places them by words like "top center", from the boxes you draw. Expect about 5–6 minutes per image on a 24 GB Mac. Ideogram 4 and FIBO 2 have non-commercial licenses.</p>
+  </div>
+</section>
+
+<section id="api">
   <div class="wrap api">
     <div class="head flush">
       <span class="eyebrow">Local API</span>
-      <h2>Plug it into your own tools.</h2>
-      <p class="lede">The engine serves an OpenAI-compatible images API on your Mac. Point any app or coding agent that speaks <span class="mono">/v1/images</span> at it, with no per-image fees. To run it on its own, use a clone of the repo.</p>
+      <h2>Your own image API, on your Mac.</h2>
+      <p class="lede">The engine serves an OpenAI-compatible images API. Point any app or coding agent that speaks <span class="mono">/v1/images</span> at it: the images are made on your Mac, with no per-image fees. To run the engine on its own, use a clone of the repo.</p>
       <a class="more" href="/docs/api/">Engine API reference →</a>
     </div>
     <pre set:html={apiExample}></pre>
   </div>
 </section>
 
-<section id="models">
+<section class="alt" id="models">
   <div class="wrap">
     <div class="head">
       <span class="eyebrow">Models</span>
-      <h2>Let Auto choose, or pick your own.</h2>
-      <p class="lede">Start with the recommended models. Add more from inside the app, or paste a Hugging Face link. dMLX checks that it can run the model, shows the size and license, and then downloads it.</p>
+      <h2>Auto picks a model for each job. Or you pick.</h2>
+      <p class="lede">Start with the recommended models. Add more in the app, or paste a Hugging Face link: before it downloads, dMLX checks that your Mac can run the model and shows its size and license.</p>
     </div>
     <div class="tables">
       <div class="tbl">
@@ -235,7 +267,7 @@ const examples = [
             <tr><td>Qwen Image 2.1</td><td class="note">Experimental. Best for exact words; about 4 min per image; needs about 9.5 GB free, so it is often refused on 16–24 GB Macs. Non-commercial license.</td><td>10.6 GB</td></tr>
           </tbody>
         </table>
-        <p class="sub foot">Also addable: FLUX.2 Klein 9B, FLUX.3 Klein, Z-Image base, ERNIE Image Turbo, MOSS Image, Boogu Image Turbo, Iris 3B Turbo and Krea 2 Turbo. Some of these take minutes per image.</p>
+        <p class="sub foot">Also addable: FLUX.2 Klein 9B, FLUX.3 Klein, Z-Image base, ERNIE Image Turbo, MOSS Image, FIBO 2 and Ideogram 4 (for layouts), Boogu Image Turbo, Iris 3B Turbo and Krea 2 Turbo. Some of these take minutes per image.</p>
       </div>
       <div class="tbl">
         <h3>Agent models</h3>
@@ -254,19 +286,19 @@ const examples = [
   </div>
 </section>
 
-<section class="alt" id="start">
+<section id="start">
   <div class="wrap">
     <div class="head">
       <span class="eyebrow">Get started</span>
-      <h2>Free to download. Three steps to your first image.</h2>
+      <h2>Free to download. Your first image in three steps.</h2>
     </div>
     <div class="start">
       <div><span class="n">Step 1</span><h3>Download and install</h3><p>Open the downloaded <span class="mono">.dmg</span> and drag dMLX onto the Applications folder.</p></div>
-      <div><span class="n">Step 2</span><h3>Open it the first time</h3><p>The beta is not notarized yet. Right-click the app, choose Open, then click Open in the dialog.</p></div>
+      <div><span class="n">Step 2</span><h3>Open it the first time</h3><p>The beta is not notarized yet, so macOS blocks it once. Open the app, click Done, then go to System Settings → Privacy &amp; Security and click Open Anyway.</p></div>
       <div><span class="n">Step 3</span><h3>Pick your models</h3><p>On first start, dMLX recommends an image model and an agent for your Mac and shows the download size (about 7–11 GB). After that download, it works offline, with no account to create.</p></div>
     </div>
     <div class="btns end">
-      <a class="btn primary" href={download.url}>Download dMLX free</a>
+      <a class="btn primary" href="/download/">Download dMLX free</a>
       <a class="btn" href="/docs/known-issues/">Read the known issues</a>
     </div>
   </div>
@@ -318,6 +350,32 @@ const examples = [
       entries.forEach(function (e) { if (e.isIntersecting) { e.target.classList.add('in'); io.unobserve(e.target); } });
     }, { rootMargin: '0px 0px -8% 0px', threshold: 0.12 });
     items.forEach(function (el) { io.observe(el); });
+  })();
+</script>
+<dialog id="zoom" aria-label="Enlarged example">
+  <div class="zoom-imgs"></div>
+  <button type="button" class="zoom-close" aria-label="Close">×</button>
+</dialog>
+<script is:inline>
+  // Click to enlarge the examples: the app screenshot in a dialog (tall ones scroll); a click or Esc closes it.
+  (function () {
+    var dlg = document.getElementById('zoom');
+    if (!dlg || !dlg.showModal) return;
+    var box = dlg.querySelector('.zoom-imgs');
+    document.querySelectorAll('.zoom').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        var img = document.createElement('img');
+        img.src = btn.dataset.zoom;
+        img.alt = btn.dataset.alt;
+        box.textContent = '';
+        box.appendChild(img);
+        dlg.showModal();
+        dlg.scrollTop = 0;
+        document.documentElement.style.overflow = 'hidden';
+      });
+    });
+    dlg.addEventListener('click', function () { dlg.close(); });
+    dlg.addEventListener('close', function () { document.documentElement.style.overflow = ''; });
   })();
 </script>
 <Analytics />
@@ -423,7 +481,20 @@ a:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outlin
 .examples { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px }
 @media (max-width: 400px) { .examples { grid-template-columns: 1fr } }
 .ex { margin: 0; background: var(--raise); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; display: grid; grid-template-rows: auto 1fr }
-.ex > img { width: 100%; aspect-ratio: 4/3; object-fit: cover; object-position: top }
+/* The whole app screenshot at the card's full width, in its own shape; cards in a row can differ in height. */
+.zoom > img { width: 100%; height: auto; display: block; background: #1e1e1e }
+/* Click to enlarge: the card's picture is a button that opens the app screenshot in #zoom (tall chats scroll). */
+.zoom { position: relative; display: block; width: 100%; padding: 0; border: 0; background: none; color: inherit; font: inherit; cursor: zoom-in }
+.zoom:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px }
+.zoom-hint { position: absolute; top: 8px; right: 8px; font: 500 .7rem var(--mono); letter-spacing: .06em; text-transform: uppercase; color: #fff; background: #000a; padding: 2px 8px; border-radius: 99px; opacity: 0; transition: opacity .2s }
+.zoom:hover .zoom-hint, .zoom:focus-visible .zoom-hint { opacity: 1 }
+@media (hover: none) { .zoom-hint { opacity: 1 } }
+#zoom { border: 0; padding: 0; background: transparent; max-width: 100vw; max-height: 100vh; width: 100vw; height: 100vh; overflow-y: auto; overscroll-behavior: contain }
+#zoom::backdrop { background: rgb(0 0 0 / .88) }
+#zoom[open] { display: grid; justify-items: center; align-items: start; cursor: zoom-out }
+.zoom-imgs { padding: 56px 16px 32px; display: grid; place-items: center; min-height: 100% }
+.zoom-imgs img { display: block; width: min(92vw, 960px); height: auto; border-radius: 10px; border: 1px solid #fff2 }
+.zoom-close { position: fixed; top: 14px; right: 14px; width: 40px; height: 40px; border-radius: 99px; border: 1px solid #fff4; background: #000a; color: #fff; font-size: 22px; line-height: 1; cursor: pointer }
 /* Two square crops side by side: 2/1 keeps each half square, so nothing is cut off (at 4/3 the removed mug was). */
 .pair { display: grid; grid-template-columns: 1fr 1fr; gap: 2px; aspect-ratio: 2/1; background: var(--line) }
 .pair > div { position: relative; overflow: hidden }
@@ -449,11 +520,11 @@ a:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outlin
 @media (max-width: 860px) { .mem { grid-template-columns: 1fr } }
 .gauge { background: var(--raise); border: 1px solid var(--line); border-radius: 12px; padding: 22px; display: grid; gap: 14px; font-variant-numeric: tabular-nums }
 .gauge-row { display: flex; justify-content: space-between; font: .85rem var(--mono); color: var(--muted); gap: 12px; flex-wrap: wrap }
-.bar { position: relative; height: 34px; margin-right: 6%; border-radius: 8px; background: var(--surface); border: 1px solid var(--line) }
+.bar { position: relative; height: 34px; margin-right: 15%; border-radius: 8px; background: var(--surface); border: 1px solid var(--line) }
 .bar .used { border-radius: 7px 0 0 7px }
-.bar .used { position: absolute; inset: 0 auto 0 0; width: 61.7%; background: color-mix(in srgb, var(--hill) 55%, var(--surface)) }
-.bar .free { position: absolute; inset: 0 auto 0 61.7%; width: 38.3%; background: repeating-linear-gradient(135deg, transparent 0 6px, color-mix(in srgb, var(--accent) 22%, transparent) 6px 12px) }
-.bar .need { position: absolute; top: -1px; bottom: -1px; left: 61.7%; width: 39.6%; border: 2px dashed var(--accent); border-radius: 0 8px 8px 0 }
+.bar .used { position: absolute; inset: 0 auto 0 0; width: 74.2%; background: color-mix(in srgb, var(--hill) 55%, var(--surface)) }
+.bar .free { position: absolute; inset: 0 auto 0 74.2%; width: 25.8%; background: repeating-linear-gradient(135deg, transparent 0 6px, color-mix(in srgb, var(--accent) 22%, transparent) 6px 12px) }
+.bar .need { position: absolute; top: -1px; bottom: -1px; left: 74.2%; width: 39.6%; border: 2px dashed var(--accent); border-radius: 0 8px 8px 0 }
 .legend { display: flex; flex-wrap: wrap; gap: 8px 18px; font-size: .85rem; color: var(--muted) }
 .legend span::before { content: ''; display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 7px; vertical-align: -1px }
 .k-used::before { background: color-mix(in srgb, var(--hill) 55%, var(--surface)) }
@@ -467,7 +538,16 @@ a:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outlin
 .facts svg { width: 18px; height: 18px; stroke: var(--accent); fill: none; stroke-width: 2; margin-top: 4px }
 
 .edit { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px }
+.edit.layout { grid-template-columns: repeat(3, minmax(0, 1fr)) }
+.layout-first { display: grid; grid-template-columns: 300px 1fr; gap: 28px; align-items: center; margin-top: 36px }
+.layout-first figure { margin: 0 }
+.layout-first img { border-radius: 10px; border: 1px solid var(--line); width: 100% }
+.layout-first h3 { margin: 0 0 8px }
+.layout-first p { margin: 0 0 16px; color: var(--muted) }
+#layout .foot { margin-top: 28px; color: var(--muted); font-size: .92rem }
+@media (max-width: 700px) { .layout-first { grid-template-columns: 1fr } .layout-first figure { max-width: 420px; margin: 0 auto } }
 @media (max-width: 900px) { .edit { grid-template-columns: repeat(2, minmax(0, 1fr)) } }
+@media (max-width: 700px) { .edit.layout { grid-template-columns: 1fr; max-width: 420px; margin: 0 auto } }
 @media (max-width: 480px) { .edit { grid-template-columns: 1fr } }
 .edit figure { margin: 0; display: grid; gap: 10px; align-content: start }
 .edit img { border-radius: 10px; border: 1px solid var(--line); aspect-ratio: 1; object-fit: cover; width: 100% }

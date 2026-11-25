@@ -182,6 +182,9 @@ public struct WorkflowDecision: Codable, Hashable, Sendable {
     public var model: String?
     /// Chat images the agent looked at before deciding.
     public var looked: [String]?
+    /// In a hint (no plan) with the agent installed: the models the agent will pick from on send, when
+    /// there are several, so the hint can name them rather than one that may not run.
+    public var agent_choices: [String]?
 
     public init(
         intent: String, confidence: Double, probabilities: [String: Double], provider: String,
@@ -202,6 +205,73 @@ public struct WorkflowDecision: Codable, Hashable, Sendable {
 
     public func requiresConfirmation(threshold: Double = 0.75) -> Bool {
         intent == "ambiguous" || confidence < threshold
+    }
+}
+
+extension WorkflowDecision {
+    /// A one-workflow decision the app made itself (no agent), checked by the engine's route for that
+    /// workflow: the engine's answer is kept when it agrees on the workflow, since it may name a model that
+    /// fits in memory now in place of the app's Auto model (task 17). Without an answer, or when the engine
+    /// disagrees (it counts models a little differently), the app's own decision stands.
+    public func checked(by engine: WorkflowDecision?) -> WorkflowDecision {
+        guard let engine, engine.intent == intent else { return self }
+        return engine
+    }
+}
+
+/// What the composer's route hint asks the engine, so it names the model the send will run (task 17).
+public struct RoutePreviewQuery: Equatable, Sendable {
+    /// The workflows to choose from; one when the app already knows it (the engine then only checks the
+    /// model fits in memory now), nil for all.
+    public var candidates: [String]?
+    /// The composer's boxes: with them the engine names a model that can place things, as the send does.
+    public var layout: [LayoutBox]?
+
+    /// nil when the hint needs no engine call: a workflow with the user's model (it runs as chosen), or
+    /// several workflows with the agent installed (it plans the message on send; the hint says so).
+    /// One workflow on Auto asks also with the agent: the route then names the model that fits, or the
+    /// agent's choices, and runs no agent (round 3 found the agent-on hint naming the swapped-out model).
+    public static func make(
+        structural: String?, onAuto: Bool, agentInstalled: Bool, layout: [LayoutBox]?
+    ) -> RoutePreviewQuery? {
+        let boxes = (layout?.isEmpty ?? true) ? nil : layout
+        if let structural {
+            return onAuto ? RoutePreviewQuery(candidates: [structural], layout: boxes) : nil
+        }
+        return agentInstalled ? nil : RoutePreviewQuery(candidates: nil, layout: boxes)
+    }
+}
+
+/// Which model a workflow runs, the same rule for the composer's hint and the send (task 17).
+public enum RouteModel {
+    /// The user's model when they chose one; on Auto the decision's model when the app can run it (the
+    /// agent's pick, or the engine's swap for one that fits), else the app's own Auto model.
+    public static func running(chosen: String?, decision: WorkflowDecision, runnable: Set<String>,
+                               auto: String?) -> String? {
+        if let chosen { return chosen }
+        if let picked = decision.model, runnable.contains(picked) { return picked }
+        return auto
+    }
+
+    /// The models a hint names: the one that runs, or, when the agent picks on send among several, those.
+    /// None on Auto while the engine has not checked the decision yet (`checked` false): the app's own Auto
+    /// model may be the one it swaps out, and a hint never names a model that may not run (test round 4).
+    public static func named(chosen: String?, decision: WorkflowDecision, runnable: Set<String>,
+                             auto: String?, checked: Bool = true) -> [String] {
+        if chosen == nil, !checked { return [] }
+        if chosen == nil, let choices = decision.agent_choices?.filter(runnable.contains), choices.count > 1 {
+            return choices
+        }
+        return running(chosen: chosen, decision: decision, runnable: runnable, auto: auto).map { [$0] } ?? []
+    }
+
+    /// The hint's words for the agent's choices, kept short: two named, then "or another model".
+    public static func agentPicks(_ names: [String]) -> String {
+        switch names.count {
+        case 0: return "the agent picks the model"
+        case 1, 2: return "the agent picks " + names.joined(separator: " or ")
+        default: return "the agent picks \(names[0]), \(names[1]) or another model"
+        }
     }
 }
 

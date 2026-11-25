@@ -1,0 +1,62 @@
+[
+ {
+  "agent": "qwen3-vl-8b-instruct-4bit",
+  "format": "moss-layout",
+  "boxes": 0,
+  "load_s": 3.7,
+  "caption_s": 7.1,
+  "total_s": 10.8,
+  "tries": 1,
+  "valid": true,
+  "reply_chars": 406,
+  "reason": null
+ },
+ {
+  "agent": "qwen3-vl-8b-instruct-4bit",
+  "format": "fibo-json",
+  "boxes": 0,
+  "load_s": 0.0,
+  "caption_s": 14.7,
+  "total_s": 14.7,
+  "tries": 1,
+  "valid": true,
+  "reply_chars": 1389,
+  "reason": null
+ },
+ {
+  "agent": "qwen3-vl-8b-instruct-4bit",
+  "format": "ideogram-json",
+  "boxes": 0,
+  "load_s": 0.0,
+  "caption_s": 11.5,
+  "total_s": 11.5,
+  "tries": 1,
+  "valid": true,
+  "reply_chars": 861,
+  "reason": null
+ },
+ {
+  "agent": "qwen3-vl-8b-instruct-4bit",
+  "format": "ideogram-json",
+  "boxes": 3,
+  "load_s": 0.0,
+  "caption_s": 13.8,
+  "total_s": 13.8,
+  "tries": 1,
+  "valid": true,
+  "reply_chars": 929,
+  "reason": null
+ },
+ {
+  "agent": "qwen3-vl-8b-instruct-4bit",
+  "format": "moss-layout",
+  "boxes": 0,
+  "load_s": 0.0,
+  "caption_s": 6.6,
+  "total_s": 6.6,
+  "tries": 1,
+  "valid": true,
+  "reply_chars": 406,
+  "reason": null
+ }
+]

@@ -1,17 +1,46 @@
 ---
-// /download/ sends the browser straight to the newest release's .dmg (read at build time; see src/lib/release.ts).
-import { latestDownload } from '../lib/release';
+// /download/ starts the newest release's .dmg (read at build time; see src/lib/release.ts) and, while it
+// downloads, shows how to install and open the app the first time. The .dmg is served as an attachment, so
+// the refresh downloads it and the browser stays on this page.
+import StarlightPage from '@astrojs/starlight/components/StarlightPage.astro';
+import { Aside, Steps } from '@astrojs/starlight/components';
 import Analytics from '@vercel/analytics/astro';
+import { latestDownload, releasesPage } from '../lib/release';
+
 const download = await latestDownload();
+const file = download.url.split('/').pop();
 ---
-<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <title>Download dMLX</title>
-  <meta name="robots" content="noindex">
-  <meta http-equiv="refresh" content={`0;url=${download.url}`}>
-  <link rel="canonical" href={download.url}>
-</head>
-<body><p>Downloading dMLX {download.tag}. If nothing happens, <a href={download.url}>download the .dmg</a>.</p><Analytics /></body>
-</html>
+<StarlightPage
+  frontmatter={{
+    title: 'Your download is starting',
+    description: 'Download dMLX, then open it the first time.',
+    pagefind: false,
+    tableOfContents: false,
+    head: [
+      { tag: 'meta', attrs: { name: 'robots', content: 'noindex' } },
+      { tag: 'meta', attrs: { 'http-equiv': 'refresh', content: `1;url=${download.url}` } },
+    ],
+  }}
+>
+  <p>dMLX {download.tag}{download.sizeMB ? ` (${download.sizeMB} MB)` : ''} is downloading. If nothing happens, <a href={download.url} download={file}>download the .dmg</a>. Other versions are on <a href={releasesPage}>GitHub Releases</a>.</p>
+
+  <h2 id="open-the-first-time">Install and open dMLX the first time</h2>
+
+  <Steps>
+    <ol>
+      <li>Open the downloaded <code>.dmg</code> and drag <strong>dMLX</strong> onto the <strong>Applications</strong> folder.</li>
+      <li>Open <strong>dMLX</strong> from Applications. macOS shows a warning that it can't verify the app. Click <strong>Done</strong>.</li>
+      <li>Open <strong>System Settings → Privacy &amp; Security</strong>. Scroll down to the message about dMLX and click <strong>Open Anyway</strong>, then enter your password.</li>
+      <li>dMLX opens. You only do this once. On first start, it recommends an image model and an agent for your Mac. Click <strong>Download</strong>.</li>
+    </ol>
+  </Steps>
+
+  <Aside title="Why the warning?">
+    The beta is not notarized by Apple yet, so macOS asks you to confirm the first launch. Right-click → Open
+    no longer skips the warning on macOS 15 and later. As an alternative to Open Anyway, run this in Terminal:
+    <code>xattr -dr com.apple.quarantine /Applications/dMLX.app</code>
+  </Aside>
+
+  <p>Next: <a href="/docs/getting-started/">Getting started</a> · <a href="/docs/known-issues/">Known issues</a></p>
+  <Analytics />
+</StarlightPage>

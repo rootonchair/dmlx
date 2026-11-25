@@ -160,8 +160,25 @@ public final class EngineClient: @unchecked Sendable {
         message: String, currentResultId: String?, currentPrompt: String?, attachments: [String],
         attachmentNotes: [String: String] = [:],
         history: [RoutingHistoryItem] = [], selectedModel: String? = nil, selectedModels: [String: String] = [:],
-        plan: Bool = false, wait: Bool = false, layout: [LayoutBox]? = nil
+        autoModels: [String: String] = [:], size: String? = nil,
+        plan: Bool = false, wait: Bool = false, layout: [LayoutBox]? = nil, candidates: [String]? = nil
     ) async throws -> WorkflowDecision {
+        let body = Self.routeBody(
+            message: message, currentResultId: currentResultId, currentPrompt: currentPrompt,
+            attachments: attachments, attachmentNotes: attachmentNotes, history: history,
+            selectedModel: selectedModel, selectedModels: selectedModels, autoModels: autoModels, size: size,
+            plan: plan, wait: wait, layout: layout, candidates: candidates)
+        return try await send(try request("v1/workflows/route", method: "POST", json: body), as: WorkflowDecision.self)
+    }
+
+    /// The JSON body of a route request.
+    public static func routeBody(
+        message: String, currentResultId: String?, currentPrompt: String?, attachments: [String],
+        attachmentNotes: [String: String] = [:],
+        history: [RoutingHistoryItem] = [], selectedModel: String? = nil, selectedModels: [String: String] = [:],
+        autoModels: [String: String] = [:], size: String? = nil,
+        plan: Bool = false, wait: Bool = false, layout: [LayoutBox]? = nil, candidates: [String]? = nil
+    ) -> [String: Any] {
         var body: [String: Any] = [
             "message": message, "attachments": attachments,
             "history": history.map(\.jsonObject),
@@ -176,9 +193,17 @@ public final class EngineClient: @unchecked Sendable {
         if let selectedModel { body["selected_model"] = selectedModel }
         // The model the user chose per workflow ("image.generate", "image.edit"); the others are on Auto.
         if !selectedModels.isEmpty { body["selected_models"] = selectedModels }
+        // The model the app would run per workflow on Auto when the decision names none: not the user's
+        // choice, so the engine may name another one when this one won't fit in memory now.
+        if !autoModels.isEmpty { body["auto_models"] = autoModels }
+        // The size the job will ask for ("1216x832"), for the engine's memory check.
+        if let size { body["size"] = size }
         // Boxes drawn in the composer: in Auto the engine offers only models that can use them.
         if let layout, !layout.isEmpty { body["layout"] = layout.map(\.jsonObject) }
-        return try await send(try request("v1/workflows/route", method: "POST", json: body), as: WorkflowDecision.self)
+        // The workflows to choose from: one, when the app already knows it and asks only for the engine's
+        // memory check of the model that will run it.
+        if let candidates { body["candidates"] = candidates }
+        return body
     }
 
     /// The layout saved with a result: the boxes the user placed and the ones the agent planned.
@@ -243,6 +268,13 @@ public final class EngineClient: @unchecked Sendable {
         _ = try await send(try request("admin/models/\(model)/pull", method: "POST", json: [:]), as: Ack.self)
     }
 
+    /// Stops a running download and keeps its files, so the next pull resumes (task 19, Download API).
+    /// The engine answers 404 when no download is running.
+    public func cancelPull(model: String) async throws {
+        struct Ack: Decodable { var cancelled: Bool }
+        _ = try await send(try request("admin/models/\(model)/pull", method: "DELETE"), as: Ack.self)
+    }
+
     public func catalogSuggestions() async throws -> [CatalogSuggestion] {
         struct List: Decodable { var data: [CatalogSuggestion] }
         return try await send(try request("admin/catalog/suggestions"), as: List.self).data
@@ -279,10 +311,12 @@ public final class EngineClient: @unchecked Sendable {
         _ = try await send(try request("v1/jobs/\(job)", method: "DELETE"), as: Ack.self)
     }
 
-    public func upload(file: URL) async throws -> String {
+    /// `timeout`: how long the engine may take to answer (an upload is local; a hung engine must not hold it).
+    public func upload(file: URL, timeout: TimeInterval? = nil) async throws -> String {
         struct Ack: Decodable { var id: String }
         let boundary = "dmlx-\(UUID().uuidString)"
         var req = try request("v1/uploads", method: "POST")
+        if let timeout { req.timeoutInterval = timeout }
         req.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
         var body = Data()
         body.append(Data("--\(boundary)\r\nContent-Disposition: form-data; name=\"file\"; filename=\"\(file.lastPathComponent)\"\r\nContent-Type: application/octet-stream\r\n\r\n".utf8))
