@@ -275,7 +275,7 @@ public enum RouteModel {
     }
 }
 
-/// A compact, chronological record supplied to the semantic router. It keeps
+/// A compact, chronological record supplied to the agent. It keeps
 /// prompts and image identities without sending image pixels to an LLM.
 public struct RoutingHistoryItem: Codable, Hashable, Sendable {
     public var sequence: Int
@@ -356,13 +356,6 @@ public struct RouteRequestIdentity: Hashable, Sendable {
     public func accepts(context: RoutingContext, requestID: UUID) -> Bool {
         id == requestID && contextKey == context.key
     }
-}
-
-public struct RouterTestResult: Codable, Hashable, Sendable {
-    public var ok: Bool
-    public var provider: String
-    public var intent: String
-    public var latency_ms: Double
 }
 
 /// The local, image-aware prompt assistant (GET /admin/prompt-assistant).

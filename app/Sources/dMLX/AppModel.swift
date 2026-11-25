@@ -63,9 +63,6 @@ final class AppModel {
     /// the way: the hint then names no model (the engine may swap the app's Auto model out).
     private var routeModelUnchecked = false
     var isResolvingRoute = false
-    var promptEnhancementMode: PromptEnhancementMode = AppModel.savedPromptMode() {
-        didSet { UserDefaults.standard.set(promptEnhancementMode.rawValue, forKey: "promptEnhancementMode") }
-    }
     var promptSuggestion: CompiledPromptResponse?
     var promptSuggestionApplied = false
     var isEnhancingPrompt = false
@@ -106,11 +103,6 @@ final class AppModel {
         return "auto"
     }
 
-    private static func savedPromptMode() -> PromptEnhancementMode {
-        UserDefaults.standard.string(forKey: "promptEnhancementMode")
-            .flatMap(PromptEnhancementMode.init(rawValue:)) ?? .off
-    }
-
     // UI
     var toast: String?
     /// The composer's height with its margins: the toast is drawn above it (task 19).
@@ -148,6 +140,8 @@ final class AppModel {
     var promptAssistantInstalled = false
     /// Where the agent runs (AgentServiceForm.swift); restored when the engine starts.
     var agentChoice = AgentChoice.load()
+    /// Set while a send reconnects the agent's service, so a failed reconnect doesn't retry forever.
+    private var reconnectingAgent = false
     private let editorStore = EditorDocumentStore.default()
     let images = ImageCache()
 
@@ -197,6 +191,8 @@ final class AppModel {
             case .stopped: break
             }
         }
+        // The removed router and prompt-enhancement settings: their keys, Keychain items and 2.1 GB checkpoint.
+        _Concurrency.Task.detached(priority: .background) { LegacyIntelligenceSettings.clear() }
         engine.start()
         if let first = sessions.first {
             select(first.id)
@@ -237,6 +233,13 @@ final class AppModel {
         activeRuns = [:]
     }
 
+    /// The engine runs the agent the user chose. The engine loads the local agent at start when its weights
+    /// are on disk, so with a service chosen whose restore failed (no key, no network), that local agent
+    /// does not count: sending reconnects the service and says why when it can't.
+    func runsChosenAgent(_ status: PromptAssistantStatus) -> Bool {
+        status.installed && (agentChoice.service == .local || status.provider?.kind == agentChoice.service.rawValue)
+    }
+
     func refreshModels(openOnboarding: Bool = false) async {
         guard let client else { return }
         if let list = try? await client.models() {
@@ -247,7 +250,7 @@ final class AppModel {
             let catalog = try? await client.capabilities()
             if catalog != capabilityCatalog { capabilityCatalog = catalog }
             let agent = try? await client.promptAssistant()
-            let installed = agent?.installed ?? false
+            let installed = agent.map(runsChosenAgent) ?? false
             if installed != promptAssistantInstalled { promptAssistantInstalled = installed }
             noteAgentDownload(agent)
             // First run, or no image model yet. Someone who finished setup without the agent is not asked again.
@@ -746,7 +749,8 @@ final class AppModel {
         }
         guard routeDecisionKey == routingKey(message: message), let decision = routeDecision else {
             return isResolvingRoute ? "Checking: new image or edit…"
-                : promptAssistantInstalled ? "Planned by the agent when you send" : "New image or edit: decided when you send"
+                : promptAssistantInstalled ? "Planned by the agent when you send"
+                : agentChoice.service != .local ? "The agent isn't connected" : "New image or edit: decided when you send"
         }
         switch decision.intent {
         // The model that runs: on Auto the decision's, when the engine named one that fits in memory now.
@@ -767,8 +771,8 @@ final class AppModel {
         }
     }
 
-    /// Refreshes the non-binding route hint. Structural cases resolve locally; only
-    /// a continuation with a current image needs the configured decision provider.
+    /// Refreshes the non-binding route hint. Only structural cases (no current image, attachments) resolve
+    /// before sending; the rest is the agent's to plan when the message is sent.
     func scheduleRoutePreview() {
         // While a sent message is held (the agent's question, or a workflow to choose), what the user types
         // is the answer or the next message, and must not drop the held one.
@@ -973,6 +977,12 @@ final class AppModel {
             message: message, attachmentInputs: attachments.enumerated().map { $0.element.mediaInput(order: $0.offset) },
             latestResultId: latestImageTurn?.current?.resultId, latestTurnId: latestImageTurn?.id,
             promptSpec: selectedPromptSpec(for: message), layout: layoutForNextMessage())
+        // An agent on a service is chosen but not connected (the engine restarted and reconnecting failed,
+        // or hasn't finished): connect now rather than let the rules decide without saying so.
+        if !promptAssistantInstalled, agentChoice.service != .local, !reconnectingAgent {
+            reconnectAgent(then: message, keepDraft: text != nil)
+            return
+        }
         // With the agent, every sent message is planned by it; the rules only check its answer (in the engine).
         let planned = promptAssistantInstalled
         if !planned, let decision = structuralDecision() {
@@ -1040,6 +1050,35 @@ final class AppModel {
                 self.planningMessage = nil
                 self.giveBack(message, because: "Could not plan it: \(error.localizedDescription)")
             }
+        }
+    }
+
+    /// Connects the chosen agent service again, then sends the message; if it can't, the message goes back
+    /// with the reason instead of being decided by the rules.
+    private func reconnectAgent(then message: String, keepDraft: Bool) {  // keepDraft: sent with a text, not the box
+        let choice = agentChoice
+        planningMessage = message
+        if !keepDraft { draft = "" }
+        reconnectingAgent = true
+        planTask = _Concurrency.Task { [weak self] in
+            guard let self else { return }
+            var problem: String?
+            do {
+                try await self.connectAgent(choice, apiKey: AgentKeyStore.load(choice.service), test: true)
+            } catch {
+                problem = error.localizedDescription.trimmingCharacters(in: CharacterSet(charactersIn: ". "))
+            }
+            guard !_Concurrency.Task.isCancelled else { self.reconnectingAgent = false; return }
+            self.planningMessage = nil
+            if problem == nil && self.promptAssistantInstalled {
+                self.send(message)
+            } else {
+                self.giveBack(message, because: """
+                    The agent (\(choice.service.title)) isn't connected\(problem.map { ": \($0)" } ?? ""). \
+                    Check Settings → Intelligence → Agent.
+                    """)
+            }
+            self.reconnectingAgent = false
         }
     }
 
@@ -1200,7 +1239,7 @@ final class AppModel {
                 user: message, positive: suggestion.positive, negative: suggestion.negative,
                 enhancementMode: .ask, compiler: suggestion.compiler)
         }
-        return PromptSpec(user: message, enhancementMode: promptEnhancementMode == .auto ? .auto : .off)
+        return PromptSpec(user: message)  // a planned message's prompt is written by the agent
     }
 
     func enhanceDraft() {
@@ -1910,6 +1949,25 @@ final class AppModel {
     func uninstall() {
         let bundleID = Bundle.main.bundleIdentifier ?? "io.github.dmlx.app"
         let folders = Uninstaller.folders(bundleID: bundleID)
+        let dataFolder = Store.dataDirectory()
+        guard Uninstaller.isOwnDataFolder(dataFolder) else {
+            showUninstallProblem("""
+                dMLX's data folder is set to \(dataFolder.path) (DMLX_HOME), which dMLX didn't create, so \
+                Uninstall won't delete it. Delete dMLX's files from it by hand.
+                """)
+            return
+        }
+        // Checked before anything is deleted: removeData clears settings and keys first, so a folder it then
+        // refuses (one directly in the home folder, such as ~/dmlx-data) would fail every retry.
+        if let refused = folders.first(where: {
+            FileManager.default.fileExists(atPath: $0.path) && !Uninstaller.isSafeToDelete($0)
+        }) {
+            showUninstallProblem("""
+                dMLX's files are in \(refused.path), which is too close to your home folder for Uninstall to \
+                delete safely. Delete dMLX's files from it by hand.
+                """)
+            return
+        }
         _Concurrency.Task {
             let bytes = await _Concurrency.Task.detached { Uninstaller.size(of: folders) }.value
             let alert = NSAlert()
@@ -1928,7 +1986,13 @@ final class AppModel {
             do {
                 try Uninstaller.removeData(bundleID: bundleID, folders: folders)
             } catch {
-                showUninstallProblem("Some of dMLX's files could not be deleted: \(error.localizedDescription)")
+                // Keep the app: without it, nothing is left to remove the models. Settings and keys are
+                // already gone, so quit; opening dMLX again and choosing Uninstall retries.
+                showUninstallProblem(
+                    "Some of dMLX's files could not be deleted: \(error.localizedDescription) dMLX was not moved to the Trash. Open it again and choose Uninstall to retry, or delete the folder in Finder.",
+                    showing: dataFolder)
+                NSApp.terminate(nil)
+                return
             }
             // After the app is gone, delete what quitting writes again (settings, saved window state).
             let cleanup = Process()
@@ -1947,11 +2011,15 @@ final class AppModel {
         }
     }
 
-    private func showUninstallProblem(_ text: String) {
+    private func showUninstallProblem(_ text: String, showing folder: URL? = nil) {
         let alert = NSAlert()
         alert.messageText = "Uninstall dMLX"
         alert.informativeText = text
-        alert.runModal()
+        alert.addButton(withTitle: "OK")
+        if folder != nil { alert.addButton(withTitle: "Show in Finder") }
+        if alert.runModal() == .alertSecondButtonReturn, let folder {
+            NSWorkspace.shared.activateFileViewerSelecting([folder])
+        }
     }
 }
 

@@ -565,3 +565,110 @@ def test_builtin_models_keep_their_entry_and_busy_models_are_protected(make_engi
     monkeypatch.setattr(downloads, "delete_local", lambda spec, keep_repos=(): deleted.append(spec.id) or 2 * GB)
     assert engine.delete_model_files("fake-a")["freed_gb"] == 2.15  # 2 GiB in decimal GB and deleted == ["fake-a"]
     assert "fake-a" in engine.registry and engine.memory.resident_models() == set()
+
+
+def test_the_shared_text_encoder_goes_with_the_last_model_using_it(make_engine, monkeypatch):
+    from dmlx import downloads
+
+    a, b = fake_spec("fake-a"), fake_spec("fake-b", tasks=("t2i",))
+    for spec in (a, b):
+        spec.components["text_encoder"].external = True
+    engine = make_engine([a, b])
+    monkeypatch.setattr(downloads, "extra_repos", lambda spec: (downloads.ZEN_IMAGE_EDIT,))
+    kept = []
+    monkeypatch.setattr(downloads, "delete_local",
+                        lambda spec, keep_repos=(): kept.append(set(keep_repos)) or setattr(spec, "local_path", None) or 0)
+    engine.delete_model_files("fake-a")
+    engine.delete_model_files("fake-b")
+    assert kept == [{downloads.ZEN_IMAGE_EDIT.repo}, set()]  # fake-b still used it, then nothing did
+
+
+def test_a_failed_delete_is_reported(make_engine, monkeypatch):
+    from dmlx import downloads
+    from dmlx.engine import RequestError
+
+    engine = make_engine()
+
+    def broken(spec, keep_repos=()):
+        raise PermissionError("denied")
+
+    monkeypatch.setattr(downloads, "delete_local", broken)
+    try:
+        engine.delete_model_files("fake-a")
+        raise AssertionError("expected an error")
+    except RequestError as exc:
+        assert exc.code == "delete_failed" and "denied" in exc.message
+
+
+class _ResidentAgent:
+    uses_accelerator = True
+
+    def __init__(self):
+        self.resident = True
+
+    def unload(self):
+        self.resident = False
+
+
+def _under_pressure(engine, level):
+    import dataclasses
+
+
+    snap = dataclasses.replace(engine.memory.monitor.last(), pressure=level)
+    engine.memory.monitor.last = lambda: snap
+
+
+def test_idle_memory_is_given_back_under_pressure_agent_first(make_engine, client_for):
+    from dmlx import sysmem
+
+    engine = make_engine()
+    client = client_for(engine)
+    _gen(client)
+    engine.memory.pin("fake-b")  # nothing of a pinned model would be freed
+    engine.prompt_assistant = agent = _ResidentAgent()
+    assert not engine._free_under_pressure()  # calm: everything stays
+    assert agent.resident and len(engine.memory.resident_components()) == 3
+
+    _under_pressure(engine, sysmem.PRESSURE_WARN)
+    assert engine._free_under_pressure() and not agent.resident  # the agent goes first
+    assert len(engine.memory.resident_components()) == 3
+    while engine._free_under_pressure():
+        pass
+    assert engine.memory.resident_components() == []
+
+
+def test_a_pinned_model_and_a_running_job_keep_their_memory(make_engine, client_for):
+    from dmlx import sysmem
+
+    engine = make_engine()
+    _gen(client_for(engine))
+    _under_pressure(engine, sysmem.PRESSURE_WARN)
+    with engine._accelerator_lock:  # a job is running: its own guard handles pressure
+        assert not engine._free_under_pressure()
+    engine.memory.pin("fake-a")
+    assert not engine._free_under_pressure()
+    assert len(engine.memory.resident_components()) == 3
+
+
+def test_the_agent_planning_beside_a_job_is_not_unloaded_when_the_job_ends(make_engine):
+    from dmlx import sysmem
+
+    engine = make_engine()
+    engine.prompt_assistant = agent = _ResidentAgent()
+    _under_pressure(engine, sysmem.PRESSURE_WARN)
+    with engine._agent_lock:  # planning beside a job: the accelerator lock is free once the job ends
+        assert not engine._free_under_pressure()
+    assert agent.resident
+    assert engine._free_under_pressure() and not agent.resident
+
+
+def test_the_agent_is_not_kept_loaded_between_messages_under_pressure(make_engine):
+    from dmlx import sysmem
+
+    engine = make_engine()
+    engine.prompt_assistant = agent = _ResidentAgent()
+    engine._release_assistant()
+    assert agent.resident  # 64 GB, calm: kept for the next message
+    _under_pressure(engine, sysmem.PRESSURE_WARN)
+    engine._release_assistant()
+    assert not agent.resident

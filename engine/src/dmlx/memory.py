@@ -456,6 +456,19 @@ class MemoryManager:
                     return True
             return False
 
+    def free_least_used(self) -> str | None:
+        """Free the component used longest ago, never a pinned model's; returns "model/component", or None
+        when nothing is left to free. Only call it while no job runs: the components could be the job's."""
+        with self._plan_lock, self._lock:
+            victims = [r for r in self._resident.values() if r.model_id not in self._pinned]
+            if not victims:
+                return None
+            victim = min(victims, key=lambda r: r.last_used)
+            self.free(victim.model_id, victim.name)
+            gc.collect()
+            mx.clear_cache()
+            return f"{victim.model_id}/{victim.name}"
+
     def _evict(self, victim: Resident, need: float | None = None, cancel: threading.Event | None = None) -> int:
         """Free an idle part, then wait for its memory to come back: until the room has grown by about
         what it held, or `need` fits, for at most EVICT_RETURN_S, or the job's `cancel` is set. Returns the

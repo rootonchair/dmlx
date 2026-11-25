@@ -20,6 +20,8 @@ public final class EngineProcess {
     private var process: Process?
     private var restarts = 0
     private var stopping = false
+    /// The restart scheduled after a crash; stop() cancels it, so Uninstall can't bring the engine back.
+    private var pendingRestart: _Concurrency.Task<Void, Never>?
     private let logURL: URL
 
     public init() {
@@ -46,29 +48,6 @@ public final class EngineProcess {
         var env = ProcessInfo.processInfo.environment
         env["DMLX_TOKEN"] = token
         env["PYTHONUNBUFFERED"] = "1"
-        let router = RouterProviderSettings.load()
-        if router.kind == .localLLM, !router.localModelPath.isEmpty, !router.localRevision.isEmpty {
-            env["DMLX_ROUTER_PROVIDER"] = "local-llm"
-            env["DMLX_LOCAL_LLM_MODEL_PATH"] = router.localModelPath
-            env["DMLX_LOCAL_LLM_REVISION"] = router.localRevision
-        } else if router.kind == .openAICompatible, !router.baseURL.isEmpty, !router.model.isEmpty {
-            env["DMLX_ROUTER_PROVIDER"] = "openai-compatible"
-            env["DMLX_ROUTER_BASE_URL"] = router.baseURL
-            env["DMLX_ROUTER_MODEL"] = router.model
-            env["DMLX_ROUTER_TIMEOUT"] = String(router.timeout)
-            let key = RouterSecretStore.load()
-            if !key.isEmpty { env["DMLX_ROUTER_API_KEY"] = key }
-        } else if router.kind == .disabled {
-            env["DMLX_ROUTER_PROVIDER"] = "disabled"
-        }
-        let prompt = PromptProviderSettings.load()
-        if !prompt.baseURL.isEmpty, !prompt.model.isEmpty {
-            env["DMLX_PROMPT_BASE_URL"] = prompt.baseURL
-            env["DMLX_PROMPT_MODEL"] = prompt.model
-            env["DMLX_PROMPT_TIMEOUT"] = String(prompt.timeout)
-            let key = PromptSecretStore.load()
-            if !key.isEmpty { env["DMLX_PROMPT_API_KEY"] = key }
-        }
         let serveArgs = ["serve", "--port", "0", "--port-file", portFile.path, "--parent-pid", String(ProcessInfo.processInfo.processIdentifier)]
 
         // 1. Bundled engine: Contents/Resources/engine/python/bin/python3
@@ -91,8 +70,8 @@ public final class EngineProcess {
                 "/usr/local/bin/uv",
             ].compactMap { $0 }
             if let uv = uvPaths.first(where: { FileManager.default.isExecutableFile(atPath: $0) }) {
-                var runArguments = ["run", "--project", dir]
-                if router.kind == .localLLM { runArguments += ["--extra", "local-llm"] }
+                // The agent extra is mlx-vlm, the local agent's runtime (the bundled engine always has it).
+                let runArguments = ["run", "--project", dir, "--extra", "agent"]
                 return Launch(
                     executable: URL(fileURLWithPath: uv),
                     arguments: runArguments + ["dmlx"] + serveArgs, environment: env)
@@ -170,14 +149,17 @@ public final class EngineProcess {
         state = .starting
         let delay = pow(2.0, Double(restarts - 1))
         logLines.append("engine exited with code \(code); restarting in \(Int(delay))s")
-        _Concurrency.Task { @MainActor in
+        pendingRestart = _Concurrency.Task { @MainActor in
             try? await _Concurrency.Task.sleep(for: .seconds(delay))
+            guard !_Concurrency.Task.isCancelled else { return }
+            self.pendingRestart = nil
             self.start()
         }
     }
 
     public func stop() {
         stopping = true
+        cancelPendingRestart()
         process?.terminate()
     }
 
@@ -185,6 +167,7 @@ public final class EngineProcess {
     /// files: Uninstall deletes the data folder right after.
     public func stopAndWait(timeout: Duration = .seconds(5)) async {
         stopping = true
+        cancelPendingRestart()
         guard let proc = process else { return }
         proc.terminate()
         let deadline = ContinuousClock.now + timeout
@@ -197,7 +180,14 @@ public final class EngineProcess {
         }
     }
 
+    private func cancelPendingRestart() {
+        pendingRestart?.cancel()
+        pendingRestart = nil
+        if process == nil, case .starting = state { state = .stopped }
+    }
+
     public func restart() {
+        cancelPendingRestart()
         restarts = 0
         if let p = process {
             stopping = false

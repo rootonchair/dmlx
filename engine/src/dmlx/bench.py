@@ -51,7 +51,7 @@ def _stop_probe(proc) -> dict:
 def run_bench(args) -> None:
     from dmlx.engine import Engine
 
-    engine = Engine()
+    engine = Engine(watch_pressure=False)  # the idle watcher would free models between measurements
     strategies = args.strategy or ["auto"]
     results = []
     for model in args.model:

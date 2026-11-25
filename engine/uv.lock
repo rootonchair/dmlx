@@ -507,8 +507,7 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
-local-llm = [
-    { name = "mlx-lm" },
+agent = [
     { name = "mlx-vlm" },
 ]
 
@@ -525,15 +524,14 @@ requires-dist = [
     { name = "fastapi", specifier = ">=0.146.0" },
     { name = "huggingface-hub", specifier = ">=1.33.0" },
     { name = "mflux", git = "https://github.com/mflux-community/mflux.git?rev=8a7fd0a486635f670ef90e02efe1c051ed3f133c" },
-    { name = "mlx-lm", marker = "extra == 'local-llm'", specifier = "==0.32.2" },
-    { name = "mlx-vlm", marker = "extra == 'local-llm'", specifier = "==0.7.6" },
+    { name = "mlx-vlm", marker = "extra == 'agent'", specifier = "==0.7.6" },
     { name = "pillow", specifier = ">=13,<14" },
     { name = "python-multipart", specifier = ">=0.0.32" },
     { name = "pyyaml", specifier = ">=6.0.3" },
     { name = "sse-starlette", specifier = ">=3.5.0" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.54.0" },
 ]
-provides-extras = ["local-llm"]
+provides-extras = ["agent"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -1443,24 +1441,6 @@ dependencies = [
 wheels = [
     { url = "https://files.pythonhosted.org/packages/ea/d2/38a801b9726d31c71dc7cbfb5f3bac22fbde5b66e7892f4c453a5e6069cf/mlx_cuda_13-0.32.2-py3-none-manylinux_2_35_aarch64.whl", hash = "sha256:49b1a25df9021f3b519a534fd39a32a5cdbf93a1b265a31e59671c2d9fc9f4a2", size = 84519215, upload-time = "2026-08-25T10:31:26.317Z" },
     { url = "https://files.pythonhosted.org/packages/f1/59/5bcbee69a4425214bd25b7a4c102ddcbb91e9975a0b22613ddcac87de282/mlx_cuda_13-0.32.2-py3-none-manylinux_2_35_x86_64.whl", hash = "sha256:335094ccd1c0c6dc3e09c8caba207c8180602bacc0c38ba20c1d81e9456ab394", size = 87424146, upload-time = "2026-08-25T10:31:31.267Z" },
-]
-
-[[package]]
-name = "mlx-lm"
-version = "0.32.2"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "jinja2" },
-    { name = "mlx", version = "0.32.4", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform == 'darwin'" },
-    { name = "numpy" },
-    { name = "protobuf" },
-    { name = "pyyaml" },
-    { name = "sentencepiece" },
-    { name = "transformers" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/e1/46/eff1c17019b82912020d4d716527e6fcf4ac392b55cddef03eeb60566ab4/mlx_lm-0.32.2.tar.gz", hash = "sha256:1af8a92f6a141c3e2bf5b0369ac4464203a8e2189c47b9e40d3e921e5b3a1fe9", size = 449827, upload-time = "2026-10-16T02:49:34.781Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/d1/4f/000eefdeb41388782b47e7f39904cf2d9e7e49a60df5e172097c358dba8e/mlx_lm-0.32.2-py3-none-any.whl", hash = "sha256:5c0991248cfff5872503d74f466d2532dd8cb7fb3670cb9be7a06d7305dadc04", size = 546040, upload-time = "2026-10-16T02:49:33.32Z" },
 ]
 
 [[package]]

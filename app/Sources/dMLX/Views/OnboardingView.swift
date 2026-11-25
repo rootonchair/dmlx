@@ -460,7 +460,7 @@ private struct OnboardingSetup: View {
         while !_Concurrency.Task.isCancelled {
             if let client = app.client, let status = try? await client.promptAssistant() {
                 agent = status
-                app.promptAssistantInstalled = status.installed
+                app.promptAssistantInstalled = app.runsChosenAgent(status)
             }
             try? await _Concurrency.Task.sleep(for: .seconds(downloading ? 1 : 3))
         }

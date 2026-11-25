@@ -122,7 +122,7 @@ struct PromptAssistantRow: View {
                     next = try await client.pullPromptAssistant(model: id)
                 }
                 status = next
-                app.promptAssistantInstalled = next.installed
+                app.promptAssistantInstalled = app.runsChosenAgent(next)
                 app.noteAgentDownload(next)
                 error = nil
             } catch {
@@ -136,7 +136,7 @@ struct PromptAssistantRow: View {
         while !_Concurrency.Task.isCancelled {
             if let client = app.client {
                 status = try? await client.promptAssistant()
-                if let status { app.promptAssistantInstalled = status.installed }
+                if let status { app.promptAssistantInstalled = app.runsChosenAgent(status) }
             }
             let downloading = status?.models?.contains(where: \.isDownloading) ?? status?.isDownloading ?? false
             try? await _Concurrency.Task.sleep(for: .seconds(downloading ? 1 : 5))
@@ -145,133 +145,15 @@ struct PromptAssistantRow: View {
 }
 
 struct IntelligenceSettings: View {
-    @Environment(AppModel.self) private var app
-    @State private var routerKind: RouterProviderKind
-    @State private var baseURL: String
-    @State private var providerModel: String
-    @State private var apiKey: String
-    @State private var timeout: Double
-    @State private var localModelPath: String
-    @State private var localRevision: String
-    @State private var status = ""
-    @State private var promptBaseURL: String
-    @State private var promptModel: String
-    @State private var promptAPIKey: String
-    @State private var promptTimeout: Double
-
-    init() {
-        let settings = RouterProviderSettings.load()
-        _routerKind = State(initialValue: settings.kind)
-        _baseURL = State(initialValue: settings.baseURL)
-        _providerModel = State(initialValue: settings.model)
-        _apiKey = State(initialValue: RouterSecretStore.load())
-        _timeout = State(initialValue: settings.timeout)
-        _localModelPath = State(initialValue: settings.localModelPath)
-        _localRevision = State(initialValue: settings.localRevision)
-        let prompt = PromptProviderSettings.load()
-        _promptBaseURL = State(initialValue: prompt.baseURL)
-        _promptModel = State(initialValue: prompt.model)
-        _promptAPIKey = State(initialValue: PromptSecretStore.load())
-        _promptTimeout = State(initialValue: prompt.timeout)
-    }
-
     var body: some View {
-        @Bindable var app = app
-        // The form scrolls; Save stays pinned below it, so it is in view at the window's fixed height.
-        VStack(spacing: 0) {
-            Form {
-                Section("New image or edit") {
-                    Picker("When it is unclear", selection: $routerKind) {
-                        Text("Ask me").tag(RouterProviderKind.disabled)
-                        Text("Let an AI service decide").tag(RouterProviderKind.openAICompatible)
-                        Text("Let a model on this Mac decide").tag(RouterProviderKind.localLLM)
-                    }
-                    if routerKind == .openAICompatible {
-                        FormField("Address", text: $baseURL, prompt: "http://localhost:1234/v1", secure: false)
-                        FormField("Model", text: $providerModel, prompt: "small-router-model", secure: false)
-                        FormField("API key (optional)", text: $apiKey, prompt: "", secure: true)
-                        SecondsField(value: $timeout)
-                        Text("Any service that works like the OpenAI API, such as LM Studio or OpenRouter.")
-                            .font(.caption).foregroundStyle(.secondary)
-                    } else if routerKind == .localLLM {
-                        FormField("Model folder", text: $localModelPath, prompt: "/Users/me/models/router", secure: false)
-                        FormField("Model version (optional)", text: $localRevision, prompt: "revision or checksum", secure: false)
-                        Text("The model, and anything it needs to run, must already be on this Mac. dMLX does not download them.")
-                            .font(.caption).foregroundStyle(.secondary)
-                    }
-                    Text("When a follow-up could mean a new image or an edit, dMLX asks you, or lets a model decide. The model sees the recent chat text and details about the images, such as their prompts and sizes, never the images themselves.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                Section("Agent") {
-                    AgentWhereSettings()
-                    Text("The agent looks at your images, decides what each message asks for, and rewrites every edit into a detailed description, which image editors follow far better than a short command. On this Mac, larger models plan better but need more memory; the agent is loaded only while it works. Changes here apply right away.")
-                        .font(.caption).foregroundStyle(.secondary)
-                }
-                Section("Prompt enhancement") {
-                    Picker("Mode", selection: $app.promptEnhancementMode) {
-                        Text("Off").tag(PromptEnhancementMode.off)
-                        Text("Ask — preview before use").tag(PromptEnhancementMode.ask)
-                        Text("Auto — enhance every submitted prompt").tag(PromptEnhancementMode.auto)
-                    }
-                    FormField("Address", text: $promptBaseURL, prompt: "http://localhost:1234/v1", secure: false)
-                    FormField("Model", text: $promptModel, prompt: "prompt-model", secure: false)
-                    FormField("API key (optional)", text: $promptAPIKey, prompt: "", secure: true)
-                    SecondsField(value: $promptTimeout)
-                    Text("✨ and Auto use the prompt assistant when it is downloaded. Otherwise they use this service, which receives your prompt text only; images stay on this Mac.")
-                        .font(.caption).foregroundStyle(.secondary)
-                }
-            }
-            .formStyle(.grouped)
-            Divider()
-            HStack(spacing: 8) {
-                if !status.isEmpty {
-                    Text(status).font(.caption).foregroundStyle(.secondary).lineLimit(2)
-                }
-                Spacer(minLength: 0)
-                Button("Test Connection") { test() }
-                    .disabled(!app.isEngineRunning)
-                    .help("Checks the service that decides between a new image and an edit")
-                Button("Save and Restart Engine") { save() }
-                    .buttonStyle(.borderedProminent)
-                    .help("Saves the services above and restarts the engine to use them")
-            }
-            .padding(.horizontal, 20)
-            .padding(.vertical, 10)
-        }
-    }
-
-    private func save() {
-        do {
-            let settings = RouterProviderSettings(
-                kind: routerKind,
-                baseURL: baseURL.trimmingCharacters(in: .whitespacesAndNewlines),
-                model: providerModel.trimmingCharacters(in: .whitespacesAndNewlines), timeout: timeout,
-                localModelPath: localModelPath.trimmingCharacters(in: .whitespacesAndNewlines),
-                localRevision: localRevision.trimmingCharacters(in: .whitespacesAndNewlines))
-            try settings.save(apiKey: apiKey)
-            let prompt = PromptProviderSettings(
-                baseURL: promptBaseURL.trimmingCharacters(in: .whitespacesAndNewlines),
-                model: promptModel.trimmingCharacters(in: .whitespacesAndNewlines), timeout: promptTimeout)
-            try prompt.save(apiKey: promptAPIKey)
-            status = "Saved"
-            app.engine.restart()
-        } catch {
-            status = error.localizedDescription
-        }
-    }
-
-    private func test() {
-        status = "Testing…"
-        _Concurrency.Task {
-            do {
-                guard let client = app.client else { throw EngineClientError.notRunning }
-                let result = try await client.testRouter()
-                status = "Connected in \(String(format: "%.0f", result.latency_ms)) ms"
-            } catch {
-                status = error.localizedDescription
+        Form {
+            Section("Agent") {
+                AgentWhereSettings()
+                Text("The agent looks at your images, decides what each message asks for, and rewrites every edit into a detailed description, which image editors follow far better than a short command. ✨ in the composer shows its rewrite before you send. On this Mac, larger models plan better but need more memory; the agent is loaded only while it works. Without the agent, dMLX decides with simple rules and asks when they can't tell.")
+                    .font(.caption).foregroundStyle(.secondary)
             }
         }
+        .formStyle(.grouped)
     }
 }
 

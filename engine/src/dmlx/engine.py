@@ -19,10 +19,8 @@ from typing import Callable
 from dmlx import catalog, downloads, paths, sysmem
 from dmlx.adapters.base import GenRequest, JobAborted, NonFinite
 from dmlx.intelligence.base import IntelligenceError
-from dmlx.intelligence.openai_compatible import OpenAICompatibleProvider
-from dmlx.intelligence.local_llm import LocalLLMDecisionProvider
 from dmlx.memory import GB, InsufficientMemory, JobGuard, MemoryManager
-from dmlx.prompting import OpenAICompatiblePromptProvider, agent, formats, local_vlm, remote_agent
+from dmlx.prompting import agent, formats, local_vlm, remote_agent
 from dmlx.registry import ModelSpec, Registry
 from dmlx.results import ResultStore
 from dmlx.routing import WorkflowRouter
@@ -33,62 +31,6 @@ log = logging.getLogger("dmlx.engine")
 
 MAX_SIDE = 2048
 MIN_SIDE = 256
-
-
-def _router_from_environment() -> WorkflowRouter:
-    """Build the optional sidecar router without coupling it to diffusion models.
-
-    A partial or invalid configuration deliberately leaves routing manual. This
-    keeps generation available even when an external intelligence service is
-    unavailable or misconfigured.
-    """
-    kind = os.environ.get("DMLX_ROUTER_PROVIDER", "openai-compatible").strip().lower()
-    if kind in {"disabled", "manual", "none"}:
-        return WorkflowRouter()
-    if kind in {"local-llm", "mlx-lm", "qwen"}:
-        model_path = os.environ.get("DMLX_LOCAL_LLM_MODEL_PATH", "").strip()
-        revision = os.environ.get("DMLX_LOCAL_LLM_REVISION", "").strip()
-        if not model_path or not revision:
-            return WorkflowRouter()
-        try:
-            return WorkflowRouter(LocalLLMDecisionProvider(
-                model_path, revision=revision,
-                max_tokens=int(os.environ.get("DMLX_LOCAL_LLM_MAX_TOKENS", "192")),
-            ))
-        except (TypeError, ValueError) as exc:
-            log.warning("Ignoring invalid local LLM router configuration: %s", exc)
-            return WorkflowRouter()
-    if kind not in {"openai", "openai-compatible"}:
-        log.warning("Ignoring unknown semantic router provider: %s", kind)
-        return WorkflowRouter()
-    base_url = os.environ.get("DMLX_ROUTER_BASE_URL", "").strip()
-    model = os.environ.get("DMLX_ROUTER_MODEL", "").strip()
-    if not base_url or not model:
-        return WorkflowRouter()
-    try:
-        timeout = float(os.environ.get("DMLX_ROUTER_TIMEOUT", "15"))
-        provider = OpenAICompatibleProvider(
-            base_url, model, os.environ.get("DMLX_ROUTER_API_KEY") or None, timeout=max(0.1, timeout)
-        )
-        return WorkflowRouter(provider)
-    except (TypeError, ValueError) as exc:
-        log.warning("Ignoring invalid semantic router configuration: %s", exc)
-        return WorkflowRouter()
-
-
-def _prompt_provider_from_environment():
-    base_url = os.environ.get("DMLX_PROMPT_BASE_URL", "").strip()
-    model = os.environ.get("DMLX_PROMPT_MODEL", "").strip()
-    if not base_url or not model:
-        return None
-    try:
-        timeout = max(0.1, float(os.environ.get("DMLX_PROMPT_TIMEOUT", "30")))
-        return OpenAICompatiblePromptProvider(
-            base_url, model, os.environ.get("DMLX_PROMPT_API_KEY") or None, timeout=timeout
-        )
-    except (TypeError, ValueError) as exc:
-        log.warning("Ignoring invalid prompt provider configuration: %s", exc)
-        return None
 
 
 def selected_assistant_model() -> str:
@@ -135,6 +77,8 @@ def prompt_assistant_spec(model_id: str | None = None) -> ModelSpec:
 
 RECLAIM_WAIT_S = 10.0  # how long an image job waits for memory that is still coming back
 RECLAIM_POLL_S = 1.0
+IDLE_CHECK_SECONDS = 2.0  # how often an idle engine looks at memory pressure
+IDLE_SETTLE_SECONDS = 5.0  # after freeing something, the time macOS gets to lower the pressure level
 
 
 class RequestError(Exception):
@@ -213,6 +157,12 @@ def _mlx_held() -> int:
     return mx.get_active_memory() + mx.get_cache_memory()
 
 
+def _sentence(text: str) -> str:
+    """`text` ending in a full stop, so it reads as a sentence when another one follows it."""
+    text = text.strip()
+    return text if not text or text[-1] in ".!?" else text + "."
+
+
 def _blank(image) -> bool:
     """An image of one flat colour: what a model's NaNs become when they are cast to pixels."""
     lo, hi = image.convert("L").getextrema()
@@ -221,24 +171,27 @@ def _blank(image) -> bool:
 
 class Engine:
     def __init__(
-        self, registry: Registry | None = None, results: ResultStore | None = None, adapter_factory=None, router=None
+        self, registry: Registry | None = None, results: ResultStore | None = None, adapter_factory=None,
+        watch_pressure: bool = True,
     ):
         self.registry = registry or Registry.load_builtin(extra_dir=paths.models_dir())
-        downloads.adopt(self._owned_repos())
         for repo in self._owned_repos():
             downloads.clean_partials(repo, keep=None)  # orphans only; resumable parts are kept
         self.results = results or ResultStore()
         self.memory = MemoryManager()
         self.downloader = downloads.Downloader()
         self._adapter_factory = adapter_factory or _default_adapter_factory
-        self.router = router or _router_from_environment()
-        self.prompt_provider = _prompt_provider_from_environment()
+        self.router = WorkflowRouter()
         self.prompt_assistant = _prompt_assistant_from_disk()
         self._adapters: dict[str, object] = {}
         self._jobs: dict[str, Job] = {}
         self._queue: "queue.Queue[Job]" = queue.Queue()
         self._lock = threading.Lock()
         self._accelerator_lock = threading.Lock()
+        # Held while the agent is in use. Planning beside a running job holds it without the accelerator lock,
+        # so whatever unloads the agent (the idle watcher, the worker before a job) takes it first.
+        # Order: the accelerator lock, then this one.
+        self._agent_lock = threading.Lock()
         # Memory the unloaded agent is still giving back (`_agent_memory_returning`):
         # (headroom just before it ran, headroom just after the unload, bytes MLX freed, until when).
         self._agent_returning: tuple[int, int, int, float] | None = None
@@ -252,15 +205,16 @@ class Engine:
         self._recover_workflow_jobs()
         self._worker = threading.Thread(target=self._work, name="dmlx-gpu", daemon=True)
         self._worker.start()
+        if watch_pressure:
+            threading.Thread(target=self._watch_pressure, name="dmlx-idle-memory", daemon=True).start()
 
     # -- catalog ----------------------------------------------------------------------
     def _owned_repos(self) -> list[str]:
-        """Every Hugging Face repo dMLX downloads: its models, the agent models, and what mflux fetches."""
+        """Every Hugging Face repo dMLX downloads: its models, the agent models, and their extra repos."""
         specs = self.registry.all()
         repos = [s.repo for s in specs] + [m.repo for m in local_vlm.MODELS.values()]
-        if any(c.external for s in specs for c in s.components.values()):
-            repos += downloads.MFLUX_AUX_REPOS
-        return repos
+        repos += [extra.repo for s in specs for extra in downloads.extra_repos(s)]
+        return list(dict.fromkeys(repos))
 
     def _resolve_local(self, spec: ModelSpec) -> Path | None:
         if spec.local_path is not None:
@@ -437,19 +391,23 @@ class Engine:
                 op: choices for op, choices in self._model_choices(candidates, explicit_count, has_current,
                                                                    layout=bool(layout), size=size).items()
                 if op not in chosen}
-            planned, note = self._plan(safe_state, candidates, wait=bool(state.get("wait")), models=models)
+            planned, note, error = self._plan(safe_state, candidates, wait=bool(state.get("wait")), models=models)
             if planned is not None:
                 return self._fitting_model(
                     self._layout_model(planned, layout, chosen, explicit_count, has_current, size),
                     chosen, explicit_count, has_current, bool(layout), auto_models, size)
             if note in ("rejected", "failed"):
-                # The agent was asked and has no usable plan: ask the user rather than let the rules or the
-                # router guess (a greeting became an edit of the latest image).
+                # The agent was asked and has no usable plan: ask the user rather than let the rules guess
+                # (a greeting became an edit of the latest image).
+                ask = ("I couldn't work out what to do with that. Should I make a new image, or change "
+                       "the current one?") if has_current or explicit_count else \
+                      "I couldn't work out what to do with that. What image should I make?"
+                if error and not getattr(self.prompt_assistant, "uses_accelerator", True):
+                    # A service the user chose: its message says what is wrong (not running, key refused).
+                    ask = f"The agent couldn't plan this: {error} Send it again once that's fixed, or choose " \
+                          "another agent in Settings → Intelligence."
                 return {"intent": "ambiguous", "confidence": 0.0, "probabilities": {name: 0.0 for name in candidates},
-                        "provider": "agent:unusable", "planning": note,
-                        "ask": ("I couldn't work out what to do with that. Should I make a new image, or change "
-                                "the current one?") if has_current or explicit_count else
-                               "I couldn't work out what to do with that. What image should I make?"}
+                        "provider": "agent:unusable", "planning": note, "ask": ask}
         decision = self._route_without_agent(safe_state, candidates)
         if note:
             decision["planning"] = note  # e.g. "skipped_busy": the client can tell the agent did not plan this
@@ -498,62 +456,15 @@ class Engine:
         return {**decision, "model": best}
 
     def _route_without_agent(self, safe_state: dict, candidates: list[str]) -> dict:
-        deterministic = self.router.deterministic_decision(safe_state, candidates)
-        if deterministic is not None:
-            return deterministic.as_dict()
-        provider = self.router.provider
-        if provider is not None and getattr(provider, "uses_accelerator", False):
-            if not self._accelerator_lock.acquire(blocking=False):
-                return {
-                    "intent": "ambiguous", "confidence": 0.0,
-                    "probabilities": {name: 0.0 for name in candidates},
-                    "provider": f"{provider.name}:busy",
-                }
-            try:
-                return self.router.decide_with_provider(safe_state, candidates).as_dict()
-            finally:
-                self._accelerator_lock.release()
-        return self.router.decide_with_provider(safe_state, candidates).as_dict()
-
-    def test_router(self) -> dict:
-        provider = self.router.provider
-        if provider is None:
-            raise RequestError("router_not_configured", "No semantic routing provider is configured.", 409)
-        started = time.monotonic()
-        acquired = False
-        try:
-            if getattr(provider, "uses_accelerator", False):
-                acquired = self._accelerator_lock.acquire(blocking=False)
-                if not acquired:
-                    raise RequestError("router_busy", "The accelerator is currently running a generation job.", 409)
-            decision = provider.decide(
-                {"message": "Create a new image of a blue circle.", "current_result_id": "test-current"},
-                {
-                    "image.generate": "Create a new image independent of the current result.",
-                    "image.edit": "Change the current image.",
-                },
-            )
-        except RequestError:
-            raise
-        except Exception as exc:
-            raise RequestError("router_unavailable", f"Routing provider test failed: {exc}", 502) from exc
-        finally:
-            if acquired:
-                self._accelerator_lock.release()
-        return {
-            "ok": True,
-            "provider": provider.name,
-            "intent": decision.intent,
-            "latency_ms": round((time.monotonic() - started) * 1_000, 1),
-        }
+        """No agent: the fixed rules decide, and the user is asked when they can't tell."""
+        return self.router.decide(safe_state, candidates).as_dict()
 
     def compile_prompt(self, body: dict) -> dict:
         text = str(body.get("prompt", "")).strip()
         if not text or len(text) > 8_000:
             raise RequestError("invalid_prompt", "Prompt must contain 1 to 8,000 characters.", 422)
-        provider = self.enhancer()
-        if provider is None:
-            raise RequestError("prompt_provider_not_configured", "No prompt enhancement provider is configured.", 409)
+        if self.prompt_assistant is None:
+            raise RequestError("agent_not_available", "Rewriting a prompt needs the agent.", 409)
         operation = str(body.get("operation", "image.generate"))
         model_id = body.get("model")
         spec = self._spec(str(model_id)) if model_id else self.registry.default_for_operation(
@@ -561,20 +472,14 @@ class Engine:
         capability = spec.capabilities.get(operation) if spec else None
         if capability is None:
             raise RequestError("unsupported_operation", f"No selected model supports {operation}.", 422)
-        if provider is self.prompt_assistant:
-            images = []
-            for rid in body.get("image_ids") or []:
-                try:
-                    images.append(self.results.path(str(rid)))
-                except KeyError:
-                    raise RequestError("image_not_found", f"No image with id {rid}.", 404) from None
-            compiled = self._assist(text, operation=operation, images=images if operation == "image.edit" else [],
-                                    supports_negative=capability.negative_prompt)
-        else:
+        images = []
+        for rid in body.get("image_ids") or []:
             try:
-                compiled = provider.enhance(text, supports_negative=capability.negative_prompt)
-            except Exception as exc:
-                raise RequestError("prompt_provider_unavailable", f"Prompt enhancement failed: {exc}", 502) from exc
+                images.append(self.results.path(str(rid)))
+            except KeyError:
+                raise RequestError("image_not_found", f"No image with id {rid}.", 404) from None
+        compiled = self._assist(text, operation=operation, images=images if operation == "image.edit" else [],
+                                supports_negative=capability.negative_prompt)
         return {
             "user": text,
             "positive": compiled.positive,
@@ -661,7 +566,6 @@ class Engine:
             self.registry.add(existing)
             log.info("added model %s from %s", existing.id, existing.repo)
         existing.extra_size = downloads.extras_download_size(existing)
-        downloads.adopt([existing.repo])  # another tool may already have downloaded it: move it in
         path = self._resolve_local(existing)
         if path:
             downloads.fill_component_sizes(existing, path)
@@ -684,7 +588,11 @@ class Engine:
             self._adapters.pop(spec.id, None)
         self.memory.unregister_adapter(spec.id)
         self.downloader.wait_stopped(spec.id)  # a cancelled download may still be ending its last chunk
-        freed = downloads.delete_local(spec, keep_repos=self._extras_in_use(spec))
+        try:
+            freed = downloads.delete_local(spec, keep_repos=self._extras_in_use(spec))
+        except Exception as exc:  # noqa: BLE001 - a corrupt cache, a permission error: report, don't crash
+            log.exception("could not delete the files of %s", spec.id)
+            raise RequestError("delete_failed", f"Could not delete {spec.name}'s files: {exc}", 500) from exc
         state = self.downloader.state(spec.id)
         state.status, state.done, state.error = "idle", 0, None
         log.info("deleted files of %s (%.2f GB)", spec.id, freed / 1e9)
@@ -861,21 +769,6 @@ class Engine:
         capability = spec.capabilities.get(step.operation)
         if capability is None:
             raise RequestError("unsupported_operation", f"{spec.name} cannot perform {step.operation}.", 422)
-        if step.prompt.enhancement_mode == "auto" and self.prompt_assistant is None:
-            provider = self.prompt_provider
-            if provider is None:
-                raise RequestError(
-                    "prompt_provider_not_configured", "Automatic prompt enhancement is enabled but no provider is configured.", 409
-                )
-            try:
-                compiled = provider.enhance(step.prompt.user, supports_negative=capability.negative_prompt)
-            except Exception as exc:
-                raise RequestError("prompt_provider_unavailable", f"Prompt enhancement failed: {exc}", 502) from exc
-            prompt = replace(
-                step.prompt, positive=compiled.positive, negative=compiled.negative, compiler=compiled.compiler
-            )
-            step = replace(step, prompt=prompt)
-            plan = replace(plan, steps=(step,))
         if step.prompt.negative and not capability.negative_prompt:
             raise RequestError("negative_prompt_unsupported", f"{spec.name} does not support negative prompts.", 422)
         if any(item.media_type != "image" or item.role in ("mask", "sketch") for item in step.inputs):
@@ -971,8 +864,6 @@ class Engine:
                 raise RequestError("model_not_downloaded", f"{spec.name} is not downloaded yet.", 409)
             if step.prompt.negative and not capability.negative_prompt:
                 raise RequestError("negative_prompt_unsupported", f"{spec.name} does not support negative prompts.", 422)
-            if step.prompt.enhancement_mode == "auto" and self.enhancer() is None:
-                raise RequestError("prompt_provider_not_configured", "Automatic prompt enhancement has no provider.", 409)
             if int(step.parameters.get("n", 1)) != 1:
                 raise RequestError("multi_output_step", "Multi-step workflows currently require n=1 per step.", 422)
             if any(item.media_type != "image" or item.role in ("mask", "sketch") for item in step.inputs):
@@ -1102,11 +993,9 @@ class Engine:
                 continue
             try:
                 with self._accelerator_lock:
-                    provider = self.router.provider
-                    if provider is not None and getattr(provider, "uses_accelerator", False):
-                        getattr(provider, "unload", lambda: None)()
                     if self.prompt_assistant is not None:
-                        self.prompt_assistant.unload()
+                        with self._agent_lock:  # waits for a plan made beside the previous job
+                            self.prompt_assistant.unload()
                     if job.workflow_plan is not None and len(job.workflow_plan.steps) > 1:
                         self._run_multi(job)
                     else:
@@ -1124,6 +1013,43 @@ class Engine:
                 if job.workflow_plan is not None:
                     self._checkpoint_workflow(job)
                 job.finished.set()
+
+    def _watch_pressure(self) -> None:
+        while True:
+            time.sleep(IDLE_SETTLE_SECONDS if self._free_under_pressure() else IDLE_CHECK_SECONDS)
+
+    def _free_under_pressure(self) -> bool:
+        """When macOS reports memory pressure while dMLX is idle, give back what it keeps loaded between
+        messages, one piece at a time: the agent first, then the image models' components, least recently
+        used first. A pinned model stays. MLX's memory doesn't count as purgeable for macOS, so without
+        this other apps go to swap. Returns True when something was freed."""
+        try:
+            if self.memory.monitor.last().pressure < sysmem.PRESSURE_WARN:
+                return False
+            if not self._accelerator_lock.acquire(blocking=False):
+                return False  # a job or the agent is running; the job's own guard watches pressure
+            try:
+                if self.queue_depth():
+                    return False  # the next job plans its own memory
+                assistant = self.prompt_assistant
+                if getattr(assistant, "resident", False):
+                    if not self._agent_lock.acquire(blocking=False):
+                        return False  # the agent is planning beside the job that just ended
+                    try:
+                        assistant.unload()
+                    finally:
+                        self._agent_lock.release()
+                    log.info("memory pressure while idle: unloaded the agent")
+                    return True
+                freed = self.memory.free_least_used()
+                if freed:
+                    log.info("memory pressure while idle: freed %s", freed)
+                return freed is not None
+            finally:
+                self._accelerator_lock.release()
+        except Exception:  # noqa: BLE001 - never kill the watcher
+            log.exception("freeing idle memory failed")
+            return False
 
     def _run_multi(self, job: Job) -> None:
         plan = job.workflow_plan
@@ -1363,10 +1289,6 @@ class Engine:
         job.emit("done", {"result_ids": job.result_ids, "report": job.report})
 
     # -- prompt assistant ---------------------------------------------------------------
-    def enhancer(self):
-        """The local, image-aware assistant when installed; otherwise a configured text-only provider."""
-        return self.prompt_assistant or self.prompt_provider
-
     def _model_choices(self, candidates: list[str], attached: int, has_current: bool,
                        layout: bool = False, size: tuple[int, int] = (1024, 1024)) -> dict[str, list[tuple[str, str]]]:
         """For each workflow, the downloaded image models that can run it here: (id, what the agent should
@@ -1473,9 +1395,9 @@ class Engine:
         return {**decision, "model": best.id}
 
     def _plan(self, state: dict, candidates: list[str], wait: bool = False,
-              models: dict[str, list[tuple[str, str]]] | None = None) -> tuple[dict | None, str | None]:
-        """The agent's decision for a sent message, or None to fall back to rules and the router, with a
-        note when it did not plan. While an image is being made it plans beside the job when both fit in
+              models: dict[str, list[tuple[str, str]]] | None = None) -> tuple[dict | None, str | None, str | None]:
+        """The agent's decision for a sent message, or None to fall back to the rules, with a
+        note when it did not plan and, when it failed, the error. While an image is being made it plans beside the job when both fit in
         memory, waits for the job when `wait` is set, and otherwise is skipped."""
         started = time.monotonic()
         acquired = self._accelerator_lock.acquire(blocking=False)
@@ -1489,8 +1411,9 @@ class Engine:
                 acquired = waited = True
             else:
                 log.warning("agent planning skipped: an image is being made")
-                return None, "skipped_busy"  # the cheap path answers now
+                return None, "skipped_busy", None  # the cheap path answers now
         before = None
+        self._agent_lock.acquire()
         try:
             # Beside a job, never free memory: the components to free would be the running job's.
             if not beside and not self.memory.make_room(self.prompt_assistant.need_bytes):
@@ -1502,19 +1425,24 @@ class Engine:
             result = agent.plan(self.prompt_assistant, state, workflows, image_path=self.results.path,
                                 models=models or None, free_gb=free_gb)
         except (IntelligenceError, KeyError, OSError) as exc:
-            log.warning("agent planning failed, using the router: %s", exc)
-            return None, "failed"
+            log.warning("agent planning failed: %s", exc)
+            # Only an agent service's own message is worth showing (not running, key refused); a KeyError's
+            # text is a bare name.
+            return None, "failed", _sentence(str(exc)) if isinstance(exc, IntelligenceError) else None
         finally:
-            if not beside:
-                self._release_assistant(before)
+            try:
+                if not beside:
+                    self._release_assistant(before)
+            finally:
+                self._agent_lock.release()
             if acquired:
                 self._accelerator_lock.release()
         if result is None:
-            log.warning("agent answer failed the checks; using the router")
-            return None, "rejected"
+            log.warning("agent answer failed the checks")
+            return None, "rejected", None
         mode = "beside_job" if beside else "waited" if waited else None
         decision = {**result.as_decision(), "latency_ms": round((time.monotonic() - started) * 1_000, 1)}
-        return (decision | {"planning": mode} if mode else decision), None
+        return (decision | {"planning": mode} if mode else decision), None, None
 
     def _fits_beside_job(self) -> bool:
         """Big Macs: the agent and the running image job fit in memory together, with the reserve kept.
@@ -1525,9 +1453,10 @@ class Engine:
 
     def _release_assistant(self, before: int | None = None) -> None:
         """Between messages the assistant stays loaded where it leaves clear room (24 GB and up), so the
-        next message is planned in seconds; the worker always unloads it before an image job.
+        next message is planned in seconds, unless macOS reports memory pressure; the worker always unloads it
+        before an image job.
         `before`: the headroom just before it ran, so the fit check can count the memory still coming back."""
-        if self.memory.total < 24 * GB:
+        if self.memory.total < 24 * GB or self.memory.monitor.last().pressure >= sysmem.PRESSURE_WARN:
             assistant = self.prompt_assistant
             counted = (before is not None and getattr(assistant, "resident", False)
                        and getattr(assistant, "uses_accelerator", False))
@@ -1573,22 +1502,24 @@ class Engine:
             if emit:
                 emit("loading", {"component": "prompt_assistant"})
                 emit("rewriting", {})
-            try:
-                return assistant.enhance(text, supports_negative=supports_negative, operation=operation, images=images)
-            except IntelligenceError as exc:
-                raise RequestError("prompt_provider_unavailable", str(exc), 502) from exc
-            finally:
-                if emit is None:
-                    self._release_assistant()
-                else:
-                    assistant.unload()
+            with self._agent_lock:  # on the worker, a plan made beside the job may still be using the agent
+                try:
+                    return assistant.enhance(text, supports_negative=supports_negative, operation=operation,
+                                             images=images)
+                except IntelligenceError as exc:
+                    raise RequestError("prompt_provider_unavailable", str(exc), 502) from exc
+                finally:
+                    if emit is None:
+                        self._release_assistant()
+                    else:
+                        assistant.unload()
         finally:
             if emit is None:
                 self._accelerator_lock.release()
 
     def _rewrite(self, job: Job, spec: ModelSpec) -> tuple[GenRequest, dict]:
         """The prompt the model gets: the plain rewrite, then, for a model with a `prompt_format`, its
-        structured caption. Every path (chat, API, Edit Prompt, router fallback) goes through here."""
+        structured caption. Every path (chat, API, Edit Prompt) goes through here."""
         req, info = self._plain_rewrite(job, spec)
         step = ((job.workflow or {}).get("steps") or [{}])[0]
         operation = step.get("operation") or ("image.edit" if job.task == "edit" else "image.generate")
@@ -1674,6 +1605,7 @@ class Engine:
             log.warning("prompt assistant structuring with less free memory than it needs")
         job.emit("loading", {"component": "prompt_assistant"})
         job.emit("rewriting", {})
+        self._agent_lock.acquire()  # a plan made beside this job may still be using the agent
         try:
             for _attempt in range(2):
                 try:
@@ -1688,7 +1620,10 @@ class Engine:
                     reason = str(exc)
             return None, reason
         finally:
-            assistant.unload()  # on the worker: the image model loads next
+            try:
+                assistant.unload()  # on the worker: the image model loads next
+            finally:
+                self._agent_lock.release()
 
     def _plain_rewrite(self, job: Job, spec: ModelSpec) -> tuple[GenRequest, dict]:
         """Edits, and new images in Auto mode, are rewritten on this Mac before the image model loads.
@@ -1813,12 +1748,6 @@ class Engine:
         return self.prompt_assistant_status()
 
     def status(self) -> dict:
-        provider = self.router.provider
-        router_status = (
-            provider.status() if provider is not None and hasattr(provider, "status")
-            else {"kind": "remote" if provider is not None else "manual",
-                  "name": getattr(provider, "name", "manual"), "resident": False}
-        )
         return {
             "uptime_s": round(time.time() - self.started, 1),
             "queue": self.queue_depth(),
@@ -1826,7 +1755,6 @@ class Engine:
             "ram_tier_gb": round(self.memory.total / GB),
             "emulated": bool(__import__("os").environ.get("DMLX_EMULATE_TOTAL_GB")),
             "real_total_gb": round(sysmem._sysctl_int("hw.memsize") / GB),
-            "intelligence": {"router": router_status},
         }
 
     def _checkpoint_workflow(self, job: Job) -> None:

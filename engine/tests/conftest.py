@@ -36,7 +36,8 @@ def make_engine(tmp_path, monkeypatch):
         for s in specs:
             s.local_path = tmp_path / "models" / s.id
             s.local_path.mkdir(parents=True, exist_ok=True)
-        engine = Engine(registry=Registry(specs), results=ResultStore(tmp_path / "results"))
+        # No idle-memory watcher: it reads real pressure; tests call `_free_under_pressure` themselves.
+        engine = Engine(registry=Registry(specs), results=ResultStore(tmp_path / "results"), watch_pressure=False)
         # The same Mac everywhere: CI runners have 7 GB, below the fake models' 8 GB minimum. Tests about
         # smaller Macs set this themselves.
         engine.memory.total = 64 * GB

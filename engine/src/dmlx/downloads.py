@@ -5,18 +5,15 @@ The layout is the standard Hugging Face one; only the folder is dMLX's, so Unins
 
 from __future__ import annotations
 
-import ctypes
 import logging
 import os
 import shutil
 import threading
-import time
 from collections.abc import Iterable
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from dmlx import paths
 from dmlx.registry import ModelSpec
 
 log = logging.getLogger("dmlx.downloads")
@@ -88,22 +85,25 @@ def delete_local(spec: ModelSpec, keep_repos: Iterable[str] = ()) -> int:
     revisions). `keep_repos`: extra repos another model still uses; they stay."""
     keep = {repo.lower() for repo in keep_repos}
     freed = _delete_repo(spec.repo)
-    for extra in extra_repos(spec):
-        if extra.repo.lower() in keep:
-            continue
-        freed += _delete_repo(extra.repo)
-        if extra.tensors:
-            dest = _mflux_cache() / extra.tensors[2]
-            for path in (dest, dest.with_name(dest.name + ".incomplete")):
-                try:
-                    freed += path.stat().st_size
-                    path.unlink()
-                except OSError:
-                    pass
-    spec.local_path = None
-    spec.disk_size = 0
-    for comp in spec.components.values():
-        comp.stream_size = 0
+    try:
+        for extra in extra_repos(spec):
+            if extra.repo.lower() in keep:
+                continue
+            freed += _delete_repo(extra.repo)
+            if extra.tensors:
+                dest = _mflux_cache() / extra.tensors[2]
+                for path in (dest, dest.with_name(dest.name + ".incomplete")):
+                    try:
+                        freed += path.stat().st_size
+                        path.unlink()
+                    except OSError:
+                        pass
+    finally:
+        # The model's own weights are gone even when an extra repo failed to delete: never list it as downloaded.
+        spec.local_path = None
+        spec.disk_size = 0
+        for comp in spec.components.values():
+            comp.stream_size = 0
     return freed
 
 
@@ -111,7 +111,7 @@ def _delete_repo(repo: str) -> int:
     folder = _hub_cache() / _repo_folder(repo)
     own = 0 if folder.is_symlink() else sum(
         p.lstat().st_size for p in folder.rglob("*") if p.is_file() and not p.is_symlink())
-    return max(_delete_from_cache(None, [repo]), own)
+    return max(delete_repos([repo]), own)
 
 
 def repo_on_disk(repo: str) -> bool:
@@ -195,53 +195,22 @@ def extras_download_size(spec: ModelSpec) -> int:
     return sum(extra.size for extra in extra_repos(spec))
 
 
-# The extra repos (above): owned by dMLX, moved in from the shared cache like its models.
-MFLUX_AUX_REPOS = tuple(dict.fromkeys(e.repo for extras in EXTRA_REPOS.values() for e in extras))
-MFLUX_AUX_FOLDERS = ("zen-image-edit",)  # what mflux keeps of it in its own cache
-
-
 def _repo_folder(repo: str) -> str:
     return "models--" + repo.replace("/", "--")
 
 
-_clonefile = getattr(ctypes.CDLL(None, use_errno=True), "clonefile", None)
+def _size_on_disk(folder: Path) -> int:
+    """Bytes the folder's own files take, links not followed (a link into the shared store counts 0)."""
+    total = 0
+    for path in folder.rglob("*"):
+        if path.is_file() and not path.is_symlink():
+            total += path.lstat().st_size
+    return total
 
 
-def _clone(src: Path, dst: Path) -> None:
-    """APFS clone: instant, and the two copies share their blocks, so it takes no extra space."""
-    if _clonefile is None or _clonefile(os.fsencode(src), os.fsencode(dst), 0) != 0:
-        raise OSError(ctypes.get_errno(), f"cannot clone {src}")
-
-
-def _clone_repo(src: Path, dst: Path) -> None:
-    """Rebuild a cached repo at dst: refs and snapshot links as they are, every blob as a file of its own.
-
-    A blob may be a link into the cache-wide shared store of recent huggingface_hub versions, which stays
-    behind; the clone takes the file it points to.
-    """
-    staging = dst.with_name(dst.name + ".moving")
-    shutil.rmtree(staging, ignore_errors=True)
-    for folder, dirs, files in os.walk(src):
-        rel = Path(folder).relative_to(src)
-        (staging / rel).mkdir(parents=True, exist_ok=True)
-        for name in dirs:
-            if (Path(folder) / name).is_symlink():
-                os.symlink(os.readlink(Path(folder) / name), staging / rel / name)
-        for name in files:
-            path, target = Path(folder) / name, staging / rel / name
-            if name.endswith(".incomplete"):
-                continue
-            if rel.parts[:1] == ("blobs",):
-                _clone(path.resolve(strict=True), target)
-            elif path.is_symlink():
-                os.symlink(os.readlink(path), target)
-            else:
-                _clone(path, target)
-    os.rename(staging, dst)
-
-
-def _delete_from_cache(cache_dir: Path | None, repos: list[str]) -> int:
-    """Delete repos from a Hugging Face cache (None: the current one). Returns the bytes freed.
+def delete_repos(repos: list[str]) -> int:
+    """Delete repos from dMLX's Hugging Face cache. Returns the bytes freed; raises if deleting failed,
+    leaving the repo folder in place so its files are not orphaned in the shared store.
 
     Goes through huggingface_hub's own deletion: recent versions keep files in a shared, deduplicated store
     that repo folders only link to, and only the library knows which shared files no other repo still uses.
@@ -252,60 +221,27 @@ def _delete_from_cache(cache_dir: Path | None, repos: list[str]) -> int:
     from huggingface_hub import scan_cache_dir
     from huggingface_hub.constants import HF_HUB_CACHE
 
-    cache_dir = Path(cache_dir or HF_HUB_CACHE)
+    cache_dir = Path(HF_HUB_CACHE)
+    folders = [cache_dir / _repo_folder(repo) for repo in repos]
+    if not any(f.exists() for f in folders):
+        return 0
     wanted = {repo.lower() for repo in repos}
+    cache = scan_cache_dir(cache_dir)
+    ours = [r for r in cache.repos if r.repo_type == "model" and r.repo_id.lower() in wanted]
+    elsewhere = {rev.commit_hash for r in cache.repos if r not in ours for rev in r.revisions}
+    revisions = [rev.commit_hash for r in ours for rev in r.revisions if rev.commit_hash not in elsewhere]
     freed = 0
-    try:
-        cache = scan_cache_dir(cache_dir)
-        ours = [r for r in cache.repos if r.repo_type == "model" and r.repo_id.lower() in wanted]
-        elsewhere = {rev.commit_hash for r in cache.repos if r not in ours for rev in r.revisions}
-        revisions = [rev.commit_hash for r in ours for rev in r.revisions if rev.commit_hash not in elsewhere]
-        if revisions:
-            strategy = cache.delete_revisions(*revisions)
-            freed = strategy.expected_freed_size
-            strategy.execute()
-    except Exception:  # noqa: BLE001 - a corrupt cache entry must not stop the engine
-        log.exception("could not delete %s from the Hugging Face cache", ", ".join(repos))
-    for repo in repos:
-        shutil.rmtree(cache_dir / _repo_folder(repo), ignore_errors=True)
+    if revisions:
+        strategy = cache.delete_revisions(*revisions)
+        freed = strategy.expected_freed_size
+        strategy.execute()
+    for folder in folders:
+        if folder.is_symlink():
+            continue  # a link to another cache (a test setup): left alone
+        if folder.exists():
+            freed += _size_on_disk(folder)  # what huggingface_hub left: refs, a duplicated repo's own files
+            shutil.rmtree(folder)
     return freed
-
-
-def adopt(repos: Iterable[str]) -> list[str]:
-    """Move dMLX's models out of the shared Hugging Face cache into dMLX's own, so they are not downloaded
-    again. A repo moves only when dMLX's cache does not have it yet. Returns the repos moved.
-
-    The copy is an APFS clone, so it is instant; a repo that cannot be cloned (another volume) stays where
-    it is and is downloaded again when needed.
-    """
-    shared = paths.shared_caches()
-    if shared is None:
-        return []
-    old_hub, old_mflux = shared
-    new_hub = Path(os.environ["HF_HUB_CACHE"])
-    moved = []
-    for repo in dict.fromkeys(repos):
-        src, dst = old_hub / _repo_folder(repo), new_hub / _repo_folder(repo)
-        if src.resolve() == dst.resolve() or not src.is_dir() or dst.exists():
-            continue
-        try:
-            _clone_repo(src, dst)
-            moved.append(repo)
-            log.info("moved %s from the shared Hugging Face cache into dMLX's", repo)
-        except OSError as exc:
-            log.warning("kept %s in the shared cache (%s); it is downloaded again if needed", repo, exc)
-            shutil.rmtree(dst.with_name(dst.name + ".moving"), ignore_errors=True)
-    if moved:
-        _delete_from_cache(old_hub, moved)
-    new_mflux = Path(os.environ["MFLUX_CACHE_DIR"])
-    for folder in MFLUX_AUX_FOLDERS:
-        src, dst = old_mflux / folder, new_mflux / folder
-        if src.is_dir() and not dst.exists() and src.resolve() != dst.resolve():
-            try:
-                os.rename(src, dst)
-            except OSError:
-                pass  # another volume: mflux fetches it again (a few hundred MB)
-    return moved
 
 
 CHUNK = 1024 * 1024

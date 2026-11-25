@@ -291,6 +291,10 @@ keys. Then it moves `dMLX.app` to the Trash. Save the images that you want to ke
 If you drag `dMLX.app` to the Trash, macOS keeps the models and your data. To delete them after that, delete
 `~/Library/Application Support/dMLX`. To delete only one model, use **Remove…** in **Settings → Models**.
 
+Versions before 0.1.0 beta 5 kept models in the shared Hugging Face cache (`~/.cache/huggingface/hub`, and
+`~/Library/Caches/mflux`). Uninstall doesn't delete those, because other tools may use them. To free that
+space, delete the `models--` folders of dMLX's models there, or run `hf cache rm model/<repo>`.
+
 ## How to use dMLX
 
 - **To make an image:** describe it. **To change an image:** write what to change. **To start again:**
@@ -325,10 +329,9 @@ model classes, so a new mflux family needs a table entry and a memory measuremen
 Before dMLX downloads a repo, it does a check of the family, size and license. If a license has
 restrictions, dMLX asks you to accept it. **Remove…** deletes the files of a model. dMLX puts the weights in
 its own folder, `~/Library/Application Support/dMLX/models-cache`, in the standard Hugging Face layout, so
-**Uninstall dMLX…** can delete all of them. The app bundle never contains weights. When dMLX starts, it moves
-its models from the shared Hugging Face cache (`~/.cache/huggingface`) into its own folder. This includes models
-from versions before 0.1.0 beta 5, and models that another tool downloaded first. dMLX does not download them
-again, but the other tool does if it needs them. In Auto,
+**Uninstall dMLX…** can delete all of them. The app bundle never contains weights. dMLX does not use the shared
+Hugging Face cache (`~/.cache/huggingface`), so it never takes models away from other tools. Models that
+another tool downloaded, or that dMLX downloaded there before 0.1.0 beta 5, are downloaded again. In Auto,
 the engine uses Qwen Image 2.1 only if the agent selects it for a message.
 
 ## How dMLX controls memory
@@ -348,7 +351,9 @@ On Macs with less than 32 GB, FLUX.2 Klein decodes in exact bands (about 1.1 GB 
 no strategy fits, the engine refuses the job and shows a clear message. **Try anyway** runs the job in the
 mode that uses the least memory. While a job runs, the engine monitors memory pressure and swap-ins. The
 engine stops the job before the Mac starts to hang. The engine removes the agent from memory before each
-image job. Then the engine waits until that memory is free again. For more data, refer to
+image job. Then the engine waits until that memory is free again. When macOS reports memory pressure
+while no job runs, the engine gives back what it keeps loaded between requests: the agent first, then the
+image model's parts, least recently used first. A model you pinned stays. For more data, refer to
 [`dmlx-spec.md`](dmlx-spec.md) §8, [`docs/benchmarks/b1.md`](docs/benchmarks/b1.md),
 [`b2.md`](docs/benchmarks/b2.md) and [`agent-16gb.md`](docs/benchmarks/agent-16gb.md).
 
@@ -356,7 +361,7 @@ image job. Then the engine waits until that memory is free again. For more data,
 
 ```bash
 # engine (Python 3.13, uv)
-cd engine && uv sync --extra local-llm && uv run pytest
+cd engine && uv sync --extra agent && uv run pytest
 
 # app (Swift 6 toolchain / Xcode 16+)
 cd app && swift test
@@ -369,7 +374,7 @@ tools/bundle_app.sh --dmg --zip
 To score the agent with the routing eval and placeholder images, run this command:
 
 ```bash
-cd engine && uv run --extra local-llm python -m dmlx.prompting.agent_eval --model qwen3-vl-8b-instruct-4bit
+cd engine && uv run --extra agent python -m dmlx.prompting.agent_eval --model qwen3-vl-8b-instruct-4bit
 ```
 
 ## Engine API
@@ -389,7 +394,7 @@ curl -s localhost:8642/v1/images/generations -H 'content-type: application/json'
 | POST | `/v1/workflows` | workflow with validation and capability checks; supports streaming |
 | POST | `/v1/workflows/route` | what to do with a chat message; `"plan": true` asks the agent |
 | GET | `/v1/capabilities` | operations and input limits of each model |
-| POST | `/v1/prompts/compile` | prompt enhancement preview |
+| POST | `/v1/prompts/compile` | the agent's rewrite of a prompt (needs the agent) |
 | POST | `/v1/uploads` | stores an image and gives an id for later references |
 | GET | `/v1/results/{id}` · `/meta` | PNG with the prompt and seed in the file · its metadata |
 | GET/DELETE | `/v1/jobs/{id}` · `/events` | status · cancel · events |
@@ -410,12 +415,9 @@ these environment variables.
 | Variable | Use |
 |---|---|
 | `DMLX_PROMPT_ASSISTANT_MODEL` | Agent model id (for example, `ministral-3-3b-instruct-2512-4bit`) |
-| `DMLX_PROMPT_ASSISTANT=off` | Sets the agent to off |
-| `DMLX_ROUTER_BASE_URL`, `DMLX_ROUTER_MODEL`, `DMLX_ROUTER_API_KEY`, `DMLX_ROUTER_TIMEOUT` | Routes messages without the agent, through any OpenAI-compatible chat server (HTTPS, or HTTP on loopback) |
-| `DMLX_ROUTER_PROVIDER=local-llm`, `DMLX_LOCAL_LLM_MODEL_PATH`, `DMLX_LOCAL_LLM_REVISION` | Routes messages without the agent, through a local Qwen checkpoint ("Local Qwen MLX" in the app) |
-| `DMLX_PROMPT_BASE_URL`, `DMLX_PROMPT_MODEL`, `DMLX_PROMPT_API_KEY`, `DMLX_PROMPT_TIMEOUT` | Prompt enhancement through an OpenAI-compatible server |
+| `DMLX_PROMPT_ASSISTANT=off` | Sets the agent to off: messages are routed with fixed rules, and dMLX asks when they can't tell |
 | `DMLX_HOME` | The data folder (default `~/Library/Application Support/dMLX`). The models go in its `models-cache` folder |
-| `HF_HUB_CACHE` | If you set it, the engine downloads models to this Hugging Face cache, and does not move models |
+| `HF_HUB_CACHE` | If you set it, the engine downloads models to this Hugging Face cache instead |
 
 If you set API keys in the app, the app keeps them in the macOS Keychain. When the agent plans, the engine
 also does a check of its answer. The images that the answer names must exist. An edit must use 1–3 images.

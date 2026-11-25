@@ -21,8 +21,8 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-local-llm = [
-    "mlx-lm==0.32.2",
+# The agent's runtime (the local planning model); the app's engine always has it.
+agent = [
     "mlx-vlm==0.7.6",
 ]
 

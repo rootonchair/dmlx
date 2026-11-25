@@ -1,6 +1,5 @@
-"""Prompt parsing and provider-neutral compilation."""
+"""Prompt parsing, the agent and its prompt formats."""
 
 from dmlx.prompting.compiler import CompiledPrompt, PassthroughPromptCompiler
-from dmlx.prompting.openai_compatible import OpenAICompatiblePromptProvider
 
-__all__ = ["CompiledPrompt", "PassthroughPromptCompiler", "OpenAICompatiblePromptProvider"]
+__all__ = ["CompiledPrompt", "PassthroughPromptCompiler"]

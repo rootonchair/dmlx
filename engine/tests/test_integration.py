@@ -36,7 +36,7 @@ print("ok")
 def _real_engine():
     from dmlx.engine import Engine
 
-    engine = Engine()
+    engine = Engine(watch_pressure=False)
     spec = engine.registry.get("flux2-klein-4b")
     if not engine.is_downloaded(spec):
         pytest.skip("flux2-klein-4b not downloaded")

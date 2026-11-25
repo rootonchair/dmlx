@@ -1,8 +1,10 @@
-"""Capability-bounded workflow routing with deterministic safe cases."""
+"""Workflow routing without the agent: fixed rules, and "ambiguous" (ask the user) when they can't tell.
+
+The descriptions are also what the agent is told about each workflow."""
 
 from __future__ import annotations
 
-from dmlx.intelligence.base import Decision, DecisionProvider, IntelligenceError
+from dmlx.intelligence.base import Decision
 
 
 DEFAULT_DESCRIPTIONS = {
@@ -35,9 +37,6 @@ DEFAULT_DESCRIPTIONS = {
 
 
 class WorkflowRouter:
-    def __init__(self, provider: DecisionProvider | None = None):
-        self.provider = provider
-
     def deterministic_decision(self, state: dict, candidates: list[str]) -> Decision | None:
         allowed = list(dict.fromkeys(candidates))
         if not allowed:
@@ -51,16 +50,7 @@ class WorkflowRouter:
             return Decision(allowed[0], 1.0, {allowed[0]: 1.0}, "deterministic")
         return None
 
-    def decide_with_provider(self, state: dict, candidates: list[str]) -> Decision:
-        allowed = list(dict.fromkeys(candidates))
-        if self.provider is None:
-            return Decision("ambiguous", 0.0, {name: 0.0 for name in allowed}, "manual")
-        try:
-            descriptions = {name: DEFAULT_DESCRIPTIONS.get(name, name) for name in allowed}
-            return self.provider.decide(state, descriptions)
-        except IntelligenceError:
-            return Decision("ambiguous", 0.0, {name: 0.0 for name in allowed}, self.provider.name)
-
     def decide(self, state: dict, candidates: list[str]) -> Decision:
-        deterministic = self.deterministic_decision(state, candidates)
-        return deterministic or self.decide_with_provider(state, candidates)
+        allowed = list(dict.fromkeys(candidates))
+        return self.deterministic_decision(state, allowed) or Decision(
+            "ambiguous", 0.0, {name: 0.0 for name in allowed}, "manual")

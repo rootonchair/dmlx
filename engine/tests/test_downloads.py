@@ -1,6 +1,5 @@
 import os
 from pathlib import Path
-from types import SimpleNamespace
 
 from conftest import fake_spec
 from dmlx import downloads
@@ -68,43 +67,6 @@ def _cached_repo(hub, repo, files, shared=()):
     return folder
 
 
-def test_adopt_moves_models_out_of_the_shared_cache(tmp_path, monkeypatch):
-    from dmlx import downloads, paths
-
-    old_hub, old_mflux = tmp_path / "shared" / "hub", tmp_path / "shared" / "mflux"
-    new_hub, new_mflux = tmp_path / "dmlx" / "models-cache", tmp_path / "dmlx" / "mflux-cache"
-    new_hub.mkdir(parents=True)
-    new_mflux.mkdir(parents=True)
-    monkeypatch.setenv("HF_HUB_CACHE", str(new_hub))
-    monkeypatch.setenv("MFLUX_CACHE_DIR", str(new_mflux))
-    monkeypatch.setattr(paths, "_shared_caches", (old_hub, old_mflux))
-    files = {"config.json": b"{}", "transformer/model.safetensors": b"weights" * 100}
-    _cached_repo(old_hub, "org/model", files, shared={"transformer/model.safetensors"})
-    other = _cached_repo(old_hub, "someone/else", {"a.bin": b"other tool"})
-    (old_mflux / "zen-image-edit").mkdir(parents=True)
-
-    assert downloads.adopt(["org/model", "org/not-downloaded"]) == ["org/model"]
-
-    snap = next((new_hub / "models--org--model" / "snapshots").iterdir())
-    assert (snap / "config.json").read_bytes() == b"{}"
-    assert (snap / "transformer/model.safetensors").read_bytes() == b"weights" * 100
-    blobs = list((new_hub / "models--org--model" / "blobs").iterdir())
-    assert blobs and not any(b.is_symlink() for b in blobs)  # nothing still points into the shared cache
-    assert not (old_hub / "models--org--model").exists()
-    assert other.exists()  # another tool's model stays
-    assert (new_mflux / "zen-image-edit").is_dir() and not (old_mflux / "zen-image-edit").exists()
-    # Already in dMLX's cache: nothing moves again.
-    _cached_repo(old_hub, "org/model", files)
-    assert downloads.adopt(["org/model"]) == []
-
-
-def test_adopt_does_nothing_without_a_redirected_cache(monkeypatch):
-    from dmlx import downloads, paths
-
-    monkeypatch.setattr(paths, "_shared_caches", None)
-    assert downloads.adopt(["org/model"]) == []
-
-
 def test_remove_keeps_a_duplicated_repo_with_the_same_commits(tmp_path, monkeypatch):
     from dmlx import downloads
 
@@ -122,3 +84,71 @@ def test_remove_keeps_a_duplicated_repo_with_the_same_commits(tmp_path, monkeypa
 
     assert not ours.exists()
     assert (theirs / "snapshots" / commit / "a.bin").read_bytes() == b"weights"
+
+
+def test_remove_reports_the_bytes_freed(tmp_path, monkeypatch):
+    from dmlx import downloads
+
+    monkeypatch.setattr("huggingface_hub.constants.HF_HUB_CACHE", str(tmp_path))
+    _cached_repo(tmp_path, "org/model", {"a.bin": b"w" * 100_000})
+    spec = fake_spec("model")
+    spec.repo = "org/model"
+    assert downloads.delete_local(spec) >= 100_000
+    assert downloads.delete_local(spec) == 0  # already gone
+
+
+def test_a_failed_delete_raises_and_keeps_the_repo_folder(tmp_path, monkeypatch):
+    import huggingface_hub
+    import pytest
+
+    from dmlx import downloads
+
+    monkeypatch.setattr("huggingface_hub.constants.HF_HUB_CACHE", str(tmp_path))
+    ours = _cached_repo(tmp_path, "org/model", {"a.bin": b"weights"}, shared={"a.bin"})
+
+    def broken(_cache_dir):
+        raise OSError("permission denied")
+
+    monkeypatch.setattr(huggingface_hub, "scan_cache_dir", broken)
+    spec = fake_spec("model")
+    spec.repo = "org/model"
+    with pytest.raises(OSError):
+        downloads.delete_local(spec)
+    assert ours.exists()  # its link into the shared store is not lost
+
+
+def test_a_failed_extra_delete_still_marks_the_model_removed(monkeypatch):
+    import pytest
+
+    from dmlx import downloads
+
+    spec = fake_spec("model")
+    spec.repo = "org/model"
+    spec.local_path = "/somewhere"
+    spec.disk_size = 100
+    monkeypatch.setattr(downloads, "extra_repos", lambda _spec: [downloads.ZEN_IMAGE_EDIT])
+
+    def delete(repo):
+        if repo != "org/model":
+            raise OSError("permission denied")
+        return 100
+
+    monkeypatch.setattr(downloads, "_delete_repo", delete)
+    with pytest.raises(OSError):
+        downloads.delete_local(spec)
+    assert spec.local_path is None and spec.disk_size == 0  # its own weights are gone
+
+
+def test_marks_only_a_data_folder_it_creates(tmp_path, monkeypatch):
+    from dmlx import paths
+
+    existing = tmp_path / "Documents"
+    existing.mkdir()
+    monkeypatch.setenv("DMLX_HOME", str(existing))
+    paths.home()
+    assert not (existing / paths.DATA_FOLDER_MARKER).exists()  # Uninstall must not take it
+
+    created = tmp_path / "dmlx-data"
+    monkeypatch.setenv("DMLX_HOME", str(created))
+    paths.home()
+    assert (created / paths.DATA_FOLDER_MARKER).exists()

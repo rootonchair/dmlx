@@ -106,10 +106,6 @@ def create_app(engine: Engine | None = None, token: str | None = None) -> FastAP
         body = await request.json()
         return await asyncio.to_thread(engine.route, body)
 
-    @app.post("/admin/intelligence/router/test", dependencies=[Depends(auth)])
-    async def test_workflow_router():
-        return await asyncio.to_thread(engine.test_router)
-
     @app.post("/v1/prompts/compile", dependencies=[Depends(auth)])
     async def compile_prompt(request: Request):
         body = await request.json()
